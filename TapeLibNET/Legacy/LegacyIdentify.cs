@@ -106,7 +106,8 @@ internal static class LegacyIdentify
 
         // 1. A TOC copy: a raw stream, verified by its structure -- not by a header failing to parse.
         if (TryPeekToc(block, length, out ushort tocVersion, out Guid tocMediaId))
-            return new(HeaderBlockIdentity.TocCopy, TocVersion: tocVersion, TocMediaId: tocMediaId);
+            return new(HeaderBlockIdentity.TocCopy, FrameStatus: TapeFrameStatus.Ok,
+                Toc: new TapeTocPeek(tocVersion, tocMediaId, IsLegacy: true));
 
         // 2. A framed record: ours whether or not it verifies.
         if (HasSignatureAt(block, length, FramedPayloadOffset, out _))

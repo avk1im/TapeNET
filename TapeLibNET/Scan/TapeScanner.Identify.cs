@@ -10,11 +10,15 @@ using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Scan;
 
-
 /// <summary>
 /// Identification (§4): turning one block of bytes into a <see cref="TapeMediaFragment"/>, with no TOC,
 ///  no expectations, and no comparison.
 /// </summary>
+/// <remarks>
+/// The scanner identifies NOTHING itself: every block goes through <see cref="TapeHeaderBlock.IdentifyBlock"/>, the one
+///  dispatcher (Design-TocLocation §3), and this partial only projects its verdict onto a fragment
+///  (<see cref="FragmentFrom"/>).
+/// </remarks>
 public sealed partial class TapeScanner
 {
     #region *** Block 0 — via a probe agent ***
@@ -36,10 +40,9 @@ public sealed partial class TapeScanner
     ///  <seealso cref="Services.TapeServiceBase.RefreshLoadedHeader"/> employs a utility agent in the same way.
     /// </para>
     /// <para>
-    /// The empty TOC for the agent is harmless and honest: the BOM path never consults it (unlike
-    ///  <see cref="TapeAgentBase.ClassifySetHeader"/>, which the scanner deliberately does not use).
-    ///  The navigator the agent builds resolves media-header presence as a side effect and is then
-    ///  discarded with it — nothing the scanner does afterwards consults a navigator at all.
+    /// <b>Identified like every other block.</b> The agent's own header classification is not used: the block goes
+    ///  through the same dispatcher and the same projection as any block of the walk — so a TOC copy at block 0 (a
+    ///  header-less volume holding only a TOC) is a TOC fragment, and damage there carries its diagnosis.
     /// </para>
     /// <para>
     /// From the second fragment on the scanner reads raw (Design-ScanMedia §3.1): those blocks sit at arbitrary positions
@@ -49,7 +52,7 @@ public sealed partial class TapeScanner
     private TapeMediaFragment IdentifyBomFragment(out int bytesRead)
     {
         using var probe = new TapeAgentBase(Drive, new TapeTOC());
-        TapeHeader? header = probe.ReadBomHeader(out bytesRead, out byte[] block);
+        probe.ReadBomHeader(out bytesRead, out byte[] block);
 
         if (bytesRead <= 0)
         {
@@ -59,19 +62,11 @@ public sealed partial class TapeScanner
             return UnknownFragment(ordinal: 0, startBlock: 0, fingerprint: null);
         }
 
-        if (header is not null)
-            return HeaderFragment(ordinal: 0, startBlock: 0, header);
-
-        // Not a header. A header-less 2.1 tape starts with set 1's first file header — identifiable by its CRC.
-        //  Otherwise legacy content (the common case) or foreign data: a legitimate finding, not a fault.
-        ResetError();
-        if (SetContentFragment(ordinal: 0, startBlock: 0, block, bytesRead) is { } content)
-        {
-            m_logger.LogTrace("{Prefix}: Scan: block 0 starts a header-less 2.1 set ({SetId})", LogPrefix, content.Id);
-            return content;
-        }
-        m_logger.LogTrace("{Prefix}: Scan: block 0 holds no recognizable header (legacy or foreign)", LogPrefix);
-        return UnknownFragment(ordinal: 0, startBlock: 0, TapeMediaFragment.MakeFingerprint(block, bytesRead));
+        ResetError();   // whatever the probe made of the block is not this scan's error
+        TapeMediaFragment fragment = FragmentFrom(TapeHeaderBlock.IdentifyBlock(block, bytesRead),
+            ordinal: 0, startBlock: 0, block, bytesRead);
+        m_logger.LogTrace("{Prefix}: Scan: block 0 — {Fragment}", LogPrefix, fragment);
+        return fragment;
     }
 
     #endregion
@@ -98,7 +93,7 @@ public sealed partial class TapeScanner
     /// </summary>
     /// <param name="ordinal">Provisional — <c>Commit</c> assigns the final one.</param>
     /// <param name="fragment">
-    /// Non-<see langword="null"/> iff the result is <see cref="ReadOutcome.Fragment"/>; 
+    /// Non-<see langword="null"/> iff the result is <see cref="ReadOutcome.Fragment"/>;
     ///  <see langword="null"/> for <see cref="ReadOutcome.Tapemark"/> and <see cref="ReadOutcome.EndOfData"/>.
     /// </param>
     /// <remarks>
@@ -108,20 +103,19 @@ public sealed partial class TapeScanner
     ///  probe, at no extra cost: no second read, no step back, and the head never moves backwards.
     /// </para>
     /// <para>
-    /// <b>One classification, positive in every branch.</b> <see cref="TapeHeaderBlock.IdentifyBlock"/>
-    ///  recognizes a TOC copy by its structure and a header by its frame. No branch is reached merely
-    ///  because another failed — which is how a CRC-damaged set header once became a phantom TOC.
+    /// <b>The shared read primitive.</b> <see cref="TapeHeaderBlock.ReadAndIdentify"/> reads (with the small-block
+    ///  fallback) and identifies in one call — the same primitive the navigator and the TOC search use.
     /// </para>
     /// <para>
-    /// A read that returns data AND reports a mark is treated as data. It does not occur in block mode,
-    ///  where a mark is always reported on a read of its own.
+    /// Both boundaries come from the drive's <c>out</c> flags. The drive RESETS its error on either, so the error is
+    ///  synced only when neither flag explains an empty read — that is, on a real fault.
     /// </para>
     /// </remarks>
     private ReadOutcome ReadFragmentAt(int ordinal, long startBlock, out TapeMediaFragment? fragment)
     {
         fragment = null;
-
-        byte[] buffer = ReadIdentificationBlock(out int read, out bool tapemark, out bool eod);
+        IdentifiedBlock id = TapeHeaderBlock.ReadAndIdentify(Drive, out byte[] buffer, out int read,
+            out bool tapemark, out bool eod);
 
         if (eod)
         {
@@ -139,89 +133,47 @@ public sealed partial class TapeScanner
         {
             // A genuine read fault. Record it and let the walk continue: the fragments BEYOND a bad block
             //  are exactly the ones most worth finding.
+            SyncErrorFrom(Drive);
             string what = $"Unreadable block at {startBlock}";
-
             m_logger.LogTrace("{Prefix}: Scan: {What} ({Err})", LogPrefix, what, LastErrorWin32);
-
             fragment = UnknownFragment(ordinal, startBlock, fingerprint: null)
-                with
-            { Diagnosis = TapeResult.Fail((uint)LastErrorWin32, what) };
-
+                with { Diagnosis = TapeResult.Fail((uint)LastErrorWin32, what) };
             ResetError();   // tolerated — the scan carries on
             return ReadOutcome.Fragment;
         }
 
-        IdentifiedBlock id = TapeHeaderBlock.IdentifyBlock(buffer, read);
-
-        fragment = id.Kind switch
-        {
-            HeaderBlockIdentity.Header when id.Header is not null
-                => HeaderFragment(ordinal, startBlock, id.Header),
-            // Our header, damaged. The CRC says so; the fingerprint keeps the evidence.
-            HeaderBlockIdentity.DamagedRecord
-                => DamagedRecordFragment(ordinal, startBlock, buffer, read, id.FrameStatus),
-            HeaderBlockIdentity.TocCopy
-                => TocCopyFragment(ordinal, startBlock, id),
-            // A header-less 2.1 set starts with its first file's header frame — identifiable by its own CRC.
-            //  Otherwise genuinely unidentified: the fingerprint tells "random data" from "a structure we do not parse".
-            _ => SetContentFragment(ordinal, startBlock, buffer, read)
-                 ?? UnknownFragment(ordinal, startBlock, TapeMediaFragment.MakeFingerprint(buffer, read)),
-        };
-        
+        fragment = FragmentFrom(id, ordinal, startBlock, buffer, read);
         return ReadOutcome.Fragment;
     }
 
     /// <summary>
-    /// Reads one block for identification, falling back to a raw read on drives that cannot carry a
-    ///  standard header block. Returns the bytes; classification is the caller's job.
+    /// Projects the dispatcher's verdict onto a fragment — the ONLY place the scanner turns an identity into a kind.
     /// </summary>
-    /// <param name="tapemark">A mark stood at the position; the read crossed it.</param>
-    /// <param name="eod">End-of-data: nothing was ever written here.</param>
     /// <remarks>
-    /// <para>
-    /// <b>Design-ScanMedia §4.6, and not optional.</b> <see cref="TapeHeaderBlock.IsSupportedBy"/> is false when the
-    ///  drive's maximum block is under 16 KiB — tiny virtual media, some pre-LTO drives — and without the
-    ///  fallback every fragment on such a cartridge would map as <see cref="FragmentKind.Unknown"/>.
-    /// </para>
-    /// <para>
-    /// The 16 KiB read also covers a TOC copy: the TOC is written at the same fixed block size as the
-    ///  headers (<c>TapeAgentBase.c_fixedTOCBlockSize</c>), so its first block arrives whole.
-    /// </para>
-    /// <para>
-    /// The header <see cref="TapeHeaderBlock.Read(TapeDrive, byte[], out TapeHeader?, out bool, out bool)"/>
-    ///  parses along the way is discarded: a null there means "not a header" and "a damaged header"
-    ///  alike, which is exactly the ambiguity <see cref="TapeHeaderBlock.IdentifyBlock"/> resolves.
-    /// </para>
-    /// <para>
-    /// Both boundaries come from the drive's <c>out</c> flags. The drive RESETS its error on either, so the
-    ///  error is synced only when neither flag explains an empty read — that is, on a real fault.
-    /// </para>
+    /// One classification, positive in every branch: no branch is reached merely because another failed — which is how
+    ///  a CRC-damaged set header once became a phantom TOC.
     /// </remarks>
-    private byte[] ReadIdentificationBlock(out int read, out bool tapemark, out bool eod)
-    {
-        if (TapeHeaderBlock.IsSupportedBy(Drive))
+    private TapeMediaFragment FragmentFrom(IdentifiedBlock id, int ordinal, long startBlock, byte[] buffer, int read)
+        => id.Kind switch
         {
-            var buffer = new byte[TapeHeaderBlock.Size];
-            read = TapeHeaderBlock.Read(Drive, buffer, out _, out tapemark, out eod);   // sets AND restores the block size
+            HeaderBlockIdentity.Header when id.Header is not null
+                => HeaderFragment(ordinal, startBlock, id.Header),
 
-            if (read <= 0 && !tapemark && !eod)
-                SyncErrorFrom(Drive);
+            // Our record, damaged. The status says how; the fingerprint keeps the evidence.
+            HeaderBlockIdentity.DamagedRecord
+                => DamagedRecordFragment(ordinal, startBlock, buffer, read, id.FrameStatus),
 
-            return buffer;
-        }
+            HeaderBlockIdentity.TocCopy when id.TryGetToc(out TapeTocPeek toc)
+                => TocCopyFragment(ordinal, startBlock, toc),
 
-        // Small-block drive: read one native block and parse from that.
-        uint blockSize = Drive.BlockSize > 0 ? Drive.BlockSize : Drive.DefaultBlockSize;
-        var raw = new byte[blockSize];
+            // A header-less 2.1 set starts with its first file's header frame, CRC-verified.
+            HeaderBlockIdentity.FileHeader when id.TryGetFile(out TapeFilePeek file)
+                => SetContentFragment(ordinal, startBlock, file),
 
-        read = Drive.ReadDirect(raw, 0, raw.Length, out tapemark, out bool boundary);
-        eod = boundary && !tapemark;    // the drive's `eof` covers marks too
-
-        if (read <= 0 && !boundary)
-            SyncErrorFrom(Drive);
-
-        return raw;
-    }
+            // Genuinely unidentified (a calibration checkpoint included — it means nothing outside its trail):
+            //  the fingerprint tells "random data" from "a structure we do not parse".
+            _ => UnknownFragment(ordinal, startBlock, TapeMediaFragment.MakeFingerprint(buffer, read)),
+        };
 
     #endregion
 
@@ -258,7 +210,6 @@ public sealed partial class TapeScanner
                 Volume = media.Volume,
                 Description = media.OriginalName,
             },
-
             TapeSetHeader set => fragment with
             {
                 Id = set.MediaId,
@@ -268,20 +219,18 @@ public sealed partial class TapeScanner
                 GlobalSetIndex = set.GlobalSetIndex,
                 Description = set.Description,
             },
-
             TapeCalibrationHeader cal => fragment with
             {
                 Id = cal.RunId,
                 BlockSize = cal.RunBlockSize,
                 Description = cal.ProfileKey,
             },
-
             _ => fragment,
         };
     }
 
     /// <summary>
-    /// A header of ours that failed verification. Stays <see cref="FragmentKind.Unknown"/>, since its
+    /// A record of ours that failed verification. Stays <see cref="FragmentKind.Unknown"/>, since its
     ///  fields cannot be trusted; the diagnosis says what went wrong, the fingerprint keeps the evidence.
     /// </summary>
     /// <remarks>
@@ -299,7 +248,6 @@ public sealed partial class TapeScanner
         };
 
         string message = $"Damaged record at block {startBlock}: {why}";
-
         m_logger.LogTrace("{Prefix}: Scan: {Message}", LogPrefix, message);
 
         return UnknownFragment(ordinal, startBlock, TapeMediaFragment.MakeFingerprint(buffer, read))
@@ -315,59 +263,37 @@ public sealed partial class TapeScanner
     ///  from the media header's is a leftover from another series, and the comparison phase must not offer
     ///  it as a candidate for this cartridge.
     /// </remarks>
-    private TapeMediaFragment TocCopyFragment(int ordinal, long startBlock, IdentifiedBlock id)
+    private TapeMediaFragment TocCopyFragment(int ordinal, long startBlock, TapeTocPeek toc)
     {
         m_logger.LogTrace("{Prefix}: Scan: table-of-contents copy v0x{Version:X4} at block {Block}",
-            LogPrefix, id.TocVersion, startBlock);
+            LogPrefix, toc.Version, startBlock);
 
-        var toc = new TapeMediaFragment
+        return new TapeMediaFragment
         {
             Ordinal = ordinal,
             StartBlock = startBlock,
             Kind = FragmentKind.TOC,
-            TocVersion = id.TocVersion,
-            Id = id.TocMediaId == Guid.Empty ? null : id.TocMediaId,
-        };
-
-        return toc; // TOC recovery is a walk step — see TapeScanner.Harvest.cs
+            TocVersion = toc.Version,
+            Id = toc.MediaId == Guid.Empty ? null : toc.MediaId,
+        }; // TOC recovery is a walk step — see TapeScanner.Harvest.cs
     }
 
     /// <summary>
-    /// The first block of a header-less 2.1 set: a CRC-verified file header frame at offset 0. Null for anything else —
-    ///  legacy content, foreign data, a damaged frame (which stays Unknown, as any unverifiable block does).
+    /// The first block of a header-less 2.1 set: a CRC-verified file header frame, as identified by the dispatcher.
     /// </summary>
     /// <remarks>
-    /// <para>
     /// Only the FIRST block after a mark is read, so only a set's first file is seen — which is all a set count needs.
     ///  Packed files inside a block are content, not fragments (SM-11).
-    /// </para>
-    /// <para>
-    /// A damaged frame is deliberately NOT reported as damage: a set's first block may be a file body that merely starts
-    ///  with the magic by chance. Unknown is the honest verdict for anything the CRC does not confirm.
-    /// </para>
     /// </remarks>
-    private static TapeMediaFragment? SetContentFragment(int ordinal, long startBlock, byte[] buffer, int read)
-    {
-        if (!TapeFormat.IsV2(buffer.AsSpan(0, read)))
-            return null;
-        try
+    private static TapeMediaFragment SetContentFragment(int ordinal, long startBlock, TapeFilePeek file)
+        => new()
         {
-            using var ms = new MemoryStream(buffer, 0, read, writable: false);
-            TapeFileHeader header = TapeFileHeader.Read(ms);
-            return new TapeMediaFragment
-            {
-                Ordinal = ordinal,
-                StartBlock = startBlock,
-                Kind = FragmentKind.SetContent,
-                Id = header.SetId,
-                Description = header.Name,
-            };
-        }
-        catch (TapeFormatException)
-        {
-            return null;
-        }
-    }
+            Ordinal = ordinal,
+            StartBlock = startBlock,
+            Kind = FragmentKind.SetContent,
+            Id = file.SetId,
+            Description = file.Name,
+        };
 
     private static TapeMediaFragment UnknownFragment(int ordinal, long startBlock, string? fingerprint)
         => new()
@@ -401,14 +327,11 @@ public sealed partial class TapeScanner
     private TapeCalibrationMediaInfo? InspectCalibrationTrail(IProgress<TapeScanProgress>? progress)
     {
         ReportPhase(progress, TapeScanProgress.PhaseInspectingCalibration, ordinal: 1);
-
         try
         {
             var info = new TapeCalibrator(Drive).InspectMedia();
-
             if (info is null)
                 m_logger.LogTrace("{Prefix}: Scan: calibration trail present but not inspectable", LogPrefix);
-
             return info;
         }
         catch (Exception ex)

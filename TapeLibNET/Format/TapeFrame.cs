@@ -144,7 +144,7 @@ public static class TapeFrame
 
     /// <summary>
     /// 2.1 frame, or the legacy form via <see cref="ITapeFramedRecord{TSelf}.TryReadLegacy"/> when the magic is absent.
-    /// Never throws.
+    ///  Never throws.
     /// </summary>
     public static TapeFrameStatus TryUnpackWithLegacy<T>(ReadOnlySpan<byte> data, out T? value,
         out int frameLength, out TapeFormatException? error) where T : class, ITapeFramedRecord<T>

@@ -61,7 +61,7 @@ internal abstract class TapeHeaderWire
 ///  physical write path.
 /// </para>
 /// </remarks>
-public abstract record TapeHeader : ITapeFramedRecord<TapeHeader>
+public abstract record TapeHeader : ITapeFramedRecord<TapeHeader>, ITapeBlockPeeker<TapeHeader>
 {
     /// <summary>
     /// Fixed on-tape block size for the backup media/set headers, reusing the TOC's proven 16 KiB block — large enough to
@@ -115,6 +115,10 @@ public abstract record TapeHeader : ITapeFramedRecord<TapeHeader>
     /// <summary>Parses a LEGACY header frame (<c>[int32 len][payload][crc32]</c>) at the start of the block. Never throws.</summary>
     public static TapeFrameStatus TryReadLegacy(ReadOnlySpan<byte> block, out TapeHeader? record)
         => LegacyFramer.TryUnpack<TapeHeader>(block.ToArray(), block.Length, LegacyHeaderReader.Read, out record);
+
+    /// <summary>The header family's peeker (Design-TocLocation §3.2): media, set or calibration, in either format. Total.</summary>
+    static TapeFrameStatus ITapeBlockPeeker<TapeHeader>.TryPeek(ReadOnlySpan<byte> block, out TapeHeader? peek)
+        => TapeFrame.TryUnpackWithLegacy(block, out peek, out _, out _);
 
     #endregion
 

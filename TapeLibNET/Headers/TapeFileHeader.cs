@@ -32,7 +32,7 @@ namespace TapeLibNET.Headers;
 ///  <see cref="TapeFileInfo.SizeOnTape"/> covers all three.
 /// </para>
 /// </remarks>
-internal sealed class TapeFileHeader : ITapeRecord<TapeFileHeader>
+internal sealed class TapeFileHeader : ITapeRecord<TapeFileHeader>, ITapeBlockPeeker<TapeFilePeek>
 {
     /// <summary>
     /// Upper bound of everything a V2 file adds in front of its body, EXCLUDING the name bytes: prologue, the seven
@@ -90,6 +90,31 @@ internal sealed class TapeFileHeader : ITapeRecord<TapeFileHeader>
     public void WriteBody(TapeFieldWriter fields) => s_schema.Write(fields, this);
     public static bool Accepts(TapeRecordKind kind) => kind == TapeRecordKind.FileHeader;
     public static TapeFileHeader ReadBody(TapeFieldReader fields) => s_schema.Read(fields, new TapeFileHeader());
+
+    #endregion
+
+    #region *** ITapeBlockPeeker ***
+
+    /// <summary>
+    /// The file header's peeker (Design-TocLocation §3.2): a CRC-verified frame at the block start, and what it names.
+    ///  Total — a name that does not decode is <see cref="TapeFrameStatus.Unparseable"/>.
+    /// </summary>
+    static TapeFrameStatus ITapeBlockPeeker<TapeFilePeek>.TryPeek(ReadOnlySpan<byte> block, out TapeFilePeek peek)
+    {
+        peek = default;
+        TapeFrameStatus status = TapeFrame.TryUnpack(block, out TapeFileHeader? header, out _, out _);
+        if (status != TapeFrameStatus.Ok)
+            return status;
+        try
+        {
+            peek = new TapeFilePeek(header!.SetId, header.FileId, header.Name);
+            return TapeFrameStatus.Ok;
+        }
+        catch (TapeFormatException)
+        {
+            return TapeFrameStatus.Unparseable;
+        }
+    }
 
     #endregion
 

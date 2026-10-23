@@ -212,8 +212,17 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
             }
 
             ours |= IsOurs(first);
-            partitions.Add(WalkPartition(MediaPartition.Content, layout, fragments, progress,
-                crossFirstClosingMark: true, ref ours));
+
+            // Block 0 is identified like every other block — a TOC copy there is harvested like every other copy.
+            if (first.Kind == FragmentKind.TOC && Options.HarvestTocCopies && !HarvestLastTocCopy(fragments, progress))
+            {
+                LatchFailure();
+                partitions.Add(new ScannedPartition(MediaPartition.Content, FragmentCount: 1, Truncated: true,
+                    TerminatorWin32: (uint)LastErrorWin32));
+            }
+            else
+                partitions.Add(WalkPartition(MediaPartition.Content, layout, fragments, progress,
+                    crossFirstClosingMark: true, ref ours));
         }
 
         // ── Initiator partition ────────────────────────────────────────────────────────────────────────

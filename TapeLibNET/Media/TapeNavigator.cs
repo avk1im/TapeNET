@@ -1216,8 +1216,25 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
         base.OnMediaHeaderWritten(setHeadersExpected);
         TOCUnlocated = true;
     }
-    
+
     #endregion  // Notifications
+
+
+    #region *** TOC positioning ***
+
+    /// <summary>
+    /// Whether the block at the head is a TOC copy's first block — identified by the one dispatcher. Reads it and
+    ///  returns to it; on a failed return the drive carries the error.
+    /// </summary>
+    protected bool IsTOCAtCurrentBlock()
+    {
+        long block = Drive.CurrentBlock;
+        IdentifiedBlock id = TapeHeaderBlock.ReadAndIdentify(Drive, out _, out _, out _, out _);
+        ResetError();
+        return Drive.MoveToBlock(block) && id.Kind == HeaderBlockIdentity.TocCopy;
+    }
+
+    #endregion
 
 
     #region *** Content positioning ***
@@ -1351,10 +1368,9 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
             return false;
 
         // Begin-of-content by EVIDENCE, not by cached presence: a media header at BOM is skipped with its mark.
-        var block = new byte[TapeHeaderBlock.Size];
-        int read = TapeHeaderBlock.Read(Drive, block, out TapeHeader? header);
+        bool headed = TapeHeaderBlock.ReadAndIdentify(Drive, out _, out _, out _, out _)
+            .TryGetHeader<TapeMediaHeader>(out _);
         ResetError();
-        bool headed = read > 0 && header is TapeMediaHeader;
         if (!Drive.Rewind() || (headed && !Drive.MoveToNextFilemark(1)))
             return false;
         long bocBlock = Drive.CurrentBlock;
@@ -1368,12 +1384,9 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
         }
 
         // (2) Zero content sets: the TOC itself stands at begin-of-content.
-        read = TapeHeaderBlock.Read(Drive, block, out _);
-        bool tocAtBoc = read > 0 && TapeTOC.TryPeek(block, read, out _, out _);
-        ResetError();
-        if (!Drive.MoveToBlock(bocBlock))
-            return false;
-
+        bool tocAtBoc = IsTOCAtCurrentBlock();
+        if (!tocAtBoc && WentBad)
+            return false;                       // could not return to begin-of-content
         if (tocAtBoc)
         {
             m_logger.LogTrace("Drive #{Drive}: No content marks, and a TOC copy at begin-of-content — no content sets",
@@ -1609,18 +1622,6 @@ public class TapeNavigatorTOCInSetWithFmks : TapeNavigatorTOCInSet
             }
         }
         return false;
-    }
-
-#warning "In Design-TocLocation Phase 1, replace with a call to the shared classifier!"
-    /// <summary>Whether the block at the head is a TOC copy's first block. Reads it and returns to it.</summary>
-    protected bool IsTOCAtCurrentBlock()
-    {
-        long block = Drive.CurrentBlock;
-        var buffer = new byte[TapeHeaderBlock.Size];
-        int read = TapeHeaderBlock.Read(Drive, buffer, out _);
-        bool isToc = read > 0 && TapeTOC.TryPeek(buffer, read, out _, out _);
-        ResetError();
-        return Drive.MoveToBlock(block) && isToc;
     }
 
     /// <inheritdoc/>

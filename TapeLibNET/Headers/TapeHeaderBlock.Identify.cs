@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
 using TapeLibNET.Format;
@@ -5,7 +6,6 @@ using TapeLibNET.Legacy;
 using TapeLibNET.Toc;
 
 namespace TapeLibNET.Headers;
-
 
 /// <summary>What one block turned out to be. Every value but <see cref="Foreign"/> is a POSITIVE finding.</summary>
 /// <remarks>
@@ -16,123 +16,113 @@ namespace TapeLibNET.Headers;
 public enum HeaderBlockIdentity
 {
     /// <summary>
-    /// Nothing we recognize as a header or TOC: foreign data, file content (legacy, or a 2.1 file header at a block
-    ///  boundary), or a record damaged in its magic / signature.
+    /// Nothing we recognize: foreign data, legacy file content, an unverified 2.1 file header (a file body that merely
+    ///  starts with the magic), or a record damaged in its magic / signature.
     /// </summary>
     Foreign = 0,
+
     /// <summary>A framed header that verified and parsed: media, set, or calibration.</summary>
     Header,
+
     /// <summary>
     /// A record of ours that did NOT verify — a torn frame, a CRC mismatch, or an intact record this build cannot read
     ///  (unknown kind, newer format, unknown critical field).
     /// </summary>
     DamagedRecord,
-    /// <summary>The first block of a table-of-contents copy, verified structurally by <see cref="TapeTOC.TryPeek"/>.</summary>
+
+    /// <summary>The first block of a table-of-contents copy; <see cref="IdentifiedBlock.Toc"/> says what it describes.</summary>
     TocCopy,
+
     /// <summary>
     /// A 2.1 calibration checkpoint block, identified by its record kind (Design-FormatV21 §6). Legacy checkpoints carry
     ///  no kind of their own and still identify as <see cref="DamagedRecord"/>, as they always did.
     /// </summary>
     CalibrationCheckpoint,
+
+    /// <summary>
+    /// A CRC-verified 2.1 file header frame at the block start — the first file of a set (Design-TocLocation §3.2);
+    ///  <see cref="IdentifiedBlock.File"/> names it. Content, positively identified.
+    /// </summary>
+    FileHeader,
 }
 
 /// <summary>The outcome of <see cref="TapeHeaderBlock.IdentifyBlock"/>, with whatever evidence the kind carries.</summary>
 /// <param name="Kind">What the block is.</param>
 /// <param name="Header">Set for <see cref="HeaderBlockIdentity.Header"/>.</param>
-/// <param name="FrameStatus">Why the record failed; meaningful ONLY for <see cref="HeaderBlockIdentity.DamagedRecord"/>.</param>
-/// <param name="TocVersion">Set for <see cref="HeaderBlockIdentity.TocCopy"/>.</param>
-/// <param name="TocMediaId">Set for <see cref="HeaderBlockIdentity.TocCopy"/>; empty for a pre-MediaId TOC.</param>
+/// <param name="FrameStatus">Why the record failed for <see cref="HeaderBlockIdentity.DamagedRecord"/>; Ok for a verified record.</param>
+/// <param name="Toc">Set for <see cref="HeaderBlockIdentity.TocCopy"/>.</param>
+/// <param name="File">Set for <see cref="HeaderBlockIdentity.FileHeader"/>.</param>
+/// <remarks>Read through the typed accessors: <see cref="TryGetHeader{T}"/>, <see cref="TryGetToc"/>, <see cref="TryGetFile"/>.</remarks>
 public readonly record struct IdentifiedBlock(
     HeaderBlockIdentity Kind,
     TapeHeader? Header = null,
     TapeFrameStatus FrameStatus = TapeFrameStatus.NotFramed,
-    ushort TocVersion = 0,
-    Guid TocMediaId = default)
+    TapeTocPeek? Toc = null,
+    TapeFilePeek? File = null)
 {
     /// <summary>The foreign outcome, spelled out — rather than trusting <c>default</c> for a struct.</summary>
     public static readonly IdentifiedBlock Foreign = new(HeaderBlockIdentity.Foreign);
-}
 
-/// <summary>
-/// TOC-less identification of a block already read from tape (SM-2). Split out from the I/O half so a caller that holds
-///  bytes — and no TOC, no navigator, no agent — can still classify them.
-/// </summary>
-public static partial class TapeHeaderBlock
-{
-    #region *** Header parse ***
+    /// <summary>The TOC version for <see cref="HeaderBlockIdentity.TocCopy"/>; 0 otherwise.</summary>
+    public ushort TocVersion => Toc?.Version ?? 0;
 
-    /// <summary>
-    /// Parses one header block into its concrete kind. Pure, total, and TOC-free: any input that is not a valid framed
-    ///  header yields <see langword="false"/> rather than throwing.
-    /// </summary>
-    /// <param name="block">The block bytes as read from tape; only the frame at the front is examined.</param>
-    /// <param name="length">Bytes actually read (may be less than <paramref name="block"/>'s length).</param>
-    /// <param name="header">The media, set, or calibration header; null when unidentifiable.</param>
-    /// <returns><see langword="true"/> when a header of any kind was identified.</returns>
-    /// <remarks>
-    /// Costs ONE parse for all kinds and both formats: <see cref="TapeFramer.TryUnpackHeader(byte[], int, out TapeHeader?)"/>
-    ///  dispatches on the first bytes and on the record kind, and returns the right subtype. Padding beyond the frame is
-    ///  ignored.
-    /// <para>
-    /// Answers "is this an intact header?" only. A caller that must tell a DAMAGED header from foreign data, or
-    ///  recognize a TOC copy, uses <see cref="IdentifyBlock"/>.
-    /// </para>
-    /// <para>
-    /// <b>Deliberately NOT a change to <see cref="TapeAgentBase.ClassifySetHeader"/>.</b> That method takes an
-    ///  already-parsed <see cref="TapeSetHeader"/> and compares it with the TOC's expectation — it never parses.
-    /// </para>
-    /// </remarks>
-    public static bool TryIdentifyHeaderBlock(byte[] block, int length, out TapeHeader? header)
+    /// <summary>The TOC's series identity for <see cref="HeaderBlockIdentity.TocCopy"/>; empty otherwise.</summary>
+    public Guid TocMediaId => Toc?.MediaId ?? Guid.Empty;
+
+    /// <summary>The intact header of kind <typeparamref name="T"/>, if that is what the block is.</summary>
+    public bool TryGetHeader<T>([NotNullWhen(true)] out T? header) where T : TapeHeader
     {
-        header = null;
-        if (block is null || length <= 0 || length > block.Length)
-            return false;
-
-        // Classify() is already total, so no try/catch is warranted here. Wrapping it in one would only hide a future
-        //  regression in that guarantee.
-        header = Classify(block, length);
+        header = Kind == HeaderBlockIdentity.Header ? Header as T : null;
         return header is not null;
     }
 
-    /// <summary>Span overload for callers holding a slice rather than the whole block. Copies into a temporary.</summary>
-    /// <remarks>
-    /// Provided for call-site convenience only. The scanner uses the array overload, which allocates nothing beyond the
-    ///  buffer it already owns — worth preferring on the per-fragment path.
-    /// </remarks>
-    public static bool TryIdentifyHeaderBlock(ReadOnlySpan<byte> block, out TapeHeader? header)
-        => TryIdentifyHeaderBlock(block.ToArray(), block.Length, out header);
+    /// <summary>What the TOC copy says, if the block is one.</summary>
+    public bool TryGetToc(out TapeTocPeek toc)
+    {
+        toc = Toc ?? default;
+        return Kind == HeaderBlockIdentity.TocCopy && Toc is not null;
+    }
 
-    #endregion
+    /// <summary>What the file header says, if the block is one.</summary>
+    public bool TryGetFile(out TapeFilePeek file)
+    {
+        file = File ?? default;
+        return Kind == HeaderBlockIdentity.FileHeader && File is not null;
+    }
+}
 
-    #region *** Positive identification ***
+/// <summary>
+/// TOC-less identification of a block already read from tape (SM-2) — THE dispatcher (Design-TocLocation §3). Split out
+///  from the I/O half so a caller that holds bytes — and no TOC, no navigator, no agent — can still classify them.
+/// </summary>
+public static partial class TapeHeaderBlock
+{
+    #region *** The dispatcher ***
 
     /// <summary>
-    /// Identifies one block positively: a TOC copy, an intact header, a calibration checkpoint, a damaged record — or
-    ///  none of them. Pure, total, TOC-free (Design-FormatV21 §6).
+    /// Identifies one block positively: a TOC copy, an intact header, a calibration checkpoint, a file header, a damaged
+    ///  record — or none of them. Pure, total, TOC-free. EVERY classification in the library ends here.
     /// </summary>
     /// <remarks>
     /// <para>
     /// <b>Format first, by the first bytes.</b> <c>TpN#</c> at byte 0 is a 2.1 record; anything else goes to the frozen
-    ///  legacy probe (<see cref="LegacyIdentify.IdentifyBlock"/>). No legacy record can begin with the magic: a legacy
-    ///  TOC or file header starts with <c>"TF"</c>, a legacy frame with an int32 length whose byte 3 is zero.
+    ///  legacy probe (<see cref="LegacyIdentify.IdentifyBlock"/>). No legacy record can begin with the magic.
     /// </para>
     /// <para>
-    /// <b>2.1, by the record kind:</b>
+    /// <b>2.1, by the record kind, to the type that owns it</b> (<see cref="ITapeBlockPeeker{TPeek}"/>):
     /// <list type="bullet">
-    ///   <item><c>TocHeader</c> → <see cref="HeaderBlockIdentity.TocCopy"/> when its header record parses
-    ///    (<see cref="TapeTOC.TryPeek"/>), else <see cref="HeaderBlockIdentity.DamagedRecord"/>.</item>
-    ///   <item><c>FileHeader</c> → <see cref="HeaderBlockIdentity.Foreign"/>: content, the first file of a set standing at
-    ///    a block boundary — not a damaged or newer record.</item>
-    ///   <item><c>CalibrationCheckpoint</c> → <see cref="HeaderBlockIdentity.CalibrationCheckpoint"/> when it verifies,
-    ///    else <see cref="HeaderBlockIdentity.DamagedRecord"/> with the reason.</item>
-    ///   <item>Every other kind → the header frame: <see cref="HeaderBlockIdentity.Header"/> when it verifies and parses,
-    ///    else <see cref="HeaderBlockIdentity.DamagedRecord"/> with the reason. An unknown kind or a newer major with an
-    ///    intact CRC is "ours, from a newer TapeNET" (<see cref="TapeFrameStatus.Unparseable"/>).</item>
+    ///   <item><c>TocHeader</c> → <see cref="TapeTOC"/> → <see cref="HeaderBlockIdentity.TocCopy"/>, else damaged.</item>
+    ///   <item><c>FileHeader</c> → <see cref="TapeFileHeader"/> → <see cref="HeaderBlockIdentity.FileHeader"/> when the frame
+    ///    verifies, else <see cref="HeaderBlockIdentity.Foreign"/>: a set's first block may be a file BODY that starts with
+    ///    the magic by chance, so an unverified frame is no evidence of damage.</item>
+    ///   <item><c>CalibrationCheckpoint</c> → <see cref="TapeCalibrationCheckpoint"/>, else damaged.</item>
+    ///   <item>Every other kind → <see cref="TapeHeader"/> → <see cref="HeaderBlockIdentity.Header"/>, else damaged. An unknown
+    ///    kind or a newer major with an intact CRC is "ours, from a newer TapeNET" (<see cref="TapeFrameStatus.Unparseable"/>).</item>
     /// </list>
     /// </para>
     /// <para>
-    /// A record whose MAGIC is damaged cannot be told from foreign data, and is reported as
-    ///  <see cref="HeaderBlockIdentity.Foreign"/>. A record damaged BEHIND its magic is ours, damaged — never a phantom TOC (F23).
+    /// A record whose MAGIC is damaged cannot be told from foreign data. A record damaged BEHIND its magic is ours,
+    ///  damaged — never a phantom TOC (F23).
     /// </para>
     /// </remarks>
     public static IdentifiedBlock IdentifyBlock(byte[] block, int length)
@@ -151,17 +141,25 @@ public static partial class TapeHeaderBlock
         switch ((TapeRecordKind)prologue.RawKind)
         {
             case TapeRecordKind.TocHeader:
+            {
                 // The TOC stream carries no per-block CRC; a header record that does not parse is damaged or newer.
-                return TapeTOC.TryPeek(block, length, out ushort tocVersion, out Guid tocMediaId)
-                    ? new(HeaderBlockIdentity.TocCopy, TocVersion: tocVersion, TocMediaId: tocMediaId)
-                    : new(HeaderBlockIdentity.DamagedRecord, FrameStatus: TapeFrameStatus.Unparseable);
+                TapeFrameStatus status = TapeBlockPeek.Run<TapeTOC, TapeTocPeek>(data, out TapeTocPeek toc);
+                return status == TapeFrameStatus.Ok
+                    ? new(HeaderBlockIdentity.TocCopy, FrameStatus: status, Toc: toc)
+                    : new(HeaderBlockIdentity.DamagedRecord, FrameStatus: status);
+            }
 
             case TapeRecordKind.FileHeader:
-                return IdentifiedBlock.Foreign;    // content: the first file of a set at a block boundary
+            {
+                TapeFrameStatus status = TapeBlockPeek.Run<TapeFileHeader, TapeFilePeek>(data, out TapeFilePeek file);
+                return status == TapeFrameStatus.Ok
+                    ? new(HeaderBlockIdentity.FileHeader, FrameStatus: status, File: file)
+                    : IdentifiedBlock.Foreign;      // unverified: maybe a body starting with the magic — no evidence
+            }
 
             case TapeRecordKind.CalibrationCheckpoint:
             {
-                var status = TapeFrame.TryUnpack(data, out TapeCalibrationCheckpoint? _, out _, out _);
+                TapeFrameStatus status = TapeBlockPeek.Run<TapeCalibrationCheckpoint, TapeCalibrationCheckpoint>(data, out _);
                 return status == TapeFrameStatus.Ok
                     ? new(HeaderBlockIdentity.CalibrationCheckpoint, FrameStatus: status)
                     : new(HeaderBlockIdentity.DamagedRecord, FrameStatus: status);
@@ -169,13 +167,42 @@ public static partial class TapeHeaderBlock
 
             default:
             {
-                var status = TapeFramer.TryUnpackHeader(block, length, out TapeHeader? header);
+                TapeFrameStatus status = TapeBlockPeek.Run<TapeHeader, TapeHeader>(data, out TapeHeader? header);
                 return status == TapeFrameStatus.Ok && header is not null
                     ? new(HeaderBlockIdentity.Header, Header: header, FrameStatus: status)
-                    : new(HeaderBlockIdentity.DamagedRecord, FrameStatus: status);
+                    : new(HeaderBlockIdentity.DamagedRecord,
+                        FrameStatus: status == TapeFrameStatus.Ok ? TapeFrameStatus.Unparseable : status);
             }
         }
     }
+
+    #endregion
+
+    #region *** Projections — one-line views of the dispatcher ***
+
+    /// <summary>
+    /// The intact header a block holds — media, set, or calibration, in either format — or <see langword="null"/> for
+    ///  everything else. A projection of <see cref="IdentifyBlock"/>.
+    /// </summary>
+    public static TapeHeader? Classify(byte[] buffer, int length) => IdentifyBlock(buffer, length).Header;
+
+    /// <summary>
+    /// "Is this an intact header?" — a projection of <see cref="IdentifyBlock"/>. A caller that must tell a DAMAGED
+    ///  header from foreign data, or recognize a TOC copy or a file header, uses <see cref="IdentifyBlock"/>.
+    /// </summary>
+    /// <remarks>
+    /// <b>Deliberately NOT a change to <see cref="TapeAgentBase.ClassifySetHeader"/>.</b> That method takes an
+    ///  already-parsed <see cref="TapeSetHeader"/> and compares it with the TOC's expectation — it never parses.
+    /// </remarks>
+    public static bool TryIdentifyHeaderBlock(byte[] block, int length, out TapeHeader? header)
+    {
+        header = IdentifyBlock(block, length).Header;
+        return header is not null;
+    }
+
+    /// <summary>Span overload for callers holding a slice rather than the whole block. Copies into a temporary.</summary>
+    public static bool TryIdentifyHeaderBlock(ReadOnlySpan<byte> block, out TapeHeader? header)
+        => TryIdentifyHeaderBlock(block.ToArray(), block.Length, out header);
 
     #endregion
 
@@ -201,18 +228,12 @@ public static partial class TapeHeaderBlock
     {
         if (block is null || length <= 0)
             return false;
+
         int usable = Math.Min(length, block.Length);
         return TapeFormat.IsV2(block.AsSpan(0, usable))
-            || HasSignatureAt(block, usable, 0, out _)
-            || HasSignatureAt(block, usable, FramedPayloadOffset, out _);
+            || LegacyIdentify.HasSignatureAt(block, usable, 0, out _)
+            || LegacyIdentify.HasSignatureAt(block, usable, FramedPayloadOffset, out _);
     }
-
-    /// <summary>
-    /// Validates the LEGACY signature at one offset, accepting any plausible 0x01xx version. Every malformed input is
-    ///  "not ours". Frozen in <see cref="LegacyIdentify.HasSignatureAt"/>.
-    /// </summary>
-    private static bool HasSignatureAt(byte[] block, int usable, int offset, out ushort version)
-        => LegacyIdentify.HasSignatureAt(block, usable, offset, out version);
 
     #endregion
 }

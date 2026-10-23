@@ -1,12 +1,12 @@
 using System.Buffers.Binary;
 using System.Reflection;
 using System.Text;
-
 using TapeLibNET.Agents;
 using TapeLibNET.Compression;
-using TapeLibNET.Format;
-using TapeLibNET.Legacy;
 using TapeLibNET.Encryption;
+using TapeLibNET.Format;
+using TapeLibNET.Headers;
+using TapeLibNET.Legacy;
 
 namespace TapeLibNET.Toc;
 
@@ -532,7 +532,7 @@ public partial class TapeSetTOC
 
 #region *** TapeTOC — SaveTo / LoadFrom / TryPeek ***
 
-public partial class TapeTOC
+public partial class TapeTOC : ITapeBlockPeeker<TapeTocPeek>
 {
     /// <summary>
     /// TOC version reported for 2.1 TOC copies (<c>Major &lt;&lt; 8 | Minor</c>), e.g. by Scan Media. Legacy TOCs
@@ -774,45 +774,50 @@ public partial class TapeTOC
     }
 
     /// <summary>
-    /// Whether <paramref name="block"/> — the FIRST block of a stream — opens a TOC copy, in either format.
+    /// Whether <paramref name="block"/> — the FIRST block of a stream — opens a TOC copy, in either format. A projection
+    ///  of <see cref="TapeHeaderBlock.IdentifyBlock"/>: one classification, wherever it is asked.
     /// </summary>
-    /// <param name="version">
-    /// <c>Major &lt;&lt; 8 | Minor</c> as written for a 2.1 copy (<see cref="TocVersion"/> for this build's own), or the
-    ///  legacy TOC version.
-    /// </param>
-    /// <param name="mediaId">The series identity; <see cref="Guid.Empty"/> when the TOC carries none.</param>
-    /// <remarks>
-    /// A 2.1 copy is identified positively: magic, kind <c>TocHeader</c> as the FIRST record, supported major, and a
-    ///  <c>TocHeader</c> body that parses. A copy from a newer major is not recognized here (Scan Media reports it as
-    ///  "ours, from a newer TapeNET"). Anything without the magic goes to the legacy probe, unchanged.
-    /// </remarks>
-    public static bool TryPeek(byte[] block, int length, out ushort version, out Guid mediaId)
+    internal static bool TryPeek(byte[] block, int length, out ushort version, out Guid mediaId)
     {
         ArgumentNullException.ThrowIfNull(block);
-        ReadOnlySpan<byte> data = block.AsSpan(0, Math.Clamp(length, 0, block.Length));
+        bool ok = TapeHeaderBlock.IdentifyBlock(block, Math.Clamp(length, 0, block.Length)).TryGetToc(out TapeTocPeek peek);
+        version = ok ? peek.Version : (ushort)0;
+        mediaId = ok ? peek.MediaId : Guid.Empty;
+        return ok;
+    }
 
-        if (!TapeFormat.IsV2(data))
-            return LegacyIdentify.TryPeekToc(block, length, out version, out mediaId);
-
-        version = 0;
-        mediaId = Guid.Empty;
-
+    /// <summary>
+    /// The TOC's peeker (Design-TocLocation §3.2): a 2.1 copy is identified positively — magic, kind <c>TocHeader</c> as
+    ///  the FIRST record, supported major, and a <c>TocHeader</c> body that parses within the block. Legacy copies never
+    ///  reach here: the dispatcher routes them to the frozen probe. Total.
+    /// </summary>
+    static TapeFrameStatus ITapeBlockPeeker<TapeTocPeek>.TryPeek(ReadOnlySpan<byte> data, out TapeTocPeek peek)
+    {
+        peek = default;
         if (TapeRecordReader.ParsePrologue(data, out TapeRecordReader.Prologue p) != TapeRecordReader.PrologueStatus.Ok
-            || p.RawKind != (ushort)TapeRecordKind.TocHeader
-            || p.Major != TapeFormat.Major
-            || p.PrologueLength + p.BodyLength > data.Length)
-            return false;
+            || p.RawKind != (ushort)TapeRecordKind.TocHeader)
+            return TapeFrameStatus.NotFramed;
+        if (p.Major != TapeFormat.Major)
+            return TapeFrameStatus.Unparseable;                     // ours, from a newer TapeNET
+        if (p.PrologueLength + p.BodyLength > data.Length)
+            return TapeFrameStatus.NotFramed;                       // the header does not fit the block: torn
 
         try
         {
             var record = new TapeRecord(p.RawKind, p.Major, p.Minor, data.Slice(p.PrologueLength, p.BodyLength).ToArray());
-            mediaId = record.Read<TocHeaderWire>().MediaId;
-            version = (ushort)((p.Major << 8) | p.Minor);
-            return true;
+            TocHeaderWire header = record.Read<TocHeaderWire>();
+            peek = new TapeTocPeek(
+                Version: (ushort)((p.Major << 8) | p.Minor),
+                MediaId: header.MediaId,
+                IsLegacy: false,
+                Volume: header.Volume,
+                LastSaveTime: header.LastSaveTime,
+                SetCount: header.SetCount);
+            return TapeFrameStatus.Ok;
         }
         catch (TapeFormatException)
         {
-            return false;
+            return TapeFrameStatus.Unparseable;
         }
     }
 }

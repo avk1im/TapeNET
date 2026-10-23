@@ -5,9 +5,9 @@ using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Headers;
 
-
 /// <summary>
-/// The single point of truth for reading and writing a header as ONE standard-sized tape block.
+/// The single point of truth for reading and writing a header as ONE standard-sized tape block — and for reading ANY
+///  block for identification (<see cref="ReadAndIdentify"/>).
 /// <para>
 /// SCOPE: pure block I/O at the CURRENT tape position. Positioning is the caller's job and stays where
 ///  it belongs — the navigator/manager for the agent, <c>PrepareDrive</c>/<c>Rewind</c> for the
@@ -21,9 +21,9 @@ namespace TapeLibNET.Headers;
 ///  is what lets each subsystem classify the other's media: a 16 KiB read always spans a whole header
 ///  block, whatever wrote it.
 /// <para>
-/// <b>The <c>.Identity</c> partial</b> implements the TOC-less identification of a block already read
-///  from tape (SM-2). Split out from the main I/O partial so a caller that holds bytes can still classify
-///  them — without TOC, navigator, or agent.
+/// <b>The <c>.Identify</c> partial</b> holds THE dispatcher, <see cref="IdentifyBlock"/>: the TOC-less identification
+///  of a block already read (SM-2). Every classification in the library — scanner, navigator, agent, calibrator — ends
+///  there (Design-TocLocation §3).
 /// </para>
 /// <para>
 /// <b>Three layers, and what each one buys.</b>
@@ -60,6 +60,8 @@ public static partial class TapeHeaderBlock
     /// </summary>
     public const bool WritesTrailingMark = true;
 
+    #region *** Framing and writing ***
+
     /// <summary>
     /// Frames <paramref name="header"/> into exactly <see cref="Size"/> bytes — a 2.1 block frame (<c>Record ‖ CRC-64</c>,
     ///  magic first), remainder zero padding, ignored on read.
@@ -69,20 +71,15 @@ public static partial class TapeHeaderBlock
     public static byte[]? Frame(TapeHeader header)
     {
         ArgumentNullException.ThrowIfNull(header);
+
         byte[] frame = TapeFramer.PackHeader(header);
         if (frame.Length > Size)
             return null;
+
         var block = new byte[Size];
         Array.Copy(frame, block, frame.Length);
         return block;
     }
-
-    /// <summary>
-    /// Classifies a block that was already read, returning the concrete header kind (media, set, calibration) in either
-    ///  format, or <see langword="null"/> for blank / foreign / torn / unreadable.
-    /// </summary>
-    public static TapeHeader? Classify(byte[] buffer, int length)
-        => length > 0 ? TapeFramer.UnpackHeader(buffer, length) : null;
 
     /// <summary>
     /// Writes <paramref name="header"/> as one standard block at the CURRENT position, temporarily
@@ -99,7 +96,6 @@ public static partial class TapeHeaderBlock
             drive.SetError(WIN32_ERROR.ERROR_INSUFFICIENT_BUFFER, "Header frame exceeds the standard header block");
             return false;
         }
-
         return WriteFramed(drive, block);
     }
 
@@ -143,12 +139,17 @@ public static partial class TapeHeaderBlock
         }
     }
 
+    #endregion
+
+    #region *** Reading ***
+
     /// <summary>
     /// Reads one standard block at the CURRENT position into <paramref name="buffer"/> (which must be at
-    ///  least <see cref="Size"/> bytes) and classifies it. The drive's block size is set for the read and
+    ///  least <see cref="Size"/> bytes) and returns the header it holds. The drive's block size is set for the read and
     ///  restored afterwards.
     /// </summary>
-    /// <param name="header">The concrete header kind, or null for blank / foreign / torn.</param>
+    /// <param name="header">The concrete header kind, or null for blank / foreign / torn — a projection of
+    ///  <see cref="IdentifyBlock"/>.</param>
     /// <returns>Bytes read, or ≤ 0 on failure (the drive carries the error).</returns>
     public static int Read(TapeDrive drive, byte[] buffer, out TapeHeader? header)
         => Read(drive, buffer, out header, out _, out _);
@@ -176,10 +177,61 @@ public static partial class TapeHeaderBlock
     public static int Read(TapeDrive drive, byte[] buffer, out TapeHeader? header,
                            out bool tapemark, out bool eod)
     {
+        int read = ReadBlock(drive, buffer, out tapemark, out eod);
+        header = read > 0 ? Classify(buffer, read) : null;
+        return read;
+    }
+
+    /// <summary>
+    /// Reads ONE block at the current position and identifies it — the shared read primitive of every block-by-block
+    ///  identification: the scanner's walk, the navigator's checks, the TOC search (Design-TocLocation §3.4).
+    /// </summary>
+    /// <param name="buffer">The block's bytes, for evidence (fingerprints) — valid up to <paramref name="read"/>.</param>
+    /// <param name="read">Bytes read; ≤ 0 when nothing was delivered (a mark, EOD, or a fault — the drive carries the error).</param>
+    /// <param name="tapemark">A mark stood at the position; the read crossed it.</param>
+    /// <param name="eod">End-of-data: nothing was ever written here.</param>
+    /// <returns>What the block is; <see cref="IdentifiedBlock.Foreign"/> when nothing was read.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Small-block drives</b> (Design-ScanMedia §4.6, and not optional). <see cref="IsSupportedBy"/> is false when the
+    ///  drive's maximum block is under 16 KiB — tiny virtual media, some pre-LTO drives — and the read then takes one
+    ///  native block instead; without the fallback every block on such a cartridge would identify as foreign.
+    /// </para>
+    /// <para>
+    /// The 16 KiB read also covers a TOC copy: the TOC is written at the same fixed block size as the headers, so its
+    ///  first block arrives whole.
+    /// </para>
+    /// <para>
+    /// <b>Moves the head</b> past the block (or the mark). Callers that must stay put return to the block themselves.
+    /// </para>
+    /// </remarks>
+    internal static IdentifiedBlock ReadAndIdentify(TapeDrive drive, out byte[] buffer, out int read,
+                                                    out bool tapemark, out bool eod)
+    {
+        ArgumentNullException.ThrowIfNull(drive);
+
+        if (IsSupportedBy(drive))
+        {
+            buffer = new byte[Size];
+            read = ReadBlock(drive, buffer, out tapemark, out eod);     // sets AND restores the block size
+        }
+        else
+        {
+            uint blockSize = drive.BlockSize > 0 ? drive.BlockSize : drive.DefaultBlockSize;
+            buffer = new byte[blockSize];
+            read = drive.ReadDirect(buffer, 0, buffer.Length, out tapemark, out bool boundary);
+            eod = boundary && !tapemark;    // the drive's `eof` covers marks too
+        }
+
+        return read > 0 ? IdentifyBlock(buffer, read) : IdentifiedBlock.Foreign;
+    }
+
+    /// <summary>One standard block, raw: sets and restores the block size, reports the boundaries.</summary>
+    private static int ReadBlock(TapeDrive drive, byte[] buffer, out bool tapemark, out bool eod)
+    {
         ArgumentNullException.ThrowIfNull(drive);
         ArgumentNullException.ThrowIfNull(buffer);
 
-        header = null;
         tapemark = false;
         eod = false;
 
@@ -196,14 +248,8 @@ public static partial class TapeHeaderBlock
                 return -1;
 
             int read = drive.ReadDirect(buffer, 0, Size, out tapemark, out bool boundary);
-
             // The drive's `eof` covers marks too; only a boundary WITHOUT a mark is end-of-data.
             eod = boundary && !tapemark;
-
-            if (read <= 0)
-                return read;
-
-            header = Classify(buffer, read);
             return read;
         }
         finally
@@ -212,6 +258,9 @@ public static partial class TapeHeaderBlock
         }
     }
 
+    #endregion
+
+    #region *** Drive support ***
 
     /// <summary>
     /// True when the drive can carry a standard header block. Drives whose maximum block is smaller
@@ -228,4 +277,6 @@ public static partial class TapeHeaderBlock
         if (previous != 0 && previous != Size)
             drive.SetBlockSize(previous);
     }
+
+    #endregion
 }
