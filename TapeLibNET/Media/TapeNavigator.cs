@@ -117,6 +117,13 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     public virtual bool TOCUnlocated { get; protected set; } = false;
 
     /// <summary>
+    /// Set when end-of-content had to be located on a volume that carries NO TOC
+    ///  (e.g. the TOC-mark layout found no mark). The agent reports it as a TOC
+    ///  anomaly; a new navigator — media change — starts clear.
+    /// </summary>
+    internal bool TOCMissing { get; private protected set; }
+
+    /// <summary>
     /// Content set to navigate to on the next <see cref="MoveToTargetContentSet"/> call.
     /// <para>0 = oldest set, 1 = second oldest, …; −1 = end-of-content (write position),
     ///  −2 = newest set, −3 = second newest, …</para>
@@ -1669,18 +1676,6 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
 
     #endregion // Private fields
 
-    #region *** Properties ***
-
-    /// <summary>
-    /// Set when end-of-content had to be located WITHOUT a TOC mark: whereas we expected 
-    ///  the TOC to be present, it turned out the volume carries no TOC.
-    ///  Picked up by the agent as a TOC anomaly (Design-TocLocation Phase 2); cleared when
-    ///  a TOC mark is written or found.
-    /// </summary>
-    internal bool TOCMarkMissing { get; private set; }
-
-    #endregion // Properties
-
 
     #region *** Constructors ***
 
@@ -1835,7 +1830,7 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
         if (Drive.MoveToNextFilemark(-1) && Drive.MoveToNextFilemark(1) && Drive.CurrentBlock == eodBlock)
         {
             m_tocMarkInvalidated = true;                // the next TOC write lays a fresh mark
-            TOCMarkMissing = true;
+            TOCMissing = true;
 
             m_logger.LogWarning("Drive #{Drive}: No TOC mark on tape — content ends at end-of-data (block {Block}) " +
                 "after a closing filemark; this volume carries no TOC", DriveNumber, eodBlock);
@@ -1862,7 +1857,7 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
         if (WentOK)
         {
             m_tocMarkInvalidated = false;
-            TOCMarkMissing = false;
+            TOCMissing = false;
 
             m_logger.LogTrace("Drive #{Drive}: Wrote TOC mark", DriveNumber);
         }
@@ -1881,7 +1876,7 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
         if (WentOK)
         {
             m_tocMarkInvalidated = false; // mark confirmed present on tape
-            TOCMarkMissing = false;
+            TOCMissing = false;
 
             m_logger.LogTrace("Drive #{Drive}: Moved forward past TOC mark", DriveNumber);
         }
@@ -1900,7 +1895,7 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
         if (WentOK)
         {
             m_tocMarkInvalidated = false; // mark confirmed present on tape
-            TOCMarkMissing = false;
+            TOCMissing = false;
 
             m_logger.LogTrace("Drive #{Drive}: Moved backward before TOC mark", DriveNumber);
         }

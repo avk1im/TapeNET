@@ -529,10 +529,10 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
         //  copy, a missing copy only by both.
         if (written == 2)
             ResolveTocAnomalies(tocNotify, TOC.Volume, TapeTocAnomalyStage.Retried,
-                TapeTocAnomalyKind.NoCopyWritten, TapeTocAnomalyKind.CopyWriteFailed);
+                TapeTocAnomalyKind.NoCopyWritten, TapeTocAnomalyKind.CopyWriteFailed, TapeTocAnomalyKind.NotFoundNatively);
         else
             ResolveTocAnomalies(tocNotify, TOC.Volume, TapeTocAnomalyStage.Retried,
-                TapeTocAnomalyKind.NoCopyWritten);
+                TapeTocAnomalyKind.NoCopyWritten, TapeTocAnomalyKind.NotFoundNatively);
 
         if (written == 1)
             NotifyTocAnomaly(tocNotify, BuildTocAnomaly(TapeTocAnomalyKind.CopyWriteFailed, TOC.Volume,

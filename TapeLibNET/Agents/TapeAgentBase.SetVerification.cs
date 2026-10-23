@@ -709,7 +709,10 @@ public partial class TapeAgentBase
             //  from "the volume holds fewer sets than the count demanded" — that needs the set
             //  accounting, which THIS layer has.
             if (!endAnchored || Navigator.CurrentContentSet != 0)
+            {
+                NoteVolumeWithoutToc(setNotify);
                 return true;    // ordinary success, nothing ambiguous
+            }
 
             if (TOC.CurrentSetIndexOnVolume == 0)
             {
@@ -721,6 +724,7 @@ public partial class TapeAgentBase
                     "this IS the volume's first set — restoring the end-anchored index",
                     Navigator.TargetContentSet);
                 Navigator.AssumeAtTargetContentSet();
+                NoteVolumeWithoutToc(setNotify);
                 return true;
             }
 
@@ -793,7 +797,7 @@ public partial class TapeAgentBase
             BuildSetAnomaly(TapeSetHeaderVerdict.Unreadable, header: null,
                 TapeSetAnomalyStage.Renavigated, canAttemptRecovery: false,
                 diagnosis: TapeResult.OK));
-
+        NoteVolumeWithoutToc(setNotify);
         return true;
     }
 

@@ -1,6 +1,10 @@
 using Microsoft.Extensions.Logging;
+
+using Windows.Win32.Foundation;
+
 using TapeLibNET.Drive;
 using TapeLibNET.Headers;
+using TapeLibNET.Media;
 
 namespace TapeLibNET.Agents;
 
@@ -163,6 +167,25 @@ public partial class TapeAgentBase
                 _stats.TocStats.VolumesWithoutToc = m_tocLostVolumes.Count;
             NotifyTocAnomalyRecovered(notify, open with { Stage = stage, Diagnosis = TapeResult.OK });
         }
+    }
+
+    /// <summary>
+    /// Records a volume the navigator found WITHOUT a TOC (<see cref="TapeNavigator.TOCMissing"/>) as
+    ///  <see cref="TapeTocAnomalyKind.NotFoundNatively"/> — once per volume. A TOC written to it later in the operation
+    ///  settles it (<see cref="TapeTocAnomalyStage.Retried"/>).
+    /// </summary>
+    protected void NoteVolumeWithoutToc(ITapeTocNotifiable? notify)
+    {
+        if (!Navigator.TOCMissing)
+            return;
+        int volume = TOC.Volume;
+        if (_tocAnomalies.Exists(a => a.Volume == volume && a.Kind == TapeTocAnomalyKind.NotFoundNatively))
+            return;
+        NotifyTocAnomaly(notify, BuildTocAnomaly(TapeTocAnomalyKind.NotFoundNatively, volume, 0,
+            TapeResult.Fail((uint)WIN32_ERROR.ERROR_NOT_FOUND,
+                $"Volume #{volume} carries no table of contents"
+                    + (Navigator is TapeNavigatorTOCInSetWithFmksAndTOCMark ?
+                        " — its TOC mark is missing" : string.Empty))));
     }
 
     #endregion

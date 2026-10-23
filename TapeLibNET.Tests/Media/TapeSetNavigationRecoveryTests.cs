@@ -70,11 +70,11 @@ public class TapeSetNavigationRecoveryTests
     }
 
     /// <summary>
-    /// A tape of <paramref name="setCount"/> sets with distinctly-named files, so a recovery that landed
+    /// A tape of <paramref name="setCount"/> setStats with distinctly-named files, so a recovery that landed
     ///  on the wrong set cannot masquerade as success.
     /// </summary>
     /// <remarks>
-    /// FIVE sets is the working minimum for the miscount injector on the setmark and partition layouts:
+    /// FIVE setStats is the working minimum for the miscount injector on the setmark and partition layouts:
     ///  the <c>-1</c> settle inside <c>MoveToEndOfContentCore</c> consumes the injection, so the tape must
     ///  be long enough that the cancelled settle still lands inside content.
     /// </remarks>
@@ -167,7 +167,7 @@ public class TapeSetNavigationRecoveryTests
     /// <remarks>
     /// <para>
     /// Asserts FOUR things, because the return value alone would pass for a version that deleted one set
-    ///  too many: the right sets survive and restore BYTE-FOR-BYTE, the wrong ones are gone, the TOC was
+    ///  too many: the right setStats survive and restore BYTE-FOR-BYTE, the wrong ones are gone, the TOC was
     ///  written, and the recovery was REPORTED — so the user learns the tail is unreliable.
     /// </para>
     /// <para>
@@ -200,11 +200,22 @@ public class TapeSetNavigationRecoveryTests
                 var result = agent.DeleteSetsFromCurrentSetUp(setNotify: notify);
                 Assert.True(result, $"the damaged tail must be recoverable: {result.ErrorMessage}");
 
-                var sets = agent.Statistics.SetStats;
-#warning "Review in Design-TocLocation Phase 2: The TOC-mark layout anchors on end-of-data once its mark is gone, so it lands exactly: nothing to recover. (The missing TOC is a TOC anomaly — Design-TocLocation Phase 2.)"
-                if (profile != DriveProfile.SeqFilemarks)   // see RestoreOnDamagedTail_AlsoRecovers
-                    Assert.True(sets.AnomaliesRecovered >= 1, "the drift must be reported as RECOVERED");
-                Assert.False(sets.SetWriteBlocked, "a recovered delete is not a blocked one");
+                var setStats = agent.Statistics.SetStats;
+                if (profile == DriveProfile.SeqFilemarks)
+                {
+                    // The TOC-mark layout anchors on end-of-data once its mark is gone: it lands exactly, so there is
+                    //  no set drift to recover. The fault is the missing TOC — detected, then settled by the delete's
+                    //  own TOC write.
+                    Assert.Equal(0, setStats.AnomaliesDetected);
+                    var tocStats = agent.Statistics.TocStats;
+                    Assert.Equal(1, tocStats.AnomaliesDetected);
+                    Assert.Equal(1, tocStats.AnomaliesRecovered);
+                    Assert.Contains(agent.TocAnomalies, a => a is
+                    { Kind: TapeTocAnomalyKind.NotFoundNatively, Stage: TapeTocAnomalyStage.Retried });
+                }
+                else
+                    Assert.True(setStats.AnomaliesRecovered >= 1, "the drift must be reported as RECOVERED");
+                Assert.False(setStats.SetWriteBlocked, "a recovered delete is not a blocked one");
             }
 
             // The TOC reached the tape, and describes what actually survives.
@@ -212,13 +223,17 @@ public class TapeSetNavigationRecoveryTests
             Assert.Equal(3, fixture.TOC.Count);
             Assert.Equal("Set 3", fixture.TOC[3].Description);
 
-            // The decisive assertion: the RIGHT sets survive, byte-for-byte.
+            // The decisive assertion: the RIGHT setStats survive, byte-for-byte.
             for (int i = 0; i < 3; i++)
                 AssertSetStillRestores(fixture, i + 1, trees[i]);
 
-            // And the user was told the tail is unreliable.
-#warning "Review in Design-TocLocation Phase 2: The TOC-mark layout anchors on end-of-data once its mark is gone, so it lands exactly: nothing to recover. (The missing TOC is a TOC anomaly — Design-TocLocation Phase 2.)"
-            if (profile != DriveProfile.SeqFilemarks)
+            // And the user was told: the tail is unreliable — or, on the TOC-mark layout, the TOC was missing.
+            if (profile == DriveProfile.SeqFilemarks)
+            {
+                Assert.Single(notify.TocAnomalies);
+                Assert.Single(notify.TocAnomaliesRecovered);
+            }
+            else
                 Assert.NotEmpty(notify.SetAnomaliesRecovered);
         }
         finally
@@ -256,10 +271,17 @@ public class TapeSetNavigationRecoveryTests
                 "the read path gets the same repair");
 
             AssertRestoredMatches(trees[3], restoreDir);
-            // The TOC-mark layout anchors on end-of-data once its mark is gone, so it lands exactly: nothing to
-            //  recover. (The missing TOC is a TOC anomaly — Design-TocLocation Phase 2.)
-#warning "Review in Design-TocLocation Phase 2: The TOC-mark layout anchors on end-of-data once its mark is gone, so it lands exactly: nothing to recover. (The missing TOC is a TOC anomaly — Design-TocLocation Phase 2.)"
-            if (profile != DriveProfile.SeqFilemarks)
+            if (profile == DriveProfile.SeqFilemarks)
+            {
+                // Lands exactly (end-of-data anchor): no set drift. The volume carries no TOC, and a restore writes
+                //  none — so the anomaly stays unsettled, and the service advises recovering the TOC.
+                Assert.Equal(0, agent.Statistics.SetStats.AnomaliesDetected);
+                var a = Assert.Single(agent.TocAnomalies);
+                Assert.Equal((TapeTocAnomalyKind.NotFoundNatively, TapeTocAnomalyStage.Detected), (a.Kind, a.Stage));
+                Assert.Equal(fixture.TOC.Volume, a.Volume);
+                Assert.Single(notify.TocAnomalies);
+            }
+            else
                 Assert.True(agent.Statistics.SetStats.AnomaliesRecovered >= 1);
         }
         finally
@@ -490,7 +512,7 @@ public class TapeSetNavigationRecoveryTests
             }
 
             // WRITE path: same injection, opposite terminal — but only if the renavigation did not settle
-            //  it. With a one-shot corruption it DOES settle, so the delete succeeds and the sets that
+            //  it. With a one-shot corruption it DOES settle, so the delete succeeds and the setStats that
             //  should survive do.
             fixture.TOC.CurrentSetIndex = 4;
             using (var agent = new TapeSetAgent(fixture.Drive, fixture.TOC))
@@ -547,7 +569,7 @@ public class TapeSetNavigationRecoveryTests
             Assert.Equal(0, agent.Statistics.SetStats.AnomaliesRecoveredFromBom);
             Assert.Single(notify.SetAnomalies);
 
-            // Nothing was destroyed, including the sets the delete was aiming at.
+            // Nothing was destroyed, including the setStats the delete was aiming at.
             for (int i = 0; i < trees.Length; i++)
                 AssertSetStillRestores(fixture, i + 1, trees[i]);
         }
@@ -714,7 +736,7 @@ public class TapeSetNavigationRecoveryTests
 
         const int setCount = 5;
         // Ensure the target set is closer to the end, so that agent will address it from the end
-        const int setIdx = setCount - 1; // last but one. TOC counts sets #1, 2, ..
+        const int setIdx = setCount - 1; // last but one. TOC counts setStats #1, 2, ..
 
         try
         {
@@ -943,7 +965,7 @@ public class TapeSetNavigationRecoveryTests
     /// <summary>
     /// The write path gets the same cure — and the cartridge comes back. A delete whose backward count
     ///  cannot complete now reaches its target from begin-of-content, verifies there, and deletes the
-    ///  right sets.
+    ///  right setStats.
     /// </summary>
     /// <remarks>
     /// The recovery only changes WHERE the head is; SH-13 is untouched, so the verification at the
@@ -976,7 +998,7 @@ public class TapeSetNavigationRecoveryTests
             fixture.LoadTOC();
             Assert.Equal(2, fixture.TOC.Count);
 
-            // The RIGHT sets survive, byte-for-byte.
+            // The RIGHT setStats survive, byte-for-byte.
             AssertSetStillRestores(fixture, 1, trees[0]);
             AssertSetStillRestores(fixture, 2, trees[1]);
         }
