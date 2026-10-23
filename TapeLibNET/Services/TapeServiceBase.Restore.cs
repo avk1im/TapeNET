@@ -97,7 +97,9 @@ public partial class TapeServiceBase
                 Outcome         = aborted ? ServiceReportLevel.Failed
                                     : failed ? ServiceReportLevel.Error
                                         : ServiceReportLevel.Completed,
-                Sets = progressHandler?.SetStats ?? new(),
+                SetStats = progressHandler?.SetStats ?? new(),
+                TocStats = agent is null ? default : agent.Statistics.TocStats,
+                TocAnomalies = agent is null ? [] : [.. agent.TocAnomalies],
             };
 
         if (_drive is null || !_drive.IsMediaLoaded)
@@ -148,6 +150,7 @@ public partial class TapeServiceBase
                 OnStatusUpdate("Reading TOC...");
 
                 var tocResult = agent.RestoreTOC();
+                ReportTocAnomalyOutcome(agent);
                 if (!tocResult)
                     throw new InvalidOperationException($"Couldn't restore TOC: {tocResult.ErrorMessage}");
 
@@ -407,7 +410,13 @@ public partial class TapeServiceBase
             var result = progressHandler.GenerateResult() with
             {
                 Diagnosis = agentResult,
-                // Sets = progressHandler.SetStats, // done already in GenerateResults()
+                // SetStats = progressHandler.SetStats, // done already in GenerateResults()
+
+                // TOC stats from the AGENT, not the handler: they can change without a callback
+                //  (initial TOC read, repeat findings per volume), so the handler's copy may go stale.
+                //  Set stats change only inside callbacks — the handler's are final.
+                TocStats = agent.Statistics.TocStats,
+                TocAnomalies = [.. agent.TocAnomalies],
             };
 
             // Ended on a volume that could not be used: no file counter shows it (nothing of that volume was
@@ -431,6 +440,7 @@ public partial class TapeServiceBase
                 pendingContinuation: agent.IsMultiVolumePending);
             ReportFileOperationStats(result, secsTotal: dataElapsedUs / 1e6, secsIo: dataIoElapsedUs / 1e6);
             ReportSetAnomalyOutcome(progressHandler.SetStats);
+            ReportTocAnomalyOutcome(agent);
             OnStatusUpdate($"{modeName} complete");
             return result;
         }

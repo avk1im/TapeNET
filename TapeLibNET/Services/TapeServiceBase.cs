@@ -1075,6 +1075,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 });
 
                 var tocResult = _agent.RestoreTOC();
+                ReportTocAnomalyOutcome(_agent);
                 if (!tocResult)
                 {
                     LastError = tocResult.ErrorMessage;
@@ -1212,6 +1213,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 });
 
                 var tocResult = _agent.RestoreTOC();
+                ReportTocAnomalyOutcome(_agent);
                 if (!tocResult)
                 {
                     LastError = tocResult.ErrorMessage;
@@ -1274,6 +1276,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 _agent = new TapeAgentBase(_drive, new TapeTOC(description));
 
                 var initResult = _agent.BackupInitialTOC();
+                ReportTocAnomalyOutcome(_agent);
                 if (!initResult)
                 {
                     LastError = initResult.ErrorMessage;
@@ -1526,6 +1529,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 _agent = new TapeAgentBase(_drive, new TapeTOC(description));
 
                 var initResult = _agent.BackupInitialTOC();
+                ReportTocAnomalyOutcome(_agent);
                 if (!initResult)
                 {
                     LastError = initResult.ErrorMessage;
@@ -1719,6 +1723,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 _agent?.Dispose();
                 _agent = new TapeAgentBase(_drive, _toc);
                 var tocResult = SaveTocCore(_agent);
+                ReportTocAnomalyOutcome(_agent);
                 if (!tocResult)
                 {
                     LastError = tocResult.ErrorMessage;
@@ -1791,6 +1796,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 _agent?.Dispose();
                 _agent = new TapeAgentBase(_drive, _toc);
                 var tocResult = SaveTocCore(_agent);
+                ReportTocAnomalyOutcome(_agent);
                 if (!tocResult)
                 {
                     LastError = tocResult.ErrorMessage;

@@ -1273,7 +1273,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         }
 
         _stats.Reset();
-        _setAnomalies.Clear();
+        ClearAnomalies();
         ResetLatchedFailure();
 
         MediaHeaderStamped = false; // reset for the new series (per-series, cross-volume artifact)

@@ -41,7 +41,7 @@ public partial class MainViewModel
 
             // Refused before anything was written (SH-13) — the tape and TOC are provably
             //  untouched, so no refresh is performed and no ambiguity is left for the user.
-            if (operationResult is { Sets.SetWriteBlocked: true })
+            if (operationResult is { SetStats.SetWriteBlocked: true })
             {
                 SimpleBox.Show(
                     "The backup set found on tape is not the one expected, so nothing was deleted. " +
@@ -67,7 +67,7 @@ public partial class MainViewModel
             else
             {
                 string message = $"{operationResult.SetsDeleted} backup set(s) deleted.";
-                if (operationResult.Sets.HasAnomalies)
+                if (operationResult.SetStats.HasAnomalies)
                     message += "\n\nBackup set positions had to be corrected during the operation — " +
                                "see log for details and advice.";
 

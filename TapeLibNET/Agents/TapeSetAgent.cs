@@ -1,11 +1,10 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using TapeLibNET.Drive;
 using TapeLibNET.Headers;
 using TapeLibNET.Toc;
 using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Agents;
-
 
 public class TapeSetAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgentBase(drive, legacyTOC)
 {
@@ -48,6 +47,10 @@ public class TapeSetAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgen
     ///  from there.
     /// </para>
     /// <para>
+    /// <b>The TOC write is reported too</b> (Design-TocLocation §5): a copy that could not be written reaches
+    ///  <paramref name="setNotify"/> as a TOC anomaly, and <see cref="TapeAgentBase.TocAnomalies"/> keeps it.
+    /// </para>
+    /// <para>
     /// Preconditions: <see cref="TapeTOC.CurrentSetIndex"/> names the first set to delete and must be on
     ///  the current volume (<see cref="TapeTOC.IsCurrentSetOnVolume"/>); the delete-all branch is
     ///  unsupported with an initiator partition — format the media instead.
@@ -57,18 +60,18 @@ public class TapeSetAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgen
     /// Forces the navigator to count from begin-of-content rather than choosing the nearest anchor —
     ///  useful when the TOC is missing or corrupted, so its filemark arithmetic should not be trusted.
     /// </param>
-    /// <param name="fileNotify">
-    /// Optional callback for set-level anomalies. Lets a caller handle a refused delete exactly as it
-    ///  handles a file failure — the same interface, the same abort semantics.
+    /// <param name="setNotify">
+    /// Optional callback for set-level and TOC-level anomalies. The name is kept from the time it was an
+    ///  <see cref="ITapeFileNotifiable"/>; any file notifiable still fits.
     /// </param>
     /// <returns>A <see cref="TapeResult"/> indicating success or failure with error details.</returns>
     public TapeResult DeleteSetsFromCurrentSetUp(bool navigateFromBegin = false,
-        ITapeFileNotifiable? fileNotify = null)
+        ITapeSetNotifiable? setNotify = null)
     {
         m_logger.LogTrace("Deleting sets from #{Set} up", TOC.CurrentSetIndex);
 
-        _stats.Reset();  // a delete is an operation; its set statistics start clean
-        _setAnomalies.Clear();
+        _stats.Reset();  // a delete is an operation; its set and TOC statistics start clean
+        ClearAnomalies();
         ResetLatchedFailure();
 
         // --- Precondition checks (before any tape I/O) ---
@@ -85,10 +88,9 @@ public class TapeSetAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgen
         //  NotifySetStart/End: those bracket a FILE loop, and a host would open a progress scope
         //  that never receives one.
         int setsAffected = TOC.LastSetOnVolume - TOC.CurrentSetIndex + 1;
-        _stats.Sets.SetsProcessed += setsAffected;
+        _stats.SetStats.SetsProcessed += setsAffected;
 
         bool deletingAll = TOC.CurrentSetIndex == TOC.FirstSetOnVolume;
-
         if (deletingAll && TOCPlacement == TapeTocPlacement.InPartition)
         {
             // Cannot erase all content when TOC is in a separate partition —
@@ -115,14 +117,15 @@ public class TapeSetAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgen
                 //  Navigate to the very beginning of content, then write an initial TOC
                 //  which overwrites everything from the first content block.
                 m_logger.LogTrace("Deleting all sets — navigating to beginning of content");
-                Manager.EndReadWrite();
 
+                Manager.EndReadWrite();
                 Navigator.MoveToBeginOfContent();   // Present ⇒ skips the header, lands at block 1
                 if (Navigator.WentBad)
                 {
                     SyncErrorFrom(Navigator);
                     return FailedOperationResult;
                 }
+
                 // We're now anchored at the begin of content -- clear any stale TargetContentSet
                 //  so that the verification below does not attempt to renavigate
                 Navigator.TargetContentSet = 0;
@@ -130,7 +133,7 @@ public class TapeSetAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgen
                 // Positional assertion: the block here must be THIS volume's first set header. A failure
                 //  means the head never cleared the media header -- and the TOC write below would then
                 //  land on it (INV-4).
-                if (verifies && !VerifyBeforeDestructiveWrite(fileNotify))
+                if (verifies && !VerifyBeforeDestructiveWrite(setNotify))
                     return FailedOperationResult;
 
                 // Remove sets on this volume from the TOC.
@@ -145,12 +148,12 @@ public class TapeSetAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgen
                     TOC.RemoveAllSets();
                 }
 
-                _stats.Sets.SetsSucceeded += setsAffected; // we're done deleting
+                _stats.SetStats.SetsSucceeded += setsAffected; // we're done deleting
 
                 // Write the TOC as if this were blank media — but do NOT rewrite the media header
                 //  (§10.8 / INV-4). We stand at block 1 (past the header at block 0), so the fresh
                 //  initial TOC overwrites content only; the header survives.
-                return BackupInitialTOC(writeHeader: false);
+                return BackupInitialTOC(writeHeader: false, tocNotify: setNotify);
             }
             else // deleting not all sets
             {
@@ -159,6 +162,7 @@ public class TapeSetAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgen
                 //  content setmark there. This overwrites the zombie setmarks and moves the EOD marker.
                 //  Then update the TOC and write it to tape.
                 m_logger.LogTrace("Navigating to set #{Set} for deletion", TOC.CurrentSetIndex);
+
                 Manager.EndReadWrite();
 
                 if (navigateFromBegin)
@@ -175,13 +179,13 @@ public class TapeSetAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgen
                 // SH-20: a backward count that fails positionally is retried from begin-of-content —
                 //  the same damaged tail this whole verb exists to repair, reported as a transport
                 //  error rather than as a wrong set.
-                if (!NavigateToTargetContentSet(fileNotify))
+                if (!NavigateToTargetContentSet(setNotify))
                     return FailedOperationResult;
 
                 // The set we are about to delete from must be the one the TOC describes -- this count
                 //  typically ran BACKWARD from end-of-content, across the very region a failed backup
                 //  would have damaged.
-                if (verifies && !VerifyBeforeDestructiveWrite(fileNotify))
+                if (verifies && !VerifyBeforeDestructiveWrite(setNotify))
                     return FailedOperationResult;
 
                 // Step back one setmark — to just before the setmark separating the last retained set
@@ -209,11 +213,11 @@ public class TapeSetAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgen
                 TOC.CurrentSetIndex = TOC.CurrentSetIndex - 1;
                 TOC.RemoveSetsAfterCurrent();
 
-                _stats.Sets.SetsSucceeded += setsAffected; // we're done deleting
+                _stats.SetStats.SetsSucceeded += setsAffected; // we're done deleting
 
                 // Save the updated TOC to tape. (Trailing delete never touches BOM, so the header is
                 //  untouched — no writeHeader flag involved here.)
-                return BackupTOC();
+                return BackupTOC(tocNotify: setNotify);
             }
         }
         catch (Exception ex)
@@ -222,7 +226,6 @@ public class TapeSetAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgen
             SetError(ex);
             return FailedOperationResult;
         }
-
     } // DeleteSetsFromCurrentSetUp()
 
     /// <summary>
@@ -235,9 +238,9 @@ public class TapeSetAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgen
     ///  A positive verdict always ends on a successful set-header read, so the set start is unambiguously
     ///  one block back (SH-15).
     /// </remarks>
-    private bool VerifyBeforeDestructiveWrite(ITapeFileNotifiable? fileNotify)
+    private bool VerifyBeforeDestructiveWrite(ITapeSetNotifiable? setNotify)
     {
-        if (!VerifySetHeaderForCurrentSet(fileNotify))
+        if (!VerifySetHeaderForCurrentSet(setNotify))
         {
             // Nothing has been written yet -- the tape is exactly as we found it.
             m_logger.LogError("Refusing to delete from set #{Set}: its set header did not verify",
@@ -257,7 +260,7 @@ public class TapeSetAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgen
             LatchFailure();
             return false;
         }
+
         return true;
     }
-
 }

@@ -230,7 +230,7 @@ public class EomClosedSetTests
             var stats = fx.RestoreAllFilesFromCurrentSet(dirB);
             FileComparer.AssertFilesMatch(setB.RootPath, setB.Files, RestoredRoot(dirB, setB.RootPath));
 
-            Assert.False(stats.Sets.HasAnomalies);
+            Assert.False(stats.SetStats.HasAnomalies);
         }
         finally
         {

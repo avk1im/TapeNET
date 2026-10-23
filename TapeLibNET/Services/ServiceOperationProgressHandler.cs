@@ -76,7 +76,8 @@ public abstract class ServiceOperationProgressHandler(
         FilesFailed    = stats.FilesFailed;
         FilesSkipped   = stats.FilesSkipped;
         BytesProcessed = stats.FileBytesProcessed;
-        SetStats       = stats.Sets; // ← ensure the set-level counters ride along
+        SetStats       = stats.SetStats; // ← ensure the set-level counters ride along
+        TocStats       = stats.TocStats;  // ← and the TOC-level ones
     }
 
     /// <summary>
@@ -346,6 +347,48 @@ public abstract class ServiceOperationProgressHandler(
     }
 
 
+    // ── TOC-level anomalies (Design-TocLocation §5) ──────────────────────────
+
+    /// <summary>TOC-level statistics for the operation, refreshed by <see cref="Sync"/>.</summary>
+    public TapeTocStatistics TocStats { get; private set; }
+
+    /// <summary>TOC anomalies reported to this handler, in order — once per volume, as the agent raises them.</summary>
+    public IReadOnlyList<TapeTocAnomaly> TocAnomalies => _tocAnomalies;
+    private readonly List<TapeTocAnomaly> _tocAnomalies = [];
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Reported, never asked: the agent has already done what can be done cheaply. The advice comes once, at the end of
+    ///  the operation, from <see cref="TapeServiceBase.ReportTocAnomalyOutcome(TapeAgentBase)"/>.
+    /// </remarks>
+    public virtual void OnTocAnomaly(in TapeTocAnomaly anomaly, in TapeFileStatistics stats)
+    {
+        Sync(stats);
+        _tocAnomalies.Add(anomaly);
+
+        var level = anomaly.Kind is TapeTocAnomalyKind.NoCopyWritten or TapeTocAnomalyKind.NoReadableCopy
+            or TapeTocAnomalyKind.NotFoundNatively
+            ? ServiceReportLevel.Failed
+            : ServiceReportLevel.Warning;
+        _host.Report(level, $"{DescribeTocVolume(anomaly.Volume)}: {anomaly.Summary}");
+        if (!anomaly.Diagnosis.Success && !string.IsNullOrWhiteSpace(anomaly.Diagnosis.ErrorMessage))
+            _host.Report(ServiceReportLevel.Warning, anomaly.Diagnosis.ErrorMessage, isSubEntry: true);
+        ReportProgress(stats);
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>At Warning, never Info — like a recovered set: the cartridge needed help, and the user should know.</remarks>
+    public virtual void OnTocAnomalyRecovered(in TapeTocAnomaly anomaly, in TapeFileStatistics stats)
+    {
+        Sync(stats);
+        _tocAnomalies.Add(anomaly);
+        _host.Report(ServiceReportLevel.Warning, $"{DescribeTocVolume(anomaly.Volume)}: {anomaly.RecoverySummary}");
+        ReportProgress(stats);
+    }
+
+    private static string DescribeTocVolume(int volume) => volume > 0 ? $"Volume #{volume}" : "Loaded volume";
+
+
     /// <summary>
     /// Renders a set in the standard TapeNET notation — <c>#std | alt &gt;description&lt;</c>.
     /// </summary>
@@ -473,13 +516,13 @@ public class ServiceRestoreProgressHandler(
     protected int TotalFilesToProcess { get; } = totalFilesToProcess;
     /// <summary>
     /// Per-set dictionary of successfully processed files, accumulated during the operation.
-    /// Key = standard set index; Value = list of <see cref="TapeFileInfo"/> records.
+    ///  Key = standard set index; Value = list of <see cref="TapeFileInfo"/> records.
     /// </summary>
     public Dictionary<int, List<TapeFileInfo>> ProcessedFiles { get; } = [];
 
     /// <summary>
     /// Builds a <see cref="RestoreResult"/> from the accumulated statistics.
-    /// Called by the service after the operation completes.
+    ///  Called by the service after the operation completes.
     /// </summary>
     public RestoreResult GenerateResult() => new()
     {
@@ -495,7 +538,12 @@ public class ServiceRestoreProgressHandler(
                        : FilesSkipped > 0 ? ServiceReportLevel.Warning
                        :                    ServiceReportLevel.Completed,
         ProcessedFiles = ProcessedFiles,
-        Sets           = SetStats,
+
+        // Set stats only here: they change inside callbacks, so Sync() keeps them final.
+        //  TOC stats come from the agent — the service sets them (s. ExecuteRestoreCore),
+        //  since they can change without a callback.
+        SetStats           = SetStats,
+        // We don't set TocStats = TocStats here -- s. the comment above
     };
 
     /// <inheritdoc/>

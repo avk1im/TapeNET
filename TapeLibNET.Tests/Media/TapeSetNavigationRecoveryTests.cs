@@ -197,10 +197,10 @@ public class TapeSetNavigationRecoveryTests
             fixture.TOC.CurrentSetIndex = 4;
             using (var agent = new TapeSetAgent(fixture.Drive, fixture.TOC))
             {
-                var result = agent.DeleteSetsFromCurrentSetUp(fileNotify: notify);
+                var result = agent.DeleteSetsFromCurrentSetUp(setNotify: notify);
                 Assert.True(result, $"the damaged tail must be recoverable: {result.ErrorMessage}");
 
-                var sets = agent.Statistics.Sets;
+                var sets = agent.Statistics.SetStats;
 #warning "Review in Design-TocLocation Phase 2: The TOC-mark layout anchors on end-of-data once its mark is gone, so it lands exactly: nothing to recover. (The missing TOC is a TOC anomaly — Design-TocLocation Phase 2.)"
                 if (profile != DriveProfile.SeqFilemarks)   // see RestoreOnDamagedTail_AlsoRecovers
                     Assert.True(sets.AnomaliesRecovered >= 1, "the drift must be reported as RECOVERED");
@@ -260,7 +260,7 @@ public class TapeSetNavigationRecoveryTests
             //  recover. (The missing TOC is a TOC anomaly — Design-TocLocation Phase 2.)
 #warning "Review in Design-TocLocation Phase 2: The TOC-mark layout anchors on end-of-data once its mark is gone, so it lands exactly: nothing to recover. (The missing TOC is a TOC anomaly — Design-TocLocation Phase 2.)"
             if (profile != DriveProfile.SeqFilemarks)
-                Assert.True(agent.Statistics.Sets.AnomaliesRecovered >= 1);
+                Assert.True(agent.Statistics.SetStats.AnomaliesRecovered >= 1);
         }
         finally
         {
@@ -361,7 +361,7 @@ public class TapeSetNavigationRecoveryTests
             Assert.Equal((uint)WIN32_ERROR.ERROR_INVALID_DATA, result.ErrorCode);
 
             Assert.Single(notify.SetAnomalies);                          // asked ONCE…
-            Assert.True(agent.Statistics.Sets.AnomaliesDetected >= 1);   // …however often the ladder looked
+            Assert.True(agent.Statistics.SetStats.AnomaliesDetected >= 1);   // …however often the ladder looked
             Assert.Empty(notify.SetAnomaliesRecovered);                  // and nothing was repaired
         }
         finally
@@ -397,14 +397,14 @@ public class TapeSetNavigationRecoveryTests
             agent.Navigator.SimulateSetMiscount = +1;
             agent.Navigator.SimulateSetMiscountPersistent = true;   // defeat stage 1 as well
 
-            var result = agent.DeleteSetsFromCurrentSetUp(navigateFromBegin: true, fileNotify: notify);
+            var result = agent.DeleteSetsFromCurrentSetUp(navigateFromBegin: true, setNotify: notify);
 
             agent.Navigator.SimulateSetMiscountPersistent = false;
             agent.Navigator.SimulateSetMiscount = 0;
 
             Assert.False(result);
             // Recovered nothing, and — the point — reported no BOM-stage recovery, because none was tried.
-            Assert.Equal(0, agent.Statistics.Sets.AnomaliesRecoveredFromBom);
+            Assert.Equal(0, agent.Statistics.SetStats.AnomaliesRecoveredFromBom);
             Assert.Empty(notify.SetAnomaliesRecovered);
         }
         finally
@@ -437,8 +437,8 @@ public class TapeSetNavigationRecoveryTests
             {
                 var result = agent.RestoreAllFilesFromCurrentSet(ignoreFailures: false, fileNotify: notify);
                 Assert.False(result, "a volume mismatch fails without attempting anything positional");
-                Assert.Equal(0, agent.Statistics.Sets.AnomaliesRecovered);
-                Assert.Equal(0, agent.Statistics.Sets.AnomaliesRecoveredFromBom);
+                Assert.Equal(0, agent.Statistics.SetStats.AnomaliesRecovered);
+                Assert.Equal(0, agent.Statistics.SetStats.AnomaliesRecoveredFromBom);
             }
 
             fixture.TOC.Volume = realVolume;
@@ -499,7 +499,7 @@ public class TapeSetNavigationRecoveryTests
                 fixture.Backend.ContentReadFaults.CorruptOnce(bits: 2, offset: 48);
 
                 // Without notify agent will abort for write/delete by default! (vs. proceed for read)
-                var result = agent.DeleteSetsFromCurrentSetUp(fileNotify: notify);
+                var result = agent.DeleteSetsFromCurrentSetUp(setNotify: notify);
                 Assert.True(result, $"a positional fault is recoverable on the write path too: {result.ErrorMessage}");
             }
 
@@ -538,13 +538,13 @@ public class TapeSetNavigationRecoveryTests
             using var agent = new TapeSetAgent(fixture.Drive, fixture.TOC);
             agent.Navigator.SimulateSetMiscount = +1;
 
-            var result = agent.DeleteSetsFromCurrentSetUp(fileNotify: notify);
+            var result = agent.DeleteSetsFromCurrentSetUp(setNotify: notify);
 
             Assert.False(result);
             Assert.True(agent.IsAbortRequested);
             Assert.Equal((uint)WIN32_ERROR.ERROR_INVALID_DATA, result.ErrorCode);   // the REASON, not the veto
-            Assert.Equal(0, agent.Statistics.Sets.AnomaliesRecovered);
-            Assert.Equal(0, agent.Statistics.Sets.AnomaliesRecoveredFromBom);
+            Assert.Equal(0, agent.Statistics.SetStats.AnomaliesRecovered);
+            Assert.Equal(0, agent.Statistics.SetStats.AnomaliesRecoveredFromBom);
             Assert.Single(notify.SetAnomalies);
 
             // Nothing was destroyed, including the sets the delete was aiming at.
@@ -626,7 +626,7 @@ public class TapeSetNavigationRecoveryTests
             Assert.True(agent.RestoreAllFilesFromCurrentSet(ignoreFailures: false, fileNotify: notify));
             AssertRestoredMatches(trees[1], restoreDir);
 
-            var sets = agent.Statistics.Sets;
+            var sets = agent.Statistics.SetStats;
             Assert.False(sets.HasAnomalies);
             Assert.Equal(0, sets.AnomaliesRecovered);
             Assert.Equal(0, sets.AnomaliesRecoveredFromBom);
@@ -660,15 +660,15 @@ public class TapeSetNavigationRecoveryTests
             fixture.TOC.CurrentSetIndex = 3;
             agent.Navigator.SimulateSetMiscount = +1;
             Assert.True(agent.RestoreAllFilesFromCurrentSet(ignoreFailures: false), "the recovered pass");
-            Assert.Equal(1, agent.Statistics.Sets.AnomaliesRecovered);
+            Assert.Equal(1, agent.Statistics.SetStats.AnomaliesRecovered);
 
             fixture.TOC.CurrentSetIndex = 5;
             Assert.Equal(0, agent.Navigator.SimulateSetMiscount);
             Assert.True(agent.RestoreAllFilesFromCurrentSet(ignoreFailures: false), "the clean pass after it");
 
             // Per-operation statistics: the previous cartridge's drift is not attributed to this one.
-            Assert.False(agent.Statistics.Sets.HasAnomalies);
-            Assert.Equal(0, agent.Statistics.Sets.AnomaliesRecovered);
+            Assert.False(agent.Statistics.SetStats.HasAnomalies);
+            Assert.Equal(0, agent.Statistics.SetStats.AnomaliesRecovered);
         }
         finally
         {
@@ -735,8 +735,8 @@ public class TapeSetNavigationRecoveryTests
             // The decisive assertion: we reached the RIGHT set, not merely a set.
             AssertRestoredMatches(trees[setIdx - 1], restoreDir); // here 0-based counting
 
-            Assert.Equal(1, agent.Statistics.Sets.AnomaliesRecovered);
-            Assert.Equal(1, agent.Statistics.Sets.AnomaliesRecoveredFromBom); // backwards overshoot
+            Assert.Equal(1, agent.Statistics.SetStats.AnomaliesRecovered);
+            Assert.Equal(1, agent.Statistics.SetStats.AnomaliesRecoveredFromBom); // backwards overshoot
         }
         finally
         {
@@ -793,7 +793,7 @@ public class TapeSetNavigationRecoveryTests
             Assert.Equal(TapeSetAnomalyStage.Renavigated, recovered.Stage);
             Assert.True(recovered.Diagnosis.Success);
 
-            var sets = agent.Statistics.Sets;
+            var sets = agent.Statistics.SetStats;
             Assert.Equal(1, sets.AnomaliesDetected);
             Assert.Equal(1, sets.AnomaliesRecovered);
             Assert.Equal(1, sets.AnomaliesRecoveredFromBom);
@@ -843,7 +843,7 @@ public class TapeSetNavigationRecoveryTests
             // Nothing was asked, nothing was attempted, nothing was recovered.
             Assert.Empty(notify.SetAnomalies);
             Assert.Empty(notify.SetAnomaliesRecovered);
-            Assert.Equal(0, agent.Statistics.Sets.AnomaliesRecoveredFromBom);
+            Assert.Equal(0, agent.Statistics.SetStats.AnomaliesRecoveredFromBom);
         }
         finally
         {
@@ -873,10 +873,10 @@ public class TapeSetNavigationRecoveryTests
             // navigateFromBegin forces the FORWARD count, so endAnchored is false from the outset.
             agent.Navigator.SimulateSetMiscount = +10;   // overshoot past EOD going forward
 
-            var result = agent.DeleteSetsFromCurrentSetUp(navigateFromBegin: true, fileNotify: notify);
+            var result = agent.DeleteSetsFromCurrentSetUp(navigateFromBegin: true, setNotify: notify);
 
             Assert.False(result);
-            Assert.Equal(0, agent.Statistics.Sets.AnomaliesRecoveredFromBom);   // no rewind was wasted
+            Assert.Equal(0, agent.Statistics.SetStats.AnomaliesRecoveredFromBom);   // no rewind was wasted
             Assert.Empty(notify.SetAnomaliesRecovered);
 
             // And nothing was destroyed on the way.
@@ -932,7 +932,7 @@ public class TapeSetNavigationRecoveryTests
             // It was ATTEMPTED — the prompt fired — but nothing was recovered.
             Assert.Single(notify.SetAnomalies);
             Assert.Empty(notify.SetAnomaliesRecovered);
-            Assert.Equal(0, agent.Statistics.Sets.AnomaliesRecoveredFromBom);
+            Assert.Equal(0, agent.Statistics.SetStats.AnomaliesRecoveredFromBom);
         }
         finally
         {
@@ -966,11 +966,11 @@ public class TapeSetNavigationRecoveryTests
             {
                 agent.Navigator.SimulateSetMiscount = -10;
 
-                var result = agent.DeleteSetsFromCurrentSetUp(fileNotify: notify);
+                var result = agent.DeleteSetsFromCurrentSetUp(setNotify: notify);
                 Assert.True(result, $"the unreachable tail must be recoverable: {result.ErrorMessage}");
 
-                Assert.Equal(1, agent.Statistics.Sets.AnomaliesRecoveredFromBom); // BOM overshoot
-                Assert.False(agent.Statistics.Sets.SetWriteBlocked);
+                Assert.Equal(1, agent.Statistics.SetStats.AnomaliesRecoveredFromBom); // BOM overshoot
+                Assert.False(agent.Statistics.SetStats.SetWriteBlocked);
             }
 
             fixture.LoadTOC();
@@ -992,7 +992,7 @@ public class TapeSetNavigationRecoveryTests
     /// </summary>
     /// <remarks>
     /// This is the asymmetry SH-18 exists for, and the reason the legacy overwrite tests behave as they
-    ///  always did: they pass <c>fileNotify: null</c>, so the retry never runs and the refusal stands.
+    ///  always did: they pass <c>setNotify: null</c>, so the retry never runs and the refusal stands.
     ///  Hand them a permissive notifiable and the very same tape recovers — which is the feature, not a
     ///  regression.
     /// </remarks>
@@ -1017,7 +1017,7 @@ public class TapeSetNavigationRecoveryTests
                 Assert.False(agent.DeleteSetsFromCurrentSetUp(),
                     "nobody can authorize repositioning a destructive write");
                 Assert.True(agent.IsAbortRequested);
-                Assert.Equal(0, agent.Statistics.Sets.AnomaliesRecoveredFromBom);
+                Assert.Equal(0, agent.Statistics.SetStats.AnomaliesRecoveredFromBom);
             }
 
             // Nothing was touched.
@@ -1037,7 +1037,7 @@ public class TapeSetNavigationRecoveryTests
                 agent.Navigator.SimulateNavigationFailureError = WIN32_ERROR.ERROR_NO_DATA_DETECTED;
 
                 Assert.True(agent.RestoreAllFilesFromCurrentSet(ignoreFailures: false));
-                Assert.Equal(1, agent.Statistics.Sets.AnomaliesRecoveredFromBom);
+                Assert.Equal(1, agent.Statistics.SetStats.AnomaliesRecoveredFromBom);
             }
 
             AssertRestoredMatches(trees[2], restoreDir);

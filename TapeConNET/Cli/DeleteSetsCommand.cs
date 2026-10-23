@@ -41,7 +41,7 @@ internal static class DeleteSetsCommand
             var result = await service.DeleteBackupSetsExAsync(setIndex);
 
             return (int)VerbHost.ToExitCode(result.WasAborted, result.HasFailed,
-                setWriteBlocked: result.Sets.SetWriteBlocked);
+                setWriteBlocked: result.SetStats.SetWriteBlocked);
         });
 
         return cmd;

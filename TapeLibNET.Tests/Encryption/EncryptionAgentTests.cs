@@ -493,7 +493,7 @@ public abstract class EncryptionAgentTestsBase
         {
             var result = agent.DeleteSetsFromCurrentSetUp();
             Assert.True(result.Success, result.ErrorMessage);
-            Assert.False(agent.Statistics.Sets.HasAnomalies);
+            Assert.False(agent.Statistics.SetStats.HasAnomalies);
         }
 
         fixture.LoadTOC();

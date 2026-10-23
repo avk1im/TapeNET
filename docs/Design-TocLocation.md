@@ -707,3 +707,29 @@ Each phase's instructions end with a precise list of what the next phase needs. 
 | 4 | `TapeAgentBase.cs`, `TapeFileRestoreAgent.cs`, `TapeNavigator.cs`, `TapeScanner*.cs`, `VirtualTapeMedia*.cs`, `MultiVolumeEncryptionTests.cs` |
 | 5 | `TapeServiceBase.cs`, `WpfServiceHost.cs` / `ConsoleUxServiceHost.cs` (only if the prompt wording changes), `Design-MultiVolume.md`, `Design-FormatV21.md` |
 | 6 | `TapeNavigator.cs`; Help sources |
+
+---
+
+## 12. Deviations during implementation
+
+### 12.0 Deviations from Phase 0
+
+### 12.1 Deviations from Phase 1
+
+### 12.2 Deviations from Phase 2
+
+1. **The TOC verbs never clear the records; the operations do.** v4 §5.3 had the stand-alone `BackupTOC` / `RestoreTOC`
+   clear. But the service calls the *public* `BackupTOC` between backup volumes, and the restore resume calls the
+   *public* `RestoreTOC` — clearing there would lose every earlier volume's anomalies. A fresh agent starts empty, so the
+   stand-alone verbs (load, rename, format) are still operations of their own.
+2. **Raised once the outcome is known.** A TOC anomaly asks nothing, and on read the volume is known only from the copy
+   that DID read (TL-10). So copy 1's failure is raised after copy 2 decided — detected and recovered together.
+3. **New stage `Retried`.** A later success on the same volume within the operation — the service's enforced TOC rewrite,
+   or a re-inserted cartridge whose TOC then reads — settles what was open there. Without it, a successful enforced
+   rewrite would still advise "no TOC on this volume".
+4. **New advice `TocUnreadable`** (no copy readable, or the TOC position unreachable) — v4's table had no row for it.
+5. **No `ServiceTocProgressHandler` yet.** The TOC-only verbs report afterwards through
+   `ReportTocAnomalyOutcome(agent)`; the agent records without a notifiable. The handler becomes necessary with the only
+   TOC *question*, `OnTocFullWalkConfirm`, in Phase 5. The interface member is already there (default: proceed).
+6. **`Block = -1`.** Phase 2 does not know where a copy stands; the ladder of Phase 4 does.
+7. **No menu paths invented** in the advice, except the existing *Media | Export TOC to file*.

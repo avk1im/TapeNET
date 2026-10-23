@@ -101,7 +101,9 @@ public partial class TapeServiceBase
                 Outcome = aborted ? ServiceReportLevel.Failed
                                     : failed ? ServiceReportLevel.Error
                                         : ServiceReportLevel.Completed,
-                Sets = progressHandler?.SetStats ?? new(),
+                SetStats = progressHandler?.SetStats ?? new(),
+                TocStats = agent is null ? default : agent.Statistics.TocStats,
+                TocAnomalies = agent is null ? [] : [.. agent.TocAnomalies],
             };
 
         if (_drive is null || !_drive.IsMediaLoaded)
@@ -588,7 +590,7 @@ public partial class TapeServiceBase
                         }
 
                         // --- Invoke the agent to save the TOC ---
-                        var tocResult = SaveTocCore(agent);
+                        var tocResult = SaveTocCore(agent, tocNotify: progressHandler);
                         if (!tocResult)
                         {
                             LogErr($"Couldn't backup TOC. Error: {tocResult.ErrorMessage}");
@@ -598,7 +600,7 @@ public partial class TapeServiceBase
                                 agentResult = tocResult;
 
                             LogInfo("Attempting to enforce TOC backup...");
-                            var enforceResult = SaveTocCore(agent, enforce: true);
+                            var enforceResult = SaveTocCore(agent, enforce: true, tocNotify: progressHandler);
                             if (!enforceResult)
                             {
                                 LogErr("Couldn't enforce TOC backup");
@@ -683,6 +685,7 @@ public partial class TapeServiceBase
                     // The whole operation outcome
                     ReportFileOperationOutcome(resultSoFar, "Backup");
                     ReportSetAnomalyOutcome(progressHandler.SetStats);
+                    ReportTocAnomalyOutcome(agent);
                 }
 
                 // Current statistics we report for each volume.
@@ -741,6 +744,7 @@ public partial class TapeServiceBase
                 ReportFileOperationOutcome(ended, "Backup");
                 ReportBackupStats(ended,
                     dataSecs: dataElapsedUs / 1e6, ioSecs: dataIoElapsedUs / 1e6, tocSecs: tocElapsedUs / 1e6);
+                ReportTocAnomalyOutcome(agent);
                 LogFail($"Backup ended — the files after volume #{toc.Volume} were not backed up");
                 OnStatusUpdate(wasAborted ? "Backup aborted" : "Backup ended");
                 return ended;

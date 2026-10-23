@@ -217,7 +217,7 @@ public class ServiceSetAnomalyTests : ServiceTestBase
                 Assert.True(result.Success, $"the drift must be repaired. {host.DumpReports()}");
 
                 // The recovery is counted, and rides into the service result.
-                Assert.True(result.Sets.AnomaliesRecovered >= 1,
+                Assert.True(result.SetStats.AnomaliesRecovered >= 1,
                     "the recovery must reach ServiceOperationResult.Sets");
                 Assert.True(result.HasSetAnomalies);
 
@@ -261,9 +261,9 @@ public class ServiceSetAnomalyTests : ServiceTestBase
 
                 Assert.True(result.Success);
                 Assert.False(result.HasSetAnomalies);
-                Assert.Equal(0, result.Sets.AnomaliesDetected);
-                Assert.Equal(0, result.Sets.AnomaliesRecovered);
-                Assert.False(result.Sets.SetWriteBlocked);
+                Assert.Equal(0, result.SetStats.AnomaliesDetected);
+                Assert.Equal(0, result.SetStats.AnomaliesRecovered);
+                Assert.False(result.SetStats.SetWriteBlocked);
 
                 // Nothing from the set channel at all — no log line, no prompt.
                 Assert.False(host.ContainsMessage("anomaly"),
@@ -314,8 +314,8 @@ public class ServiceSetAnomalyTests : ServiceTestBase
                 Assert.True(result.Success, $"the damaged tail must be repairable. {host.DumpReports()}");
                 Assert.Equal(2, result.SetsDeleted);
                 Assert.False(result.TapeUnchanged);
-                Assert.False(result.Sets.SetWriteBlocked, "a recovered delete is not a blocked one");
-                Assert.True(result.Sets.AnomaliesRecovered >= 1);
+                Assert.False(result.SetStats.SetWriteBlocked, "a recovered delete is not a blocked one");
+                Assert.True(result.SetStats.AnomaliesRecovered >= 1);
 
                 // The user was asked — and the prompt named a DESTRUCTIVE operation, with both sets.
                 var prompt = TakeSingleSetPrompt(host);
@@ -371,7 +371,7 @@ public class ServiceSetAnomalyTests : ServiceTestBase
                 Assert.False(result.Success);
                 Assert.Equal(0, result.SetsDeleted);
                 Assert.True(result.TapeUnchanged);
-                Assert.Equal(0, result.Sets.AnomaliesRecovered);
+                Assert.Equal(0, result.SetStats.AnomaliesRecovered);
 
                 var prompt = TakeSingleSetPrompt(host);
                 Assert.True(prompt.IsDestructive);
@@ -433,9 +433,9 @@ public class ServiceSetAnomalyTests : ServiceTestBase
                 var result = await svc.DeleteBackupSetsExAsync(deleteFrom);
 
                 Assert.False(result.Success);
-                Assert.True(result.Sets.SetWriteBlocked);
+                Assert.True(result.SetStats.SetWriteBlocked);
                 Assert.True(result.TapeUnchanged);
-                Assert.Equal(0, result.Sets.AnomaliesRecovered);
+                Assert.Equal(0, result.SetStats.AnomaliesRecovered);
 
                 // A REASON, not a count — and never the old phrasing.
                 Assert.False(string.IsNullOrWhiteSpace(result.Message),
@@ -503,7 +503,7 @@ public class ServiceSetAnomalyTests : ServiceTestBase
 
                 Assert.False(result.IsFullSuccess);
                 Assert.Equal(0, result.FilesSucceeded);
-                Assert.True(result.Sets.SetWriteBlocked,
+                Assert.True(result.SetStats.SetWriteBlocked,
                     $"the overwrite must be REFUSED, not merely unsuccessful. {host.DumpReports()}");
 
                 // Refused, not aborted: nobody was asked, so nobody declined.
@@ -565,8 +565,8 @@ public class ServiceSetAnomalyTests : ServiceTestBase
                 var result = await svc.ExecuteBackupAsync(req);
 
                 Assert.True(result.Success, $"a repairable drift must not block. {host.DumpReports()}");
-                Assert.False(result.Sets.SetWriteBlocked);
-                Assert.True(result.Sets.AnomaliesRecovered >= 1);
+                Assert.False(result.SetStats.SetWriteBlocked);
+                Assert.True(result.SetStats.AnomaliesRecovered >= 1);
                 Assert.True(result.FilesSucceeded > 0, "the replacement files were written");
 
                 var prompt = TakeSingleSetPrompt(host);
@@ -586,7 +586,7 @@ public class ServiceSetAnomalyTests : ServiceTestBase
 
 #if TEST_HOOKS
     /// <summary>
-    /// The agent's counters must arrive intact in <see cref="ServiceOperationResult.Sets"/> — the
+    /// The agent's counters must arrive intact in <see cref="ServiceOperationResult.SetStats"/> — the
     ///  boundary where Step 4's statistics become something a UI can render.
     /// </summary>
     /// <remarks>
@@ -614,9 +614,9 @@ public class ServiceSetAnomalyTests : ServiceTestBase
                 var result = await svc.ExecuteRestoreAsync(MakeValidateRequest(svc, setIndex));
 
                 // The counters survive the hand-off, one for one.
-                Assert.True(result.Sets.AnomaliesDetected >= 1);
-                Assert.True(result.Sets.AnomaliesRecovered >= 1);
-                Assert.Equal(result.Sets.HasAnomalies, result.HasSetAnomalies);
+                Assert.True(result.SetStats.AnomaliesDetected >= 1);
+                Assert.True(result.SetStats.AnomaliesRecovered >= 1);
+                Assert.Equal(result.SetStats.HasAnomalies, result.HasSetAnomalies);
 
                 // The set counters are independent of the file ones — a clean file loop with a repaired
                 //  set must show both.
@@ -657,7 +657,7 @@ public class ServiceSetAnomalyTests : ServiceTestBase
 
                 var first = await svc.ExecuteRestoreAsync(MakeValidateRequest(svc, driftSet));
                 Assert.True(first.Success);
-                Assert.True(first.Sets.AnomaliesRecovered >= 1);
+                Assert.True(first.SetStats.AnomaliesRecovered >= 1);
                 TakeSingleSetPrompt(host);
 
                 // Second: clean, and must report clean.
@@ -667,8 +667,8 @@ public class ServiceSetAnomalyTests : ServiceTestBase
                 var second = await svc.ExecuteRestoreAsync(MakeValidateRequest(svc, cleanSet));
                 Assert.True(second.Success);
                 Assert.False(second.HasSetAnomalies);
-                Assert.Equal(0, second.Sets.AnomaliesDetected);
-                Assert.Equal(0, second.Sets.AnomaliesRecovered);
+                Assert.Equal(0, second.SetStats.AnomaliesDetected);
+                Assert.Equal(0, second.SetStats.AnomaliesRecovered);
                 Assert.Empty(host.SetAnomalyPrompts);
             }
         }

@@ -315,7 +315,7 @@ public class TapeSetHeaderVerifyTests
 
         var anomaly = Assert.Single(notify.SetAnomalies).Anomaly;
         Assert.Equal(TapeSetHeaderVerdict.SetIdMismatch, anomaly.Verdict);
-        Assert.Equal(0, agent.Statistics.Sets.AnomaliesRecovered);          // nothing positional was attempted
+        Assert.Equal(0, agent.Statistics.SetStats.AnomaliesRecovered);          // nothing positional was attempted
     }
 
     /// <summary>End to end, write path: the overwrite is refused BEFORE a byte is destroyed.</summary>

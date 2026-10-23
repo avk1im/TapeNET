@@ -447,7 +447,7 @@ public class ServiceScanMediaTests : ServiceTestBase
                 Assert.True(result.Success, result.Message);
                 Assert.True(result.FromMap);
                 Assert.False(result.Adopted);
-                Assert.Equal(2, result.Toc!.Count);
+                Assert.Equal(2, result.RecoveredTOC!.Count);
             }
         }
         finally
@@ -479,8 +479,8 @@ public class ServiceScanMediaTests : ServiceTestBase
 
                 Assert.True(result.Success, result.Message);
                 Assert.False(result.FromMap);
-                Assert.Equal(svc.TOC!.Count, result.Toc!.Count);
-                Assert.Equal(svc.TOC.MediaId, result.Toc.MediaId);
+                Assert.Equal(svc.TOC!.Count, result.RecoveredTOC!.Count);
+                Assert.Equal(svc.TOC.MediaId, result.RecoveredTOC.MediaId);
             }
         }
         finally
@@ -522,7 +522,7 @@ public class ServiceScanMediaTests : ServiceTestBase
                 var result = await svc.RecoverTocAsync(new RecoverTocRequest(mapA, FirstTocOrdinal(mapA)) { Adopt = true });
 
                 Assert.False(result.Success);
-                Assert.Null(result.Toc);
+                Assert.Null(result.RecoveredTOC);
                 Assert.False(result.Adopted);
                 Assert.Equal((uint)WIN32_ERROR.ERROR_MEDIA_CHANGED, result.ErrorCode);
             }

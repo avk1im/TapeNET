@@ -3,9 +3,8 @@ using TapeLibNET.Agents;
 
 namespace TapeLibNET.Tests.Helpers;
 
-
 /// <summary>
-/// Records every <see cref="ITapeFileNotifiable"/> callback with its
+/// Records every <see cref="ITapeFileNotifiable"/> callback — file, set and TOC level — with its
 /// <see cref="TapeFileStatistics"/> snapshot for post-hoc assertions.
 /// </summary>
 public class TestNotifiable : ITapeFileNotifiable
@@ -26,6 +25,9 @@ public class TestNotifiable : ITapeFileNotifiable
     /// </summary>
     public record SetAnomalyIncident(TapeSetAnomaly Anomaly, TapeFileStatistics Stats);
 
+    /// <summary>One recorded TOC-level incident — the TOC counterpart of <see cref="SetAnomalyIncident"/>.</summary>
+    public record TocAnomalyIncident(TapeTocAnomaly Anomaly, TapeFileStatistics Stats);
+
     #endregion
 
     #region *** Recorded Events ***
@@ -36,9 +38,13 @@ public class TestNotifiable : ITapeFileNotifiable
     public List<PostProcessEvent> PostProcessed { get; } = [];
     public List<FileFailedEvent> FilesFailed { get; } = [];
     public List<FileSkippedEvent> FilesSkipped { get; } = [];
-
     public List<SetAnomalyIncident> SetAnomalies { get; } = [];
     public List<SetAnomalyIncident> SetAnomaliesRecovered { get; } = [];
+    public List<TocAnomalyIncident> TocAnomalies { get; } = [];
+    public List<TocAnomalyIncident> TocAnomaliesRecovered { get; } = [];
+
+    /// <summary>Every <see cref="OnTocFullWalkConfirm"/> call, by volume.</summary>
+    public List<int> TocFullWalkConfirms { get; } = [];
 
     #endregion
 
@@ -133,6 +139,9 @@ public class TestNotifiable : ITapeFileNotifiable
     /// <summary>When true, <see cref="OnSetAnomaly"/> THROWS instead of returning — the exception channel.</summary>
     public bool ThrowOnSetAnomaly { get; set; } = false;
 
+    /// <summary>What <see cref="OnTocFullWalkConfirm"/> answers. Defaults to the interface default, proceed.</summary>
+    public bool TocFullWalkAnswer { get; set; } = true;
+
     #endregion
 
     #region *** ITapeFileNotifiable ***
@@ -183,13 +192,6 @@ public class TestNotifiable : ITapeFileNotifiable
         //  is now caught by the agents' own handlers, which record IsAbortRequested and stop the loop —
         //  it must NOT arrive here as a file failure. If it does, the agent lost the abort, and the
         //  convergence tests in region (J) should catch that rather than have this helper paper over it.
-        /*
-        // TapeAbortRequestedException (from PreProcess/PostProcess) routes through the
-        //  generic catch → OnFileFailed. We must cooperate by returning Abort so the
-        //  backup/restore loop actually stops.
-        if (result.ErrorCode == (uint)Windows.Win32.Foundation.WIN32_ERROR.ERROR_CANCELLED)
-            return FileFailedAction.Abort;
-        */
 
         return FailedActionFunc?.Invoke(fileInfo, result) ?? FailedAction;
     }
@@ -199,16 +201,38 @@ public class TestNotifiable : ITapeFileNotifiable
         FilesSkipped.Add(new FileSkippedEvent(fileInfo, stats));
     }
 
+    #endregion
+
+    #region *** ITapeSetNotifiable ***
+
     public SetAnomalyAction OnSetAnomaly(in TapeSetAnomaly anomaly, in TapeFileStatistics stats)
     {
         SetAnomalies.Add(new SetAnomalyIncident(anomaly, stats));
+
         if (ThrowOnSetAnomaly)
             throw new TapeAbortRequestedException($"Test abort at set anomaly: {anomaly.Verdict}");
+
         return SetAnomalyActionFunc?.Invoke(anomaly) ?? SetAnomalyAction;
     }
 
     public void OnSetAnomalyRecovered(in TapeSetAnomaly anomaly, in TapeFileStatistics stats)
         => SetAnomaliesRecovered.Add(new SetAnomalyIncident(anomaly, stats));
+
+    #endregion
+
+    #region *** ITapeTocNotifiable ***
+
+    public void OnTocAnomaly(in TapeTocAnomaly anomaly, in TapeFileStatistics stats)
+        => TocAnomalies.Add(new TocAnomalyIncident(anomaly, stats));
+
+    public void OnTocAnomalyRecovered(in TapeTocAnomaly anomaly, in TapeFileStatistics stats)
+        => TocAnomaliesRecovered.Add(new TocAnomalyIncident(anomaly, stats));
+
+    public bool OnTocFullWalkConfirm(int volume)
+    {
+        TocFullWalkConfirms.Add(volume);
+        return TocFullWalkAnswer;
+    }
 
     #endregion
 
@@ -249,7 +273,7 @@ public class TestNotifiable : ITapeFileNotifiable
     public void AssertNoSetAnomalies(int expectedSets = -1)
     {
         Assert.NotEmpty(BatchEnds);
-        var sets = BatchEnds[^1].Stats.Sets;
+        var sets = BatchEnds[^1].Stats.SetStats;
 
         Assert.Equal(0, sets.AnomaliesDetected);
         Assert.Equal(0, sets.AnomaliesRecovered);
@@ -262,19 +286,28 @@ public class TestNotifiable : ITapeFileNotifiable
         Assert.Empty(SetAnomaliesRecovered);
     }
 
+    /// <summary>The TOC-level counterpart of <see cref="AssertNoSetAnomalies"/>: no TOC callback at all.</summary>
+    public void AssertNoTocAnomalies()
+    {
+        Assert.Empty(TocAnomalies);
+        Assert.Empty(TocAnomaliesRecovered);
+        Assert.Empty(TocFullWalkConfirms);
+    }
+
     /// <summary>Resets all recorded events for reuse across operations.</summary>
     public void Clear()
     {
         BatchStarts.Clear();
         BatchEnds.Clear();
-
         PreProcessed.Clear();
         PostProcessed.Clear();
         FilesFailed.Clear();
         FilesSkipped.Clear();
-
         SetAnomalies.Clear();
         SetAnomaliesRecovered.Clear();
+        TocAnomalies.Clear();
+        TocAnomaliesRecovered.Clear();
+        TocFullWalkConfirms.Clear();
     }
 
     #endregion

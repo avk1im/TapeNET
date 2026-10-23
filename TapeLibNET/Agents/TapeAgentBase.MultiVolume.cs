@@ -46,9 +46,9 @@ public partial class TapeAgentBase
     /// </summary>
     protected void StatsUndoSet()
     {
-        _stats.Sets.SetsProcessed--;
+        _stats.SetStats.SetsProcessed--;
         if (!m_setAnomalyInCurrentSet)
-            _stats.Sets.SetsSucceeded--;
+            _stats.SetStats.SetsSucceeded--;
     }
 
     /// <summary>

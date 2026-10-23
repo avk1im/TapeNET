@@ -398,16 +398,23 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     ///  and the attempt would only leave a stray partial block (Design-TocLocation W1).
     /// </para>
     /// <para>
+    /// <b>Every copy that does not reach the tape is a TOC anomaly</b> (Design-TocLocation §5): one copy missing is a
+    ///  success with <see cref="TapeTocAnomalyKind.CopyWriteFailed"/>, none is a failure with
+    ///  <see cref="TapeTocAnomalyKind.NoCopyWritten"/> — each carrying the drive's own error. A later success on the same
+    ///  volume settles them (<see cref="TapeTocAnomalyStage.Retried"/>), e.g. the service's enforced rewrite.
+    /// </para>
+    /// <para>
     /// On success, clears <see cref="TapeTOC.LoadedFromLegacy"/>: from here on the tape carries a 2.1 TOC.
     /// </para>
     /// <para>
     /// <b>Notice</b> this public call <b>resets the latched error</b>, hence make sure
-    ///  to capture it before calling.
+    ///  to capture it before calling. It does NOT clear the TOC anomaly records: they belong to the operation.
     /// </para>
     /// </summary>
     /// <param name="enforce">When <see langword="true"/>, resets navigator state before writing
     ///  (use after operations that may leave the tape position uncertain).</param>
-    public TapeResult BackupTOC(bool enforce = false)
+    /// <param name="tocNotify">Optional callback for TOC anomalies.</param>
+    public TapeResult BackupTOC(bool enforce = false, ITapeTocNotifiable? tocNotify = null)
     {
         ResetLatchedFailure();
         LastTOCCopyBytes = 0;
@@ -421,27 +428,32 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
 #if TEST_HOOKS
         _tocCopyCounter = 0;
 #endif
-
         m_logger.LogTrace("Backing up TOC, 1st copy");
 
         if (enforce)
         {
             Manager.EndReadWrite();
             Navigator.ResetContentSet();
+
             if (Navigator.TOCUnlocated && Navigator is TapeNavigatorTOCInSet)
             {
                 // Do NOT try to navigate if TOC-in-set has been invalidated -- we may end up overwriting content
                 //  -> fail instead to allow the user to save TOC to a file
                 m_logger.LogTrace("Cannot enforce TOC backup by resetting content set since TOC has been invalidated");
-                return FailedOperationResult;
+                TapeResult refused = FailedOperationResult;
+                NotifyTocAnomaly(tocNotify, BuildTocAnomaly(TapeTocAnomalyKind.NoCopyWritten, TOC.Volume, 0, refused));
+                return refused;
             }
+
             m_logger.LogTrace("Enforcing TOC backup by resetting content set");
         }
 
         if (!BeginWriteTOC())
         {
             m_logger.LogError("Failed to begin TOC write in {Method}", nameof(BackupTOC));
-            return FailedOperationResult;
+            TapeResult notPositioned = FailedOperationResult;
+            NotifyTocAnomaly(tocNotify, BuildTocAnomaly(TapeTocAnomalyKind.NoCopyWritten, TOC.Volume, 0, notPositioned));
+            return notPositioned;
         }
 
         // To ensure TOC integrity, backup TOC twice
@@ -450,7 +462,10 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
         // W1: did the 1st copy run into end-of-media — its data (result1 false: the agent's own error, set by
         //  BackupTOCCore from the stream's exception), or only its closing filemark (the drive's error, left by the
         //  failed WriteFilemark after the stream signed out)?
-        bool copy1HitEom = result1 ? Drive.RanToEOM : this.RanToEOM;
+        bool copy1HitEom = result1 ? Drive.RanToEOM : RanToEOM;
+
+        // Captured NOW: the error is reset before the 2nd copy. The drive's own error, wherever it reported one.
+        TapeResult failure1 = result1 ? TapeResult.OK : TapeResult.Fail(this);
 
         if (result1 && !copy1HitEom)
             m_logger.LogTrace("TOC 1st copy backed up ok");
@@ -460,10 +475,13 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
             m_logger.LogWarning("TOC 1st copy backup failed");
 
         bool result2 = false;
+        TapeResult failure2;
         if (copy1HitEom)
         {
             m_logger.LogWarning("TOC 2nd copy skipped: the volume is full — only {Copies} copy on tape",
                 result1 ? "one" : "no");
+            failure2 = TapeResult.Fail((uint)WIN32_ERROR.ERROR_END_OF_MEDIA,
+                "TOC copy 2 not attempted: the volume is full");
         }
         else
         {
@@ -471,7 +489,9 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
             ResetError();
             if (result1)
                 ResetLatchedFailure(); // copy 1 is on tape: a failing copy 2 is no failure of the operation
+
             result2 = BackupTOCCore();
+            failure2 = result2 ? TapeResult.OK : TapeResult.Fail(this);
             if (result2)
                 m_logger.LogTrace("TOC 2nd copy backed up ok");
             else
@@ -489,28 +509,52 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
                     "on a full volume only one copy may fit", LastTOCCopyBytes, footprint, Navigator.TOCCapacity);
         }
 
-        if (!result1 && !result2)
-            return FailedOperationResult;
+        // ── Copy accounting (Design-TocLocation §5.1) ──
+        int written = (result1 ? 1 : 0) + (result2 ? 1 : 0);
+        _stats.TocStats.CopiesWritten += written;
+        _stats.TocStats.CopyWriteFailures += 2 - written;
+
+        if (written == 0)
+        {
+            TapeResult failed = FailedOperationResult;
+            NotifyTocAnomaly(tocNotify, BuildTocAnomaly(TapeTocAnomalyKind.NoCopyWritten, TOC.Volume, 0,
+                failure1.Success ? failed : failure1));
+            return failed;
+        }
 
         if (!result1)
-            ResetLatchedFailure(); // copy 2 is on tape: succeed (Phase 2 will report the missing copy as an anomaly)
+            ResetLatchedFailure(); // copy 2 is on tape: succeed — the missing copy is an anomaly, not a failure
+
+        // A TOC is on this volume now: settle the earlier failures of this operation it makes good — a lost TOC by any
+        //  copy, a missing copy only by both.
+        if (written == 2)
+            ResolveTocAnomalies(tocNotify, TOC.Volume, TapeTocAnomalyStage.Retried,
+                TapeTocAnomalyKind.NoCopyWritten, TapeTocAnomalyKind.CopyWriteFailed);
+        else
+            ResolveTocAnomalies(tocNotify, TOC.Volume, TapeTocAnomalyStage.Retried,
+                TapeTocAnomalyKind.NoCopyWritten);
+
+        if (written == 1)
+            NotifyTocAnomaly(tocNotify, BuildTocAnomaly(TapeTocAnomalyKind.CopyWriteFailed, TOC.Volume,
+                copyIndex: result1 ? (byte)2 : (byte)1, result1 ? failure2 : failure1));
 
         // What now stands on tape: 2.1 in the product — a legacy tape is upgraded (the service logs it, §9.2, F28).
         TOC.LoadedFromLegacy = RecordEmitter.DataFormat == TapeDataFormat.Legacy;
         return TapeResult.OK;
-    }
+    } // BackupTOC()
 
     /// <summary>
     /// Backs up the TOC onto media that is known to be blank (e.g. just formatted).
-    /// Equivalent to <see cref="BackupTOC"/> but tells the navigator that no
-    /// existing TOC mark or content needs to be located first.
+    ///  Equivalent to <see cref="BackupTOC"/> but tells the navigator that no
+    ///  existing TOC mark or content needs to be located first.
     /// </summary>
     /// <param name="writeHeader">
     /// Write the media header before the initial TOC. TRUE only on the format / fresh-media path;
     ///  FALSE on the delete-all path (which must preserve, never rewrite, the existing header — §10.8).
     ///  Defaults to <see cref="WritesMediaHeader"/> so continuation heading (which sets the flag) works.
     /// </param>
-    public TapeResult BackupInitialTOC(bool? writeHeader = null)
+    /// <param name="tocNotify">Optional callback for TOC anomalies, passed to <see cref="BackupTOC"/>.</param>
+    public TapeResult BackupInitialTOC(bool? writeHeader = null, ITapeTocNotifiable? tocNotify = null)
     {
         Navigator.AssumeBlankMedia();
 
@@ -520,8 +564,9 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
             if (!hr) return hr;
         }
 
-        return BackupTOC();
+        return BackupTOC(tocNotify: tocNotify);
     }
+
 
     #endregion // *** TOC Backup ***
 
@@ -620,17 +665,33 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
             return false;
         }
     }
-    
+
     /// <summary>
     /// Reads the <see cref="TOC"/> from tape, trying up to three strategies:
     ///  1st copy → 2nd copy (sequential) → 2nd copy (direct seek).
     /// <para>On success, replaces the current <see cref="TOC"/> content.</para>
     /// <para>
+    /// <b>Every deviation is a TOC anomaly</b> (Design-TocLocation §5): a 1st copy that did not read while the 2nd did
+    ///  (<see cref="TapeTocAnomalyKind.CopyUnreadable"/>, recovered by <see cref="TapeTocAnomalyStage.Sibling"/>); a TOC
+    ///  position that could not be reached (<see cref="TapeTocAnomalyKind.NotFoundNatively"/>); no copy readable there
+    ///  (<see cref="TapeTocAnomalyKind.NoReadableCopy"/>). An abort is none of them.
+    /// </para>
+    /// <para>
     /// <b>Notice</b> this public call <b>resets the latched error</b>, hence make sure
-    ///  to capture it before calling.
+    ///  to capture it before calling. It does NOT clear the TOC anomaly records: they belong to the operation.
     /// </para>
     /// </summary>
-    public TapeResult RestoreTOC()
+    /// <param name="tocNotify">Optional callback for TOC anomalies.</param>
+    public TapeResult RestoreTOC(ITapeTocNotifiable? tocNotify = null)
+        => RestoreTOCFromMedia(expectedVolume: null, tocNotify);
+
+    /// <summary>
+    /// <see cref="RestoreTOC"/>, knowing which volume the cartridge should be — a multi-volume resume. Names the volume
+    ///  in an anomaly when no copy reads, which is the only case where the cartridge cannot tell it itself (TL-10).
+    /// </summary>
+    /// <param name="expectedVolume">The volume requested; <see langword="null"/> when nothing is expected.</param>
+    /// <param name="tocNotify">Optional callback for TOC anomalies.</param>
+    internal TapeResult RestoreTOCFromMedia(int? expectedVolume, ITapeTocNotifiable? tocNotify)
     {
         ResetLatchedFailure();
 
@@ -639,25 +700,29 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
 #endif
         // Since TOC is stored twice, if the first attempt fails, try again
         m_logger.LogTrace("Restoring TOC from 1st copy");
-
         if (!BeginReadTOC())
         {
             m_logger.LogError("Failed to begin TOC read in {Method}", nameof(RestoreTOC));
-            return FailedOperationResult;
+            TapeResult notFound = FailedOperationResult;
+            if (!IsAbortRequested)
+                NotifyTocAnomaly(tocNotify, BuildTocAnomaly(TapeTocAnomalyKind.NotFoundNatively,
+                    expectedVolume ?? 0, 0, notFound));
+            return notFound;
         }
 
+        TapeResult copy1Failure = TapeResult.OK;
         bool result = RestoreTOCCore();
-
         if (result)
             m_logger.LogTrace("TOC restored from 1st copy");
         else
         {
+            copy1Failure = TapeResult.Fail(this);   // captured before the retries reset it
+
             m_logger.LogWarning("TOC restore from 1st copy failed. Trying 2nd copy");
             // Notice we now must be at the beginning of the 2nd copy, as Manager calls Navigator.MoveToNextTOCFilemark()
             //  from Manager.EndReadFile() when disposing the 1st read TOC sytream
             ResetError();
             ResetLatchedFailure(); // if we succeed on the 2nd copy, we treat it as the overall success
-
             result = RestoreTOCCore();
             if (result)
                 m_logger.LogTrace("TOC restored from 2nd copy");
@@ -671,7 +736,6 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
                 result = BeginReadTOC() && !IsAbortRequested
                     && Navigator.MoveToNextTOCFilemark() && !IsAbortRequested
                     && RestoreTOCCore();
-
                 if (result)
                     m_logger.LogTrace("TOC restored directly from 2nd copy");
                 else
@@ -686,7 +750,30 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
             SetError(WIN32_ERROR.ERROR_CANCELLED, "TOC loading aborted by user");
         }
 
-        return result ? TapeResult.OK : FailedOperationResult;
+        if (!result)
+        {
+            TapeResult failed = FailedOperationResult;
+            if (!IsAbortRequested)
+                NotifyTocAnomaly(tocNotify, BuildTocAnomaly(TapeTocAnomalyKind.NoReadableCopy,
+                    expectedVolume ?? 0, 0, failed));
+            return failed;
+        }
+
+        // The TOC read — it names its volume now. Settle what this operation could not read there before, then
+        //  report the copy that did not read.
+        int volume = TOC.Volume;
+        ResolveTocAnomalies(tocNotify, volume, TapeTocAnomalyStage.Retried,
+            TapeTocAnomalyKind.NotFoundNatively, TapeTocAnomalyKind.NoReadableCopy);
+
+        if (!copy1Failure.Success && !IsAbortRequested)
+        {
+            TapeTocAnomaly unreadable = BuildTocAnomaly(TapeTocAnomalyKind.CopyUnreadable, volume, 1, copy1Failure);
+            NotifyTocAnomaly(tocNotify, unreadable);
+            NotifyTocAnomalyRecovered(tocNotify,
+                unreadable with { Stage = TapeTocAnomalyStage.Sibling, Diagnosis = TapeResult.OK });
+        }
+
+        return TapeResult.OK;
     }
 
     /// <summary>Begins a TOC read at a caller-located copy. Mirrors <see cref="BeginReadTOC"/>.</summary>
@@ -867,7 +954,7 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     protected void NotifySetStart(ITapeFileNotifiable? fileNotify, int filesAdded)
     {
         _stats.FilesTotal += filesAdded;
-        _stats.Sets.SetsProcessed++;
+        _stats.SetStats.SetsProcessed++;
         m_setAnomalyInCurrentSet = false; // ← per-set
         RefreshBytesTotalEstimate();
 
@@ -898,7 +985,7 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     {
         RefreshBytesTotalEstimate();
         if (!m_setAnomalyInCurrentSet)
-            _stats.Sets.SetsSucceeded++;
+            _stats.SetStats.SetsSucceeded++;
 
         if (fileNotify != null)
         {
@@ -1110,12 +1197,12 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     ///  the exception converge on one code path. Mirrors <see cref="NotifyFileFailed"/> exactly.
     /// </para>
     /// </remarks>
-    protected SetAnomalyAction NotifySetAnomaly(ITapeFileNotifiable? fileNotify, in TapeSetAnomaly anomaly)
+    protected SetAnomalyAction NotifySetAnomaly(ITapeSetNotifiable? setNotify, in TapeSetAnomaly anomaly)
     {
         _setAnomalies.Add(anomaly);          // every OBSERVATION — the forensic trail
         m_setAnomalyInCurrentSet = true;
-        // Do NOT yet set _stats.Sets.SetWriteBlocked = true as we still might recover!
-        //  do NOT! if (anomaly.IsDestructive) _stats.Sets.SetWriteBlocked = true;
+        // Do NOT yet set _stats.SetStats.SetWriteBlocked = true as we still might recover!
+        //  do NOT! if (anomaly.IsDestructive) _stats.SetStats.SetWriteBlocked = true;
 
         m_logger.LogWarning("Set anomaly notified: {Anomaly}", anomaly);
 
@@ -1124,16 +1211,16 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
         
         // Not yet counted and authorized for this set: record it and prompt the user
         m_setAnomalyRaisedForSet = TOC.CurrentSetIndex;
-        _stats.Sets.AnomaliesDetected++;       // count one per SET, the user-meaningful number
+        _stats.SetStats.AnomaliesDetected++;       // count one per SET, the user-meaningful number
 
         RefreshBytesTotalEstimate();
 
         SetAnomalyAction result;
-        if (fileNotify is not null)
+        if (setNotify is not null)
         {
             try
             {
-                result = fileNotify.OnSetAnomaly(in anomaly, in _stats);
+                result = setNotify.OnSetAnomaly(in anomaly, in _stats);
             }
             catch (TapeAbortRequestedException ex1)
             {
@@ -1171,20 +1258,20 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     ///  or the medium miscounted marks. A tape that corrects on every set is a tape to retire, and this
     ///  is the only place that fact reaches the person holding the cartridge.
     /// </remarks>
-    protected void NotifySetAnomalyRecovered(ITapeFileNotifiable? fileNotify, in TapeSetAnomaly anomaly)
+    protected void NotifySetAnomalyRecovered(ITapeSetNotifiable? setNotify, in TapeSetAnomaly anomaly)
     {
-        _stats.Sets.AnomaliesRecovered++;
+        _stats.SetStats.AnomaliesRecovered++;
         if (anomaly.Stage == TapeSetAnomalyStage.Renavigated)
-            _stats.Sets.AnomaliesRecoveredFromBom++;
+            _stats.SetStats.AnomaliesRecoveredFromBom++;
 
         m_logger.LogWarning("Set anomaly RECOVERED via {Stage}: {Anomaly}", anomaly.Stage, anomaly);
         RefreshBytesTotalEstimate();
 
-        if (fileNotify is null)
+        if (setNotify is null)
             return;
         try
         {
-            fileNotify.OnSetAnomalyRecovered(in anomaly, in _stats);
+            setNotify.OnSetAnomalyRecovered(in anomaly, in _stats);
         }
         catch (TapeAbortRequestedException ex1)
         {

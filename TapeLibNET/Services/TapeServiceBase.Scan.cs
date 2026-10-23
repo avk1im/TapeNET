@@ -391,7 +391,7 @@ public partial class TapeServiceBase
             Outcome = saveFailed || (request.Adopt && !adopted)
                 ? ServiceReportLevel.Warning
                 : ServiceReportLevel.Completed,
-            Toc = toc,
+            RecoveredTOC = toc,
             FromMap = fromMap,
             Adopted = adopted,
             SavedPath = savedPath,

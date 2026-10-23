@@ -96,10 +96,24 @@ public abstract record ServiceOperationResult
     /// touching it.
     /// </para>
     /// </remarks>
-    public TapeSetStatistics Sets { get; init; }
+    public TapeSetStatistics SetStats { get; init; }
 
     /// <summary>True when any set-level anomaly was observed, whether or not it was repaired.</summary>
-    public bool HasSetAnomalies => Sets.HasAnomalies;
+    public bool HasSetAnomalies => SetStats.HasAnomalies;
+
+    /// <summary>
+    /// TOC-level statistics for the operation — across ALL its volumes (Design-TocLocation §5). Clean when empty.
+    /// </summary>
+    public TapeTocStatistics TocStats { get; init; }
+
+    /// <summary>
+    /// The TOC anomaly trail behind <see cref="TocStats"/> — detections and recoveries, each naming its volume. The service's
+    ///  advice is derived from it (<see cref="TapeServiceBase.AdviseOnTocAnomalies"/>).
+    /// </summary>
+    public IReadOnlyList<TapeTocAnomaly> TocAnomalies { get; init; } = [];
+
+    /// <summary>True when any TOC-level anomaly was observed, whether or not it was settled.</summary>
+    public bool HasTocAnomalies => TocStats.HasAnomalies;
 }
 
 // ── Intermediate: file-level statistics ──────────────────────────────────────
@@ -368,7 +382,7 @@ public sealed record DeleteSetsResult : ServiceOperationResult
         in TapeSetStatistics sets = default) => new()
         {
             Diagnosis = diagnosis,
-            Sets = sets,
+            SetStats = sets,
             SetsRequested = setsRequested,
             SetsDeleted = 0,
             Success = false,
@@ -446,7 +460,7 @@ public sealed record ScanMediaResult : ServiceOperationResult
 public sealed record RecoverTocResult : ServiceOperationResult
 {
     /// <summary>The recovered TOC, or null on failure.</summary>
-    public TapeTOC? Toc { get; init; }
+    public TapeTOC? RecoveredTOC { get; init; }
 
     /// <summary>Taken from the map (recovered during the scan) — no tape I/O.</summary>
     public bool FromMap { get; init; }

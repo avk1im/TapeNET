@@ -1,8 +1,7 @@
-﻿using TapeLibNET.Agents;
+using TapeLibNET.Agents;
 using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Services;
-
 
 public partial class TapeServiceBase
 {
@@ -34,7 +33,8 @@ public partial class TapeServiceBase
     /// </para>
     /// <para>
     /// The agent writes the TOC itself, so a legacy → 2.1 upgrade is reported here rather than through
-    ///  <see cref="SaveTocCore"/> (Design-FormatV21 §6.2).
+    ///  <see cref="SaveTocCore"/> (Design-FormatV21 §6.2) — and so are the TOC anomalies of that write
+    ///  (Design-TocLocation §5.4).
     /// </para>
     /// </remarks>
     /// <param name="deleteFromSetIndex">Standard (1-based) index of the first set to delete.</param>
@@ -52,6 +52,7 @@ public partial class TapeServiceBase
         {
             await _operationLock.WaitAsync().ConfigureAwait(false);
             ServiceSetProgressHandler? progressHandler = null;
+            TapeSetAgent? agent = null;
             int setsToDelete = 0;
             try
             {
@@ -68,7 +69,7 @@ public partial class TapeServiceBase
                 //  this is the precondition for DeleteSetsFromCurrentSetUp()
                 toc.CurrentSetIndex = deleteFromSetIndex;
 
-                var agent = new TapeSetAgent(_drive, toc);
+                agent = new TapeSetAgent(_drive, toc);
                 _agent?.Dispose();
                 _agent = agent;
 
@@ -87,11 +88,12 @@ public partial class TapeServiceBase
                 //  we have not verified, so the forced forward count is the safer anchor from the outset.
                 var result = agent.DeleteSetsFromCurrentSetUp(
                     navigateFromBegin: TOCIsFrom is TOCSource.File or TOCSource.Recovered,
-                    fileNotify: progressHandler);
+                    setNotify: progressHandler);
 
                 ReportTocUpgrade(wasLegacy, toc);   // silent unless the TOC really reached the tape as 2.1
 
-                var sets = agent.Statistics.Sets;
+                var sets = agent.Statistics.SetStats;
+                var tocStats = agent.Statistics.TocStats;
 
                 if (!result)
                 {
@@ -105,12 +107,15 @@ public partial class TapeServiceBase
                         LogErrSub("The tape is unchanged");
 
                     ReportSetAnomalyOutcome(sets);
+                    ReportTocAnomalyOutcome(agent);
                     OnStatusUpdate("Delete refused");
 
                     return new DeleteSetsResult
                     {
                         Diagnosis = result,
-                        Sets = sets,
+                        SetStats = sets,
+                        TocStats = tocStats,
+                        TocAnomalies = [.. agent.TocAnomalies],
                         SetsRequested = setsToDelete,
                         SetsDeleted = 0,
                         Success = false,
@@ -122,17 +127,20 @@ public partial class TapeServiceBase
 
                 LogOk($"Deleted {setsToDelete} backup set(s) — TOC saved");
                 ReportSetAnomalyOutcome(sets);   // silent unless something was actually met
+                ReportTocAnomalyOutcome(agent);  // likewise
                 OnStatusUpdate($"Deleted {setsToDelete} backup set(s)");
                 _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
 
                 return new DeleteSetsResult
                 {
                     Diagnosis = TapeResult.OK,
-                    Sets = sets,
+                    SetStats = sets,
+                    TocStats = tocStats,
+                    TocAnomalies = [.. agent.TocAnomalies],
                     SetsRequested = setsToDelete,
                     SetsDeleted = setsToDelete,
                     Success = true,
-                    Outcome = sets.HasAnomalies
+                    Outcome = sets.HasAnomalies || tocStats.HasAnomalies
                                         ? ServiceReportLevel.Warning   // succeeded, but the medium spoke
                                         : ServiceReportLevel.Completed,
                 };
@@ -143,7 +151,11 @@ public partial class TapeServiceBase
                 LogErr($"Exception deleting backup sets: {ex.Message}");
                 return DeleteSetsResult.Failed(TapeResult.Fail(ex), setsToDelete,
                     progressHandler?.SetStats ?? default) with
-                { ErrorException = ex };
+                {
+                    ErrorException = ex,
+                    TocStats = agent is null ? default : agent.Statistics.TocStats,
+                    TocAnomalies = agent is null ? [] : [.. agent.TocAnomalies],
+                };
             }
             finally
             {
@@ -154,5 +166,4 @@ public partial class TapeServiceBase
             }
         });
     }
-
 }

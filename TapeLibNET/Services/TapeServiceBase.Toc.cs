@@ -1,8 +1,35 @@
 using TapeLibNET.Agents;
+using TapeLibNET.Headers;
 using TapeLibNET.Toc;
 
 namespace TapeLibNET.Services;
 
+/// <summary>
+/// What the service recommends the user DO about the TOC anomalies an operation met (Design-TocLocation §5.4). Policy,
+///  computed from the anomaly records by <see cref="TapeServiceBase.AdviseOnTocAnomalies"/>; the wording lives in
+///  <see cref="TapeServiceBase.AdviseTocText"/>.
+/// </summary>
+/// <remarks>
+/// By CAUSE and LAYOUT, never by symptom alone: "only one copy fit" calls for calibration on a TOC-in-set cartridge and
+///  for fewer files per set on a TOC-in-partition one. Ordered by severity, most severe first.
+/// </remarks>
+public enum TocAnomalyAdvice
+{
+    /// <summary>No anomalies — nothing to say.</summary>
+    None,
+    /// <summary>A copy found only by searching (Phase 4): re-save it so it is found directly again.</summary>
+    TocFoundBySearch,
+    /// <summary>A copy could not be written for another reason, or did not read: the medium is suspect.</summary>
+    SingleCopyDamaged,
+    /// <summary>TOC in set: only one copy fit before end-of-media — the reserve armed too late.</summary>
+    SingleCopyReserve,
+    /// <summary>TOC in partition: only one copy fit — the TOC outgrew its partition.</summary>
+    TocPartitionFull,
+    /// <summary>The volume's TOC could not be read at all.</summary>
+    TocUnreadable,
+    /// <summary>No copy could be written: the volume carries no TOC.</summary>
+    TocLost,
+}
 
 public partial class TapeServiceBase
 {
@@ -27,15 +54,20 @@ public partial class TapeServiceBase
     ///  reaches the tape, so a later save in the same operation (the next volume of a multi-volume backup) finds it
     ///  cleared and stays silent.
     /// </para>
+    /// <para>
+    /// TOC anomalies are NOT reported here: one operation may save the TOC once per volume, and its report covers all of
+    ///  them (<see cref="ReportTocAnomalyOutcome(TapeAgentBase)"/>).
+    /// </para>
     /// </remarks>
     /// <param name="agent">The agent that owns the navigator for this operation.</param>
     /// <param name="enforce">Passed through to <see cref="TapeAgentBase.BackupTOC"/>.</param>
-    protected TapeResult SaveTocCore(TapeAgentBase agent, bool enforce = false)
+    /// <param name="tocNotify">The operation's notifiable, for live TOC anomaly callbacks; optional.</param>
+    protected TapeResult SaveTocCore(TapeAgentBase agent, bool enforce = false, ITapeTocNotifiable? tocNotify = null)
     {
         ArgumentNullException.ThrowIfNull(agent);
 
         bool wasLegacy = agent.TOC.LoadedFromLegacy;
-        TapeResult result = agent.BackupTOC(enforce: enforce);
+        TapeResult result = agent.BackupTOC(enforce: enforce, tocNotify: tocNotify);
         ReportTocUpgrade(wasLegacy, agent.TOC);
         return result;
     }
@@ -64,6 +96,158 @@ public partial class TapeServiceBase
     protected static string DescribeDataFormat(TapeSetTOC set) => set.DataFormat == TapeDataFormat.Legacy
         ? "legacy (pre-2.1)"
         : "2.1";
+
+    #endregion
+
+    #region TOC anomaly advisory (Design-TocLocation §5.4)
+
+    // ── TOC anomaly advisory ────────────────────────────────────────────────
+    //  The counterpart of the set-anomaly advisory in TapeServiceBase.Outcome.cs. Online: one headline, one action, and a
+    //   pointer to the Help topic "TOC space" where the cause is the TOC's room on tape (§0.4).
+
+    /// <summary>The Help topic the reserve-related advice points to.</summary>
+    public const string TocSpaceHelpTopic = "TOC space";
+
+    /// <summary>
+    /// Derives the recommendation from an operation's TOC anomaly trail, and the volumes it concerns. Pure; mirrors
+    ///  <see cref="AdviseOnSetAnomalies"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A detection counts as SETTLED when the trail holds a recovery for the same volume, kind and copy — e.g. an
+    ///  enforced rewrite that wrote the copies after all. Settled detections advise nothing, with one exception: an
+    ///  unreadable copy stays damaged on tape although its sibling read, so it always advises a re-save.
+    /// </para>
+    /// <para>
+    /// Severity order: no TOC written → no TOC readable → one copy for lack of room → one copy for another reason or a
+    ///  damaged copy → found only by searching.
+    /// </para>
+    /// </remarks>
+    public static (TocAnomalyAdvice Advice, IReadOnlyList<int> Volumes) AdviseOnTocAnomalies(
+        IReadOnlyList<TapeTocAnomaly> anomalies, TapeTocPlacement placement)
+    {
+        ArgumentNullException.ThrowIfNull(anomalies);
+
+        bool Settled(TapeTocAnomaly d) => anomalies.Any(r => r.IsRecovery
+            && r.Volume == d.Volume && r.Kind == d.Kind && r.CopyIndex == d.CopyIndex);
+
+        List<int> Volumes(Func<TapeTocAnomaly, bool> which)
+            => [.. anomalies.Where(a => !a.IsRecovery && which(a)).Select(a => a.Volume).Distinct().Order()];
+
+        List<int> v = Volumes(a => a.Kind == TapeTocAnomalyKind.NoCopyWritten && !Settled(a));
+        if (v.Count > 0)
+            return (TocAnomalyAdvice.TocLost, v);
+
+        v = Volumes(a => a.Kind is TapeTocAnomalyKind.NotFoundNatively or TapeTocAnomalyKind.NoReadableCopy && !Settled(a));
+        if (v.Count > 0)
+            return (TocAnomalyAdvice.TocUnreadable, v);
+
+        v = Volumes(a => a.Kind == TapeTocAnomalyKind.CopyWriteFailed && !Settled(a)
+                         && ErrorManageableBase.IsEOM(a.Diagnosis.ErrorCode));
+        if (v.Count > 0)
+            return (placement == TapeTocPlacement.InPartition
+                ? TocAnomalyAdvice.TocPartitionFull : TocAnomalyAdvice.SingleCopyReserve, v);
+
+        v = Volumes(a => a.Kind == TapeTocAnomalyKind.CopyUnreadable
+                         || a.Kind == TapeTocAnomalyKind.CopyWriteFailed && !Settled(a));
+        if (v.Count > 0)
+            return (TocAnomalyAdvice.SingleCopyDamaged, v);
+
+        v = [.. anomalies.Where(r => r.Stage is TapeTocAnomalyStage.ExpectedPosition
+                or TapeTocAnomalyStage.AnchorWalk or TapeTocAnomalyStage.FullWalk)
+            .Select(r => r.Volume).Distinct().Order()];
+        if (v.Count > 0)
+            return (TocAnomalyAdvice.TocFoundBySearch, v);
+
+        return (TocAnomalyAdvice.None, []);
+    }
+
+    /// <summary>"volume #2", "volumes #1, #3", or "the loaded volume" when the volume could not be identified.</summary>
+    public static string DescribeVolumes(IReadOnlyList<int> volumes)
+    {
+        var known = volumes.Where(v => v > 0).ToList();
+        if (known.Count == 0)
+            return "the loaded volume";
+        return known.Count == 1
+            ? $"volume #{known[0]}"
+            : $"volumes {string.Join(", ", known.Select(v => $"#{v}"))}";
+    }
+
+    /// <summary>Renders an advice as a headline plus one actionable sub-line. Mirrors <see cref="AdviseText"/>.</summary>
+    public static (ServiceReportLevel Level, string Headline, string Action) AdviseTocText(
+        TocAnomalyAdvice advice, IReadOnlyList<int> volumes)
+    {
+        string on = DescribeVolumes(volumes);
+        return advice switch
+        {
+            TocAnomalyAdvice.TocLost => (
+                ServiceReportLevel.Failed,
+                $"The table of contents could not be written to {on}",
+                "Export the TOC to a file (Media | Export TOC to file), unless done already — " +
+                $"the files stay restorable through it (Help: {TocSpaceHelpTopic})"),
+            TocAnomalyAdvice.TocUnreadable => (
+                ServiceReportLevel.Failed,
+                $"The table of contents of {on} could not be read",
+                "Recover it with Scan Media, or import a TOC file exported earlier"),
+            TocAnomalyAdvice.SingleCopyReserve => (
+                ServiceReportLevel.Warning,
+                $"Only one TOC copy fit on {on}",
+                "Export the TOC to a file now; calibrate the drive for this media to prevent it " +
+                $"(Help: {TocSpaceHelpTopic})"),
+            TocAnomalyAdvice.TocPartitionFull => (
+                ServiceReportLevel.Warning,
+                $"The table of contents no longer fits its partition on {on}",
+                "Export the TOC to a file now; back up fewer files per set or per volume " +
+                $"(Help: {TocSpaceHelpTopic})"),
+            TocAnomalyAdvice.SingleCopyDamaged => (
+                ServiceReportLevel.Warning,
+                $"A TOC copy on {on} is damaged",
+                "Re-save the TOC (e.g. by renaming the media) to restore both copies; retire the cartridge if this recurs"),
+            TocAnomalyAdvice.TocFoundBySearch => (
+                ServiceReportLevel.Warning,
+                $"The table of contents of {on} was found only by searching",
+                "Re-save the TOC (e.g. by renaming the media) so it can be found directly again"),
+            _ => (ServiceReportLevel.Info, string.Empty, string.Empty),
+        };
+    }
+
+    /// <summary>
+    /// Reports the TOC-level summary and its recommendation. Silent when nothing was observed — the happy path must stay
+    ///  provably quiet. Mirrors <see cref="ReportSetAnomalyOutcome"/>.
+    /// </summary>
+    protected TocAnomalyAdvice ReportTocAnomalyOutcome(in TapeTocStatistics toc,
+        IReadOnlyList<TapeTocAnomaly> anomalies, TapeTocPlacement placement)
+    {
+        var (advice, volumes) = AdviseOnTocAnomalies(anomalies, placement);
+        if (advice == TocAnomalyAdvice.None)
+            return advice;
+
+        var parts = new List<string>(3);
+        if (toc.AnomaliesDetected > 0)
+            parts.Add($"{toc.AnomaliesDetected:N0} TOC anomaly(ies) detected");
+        if (toc.AnomaliesRecovered > 0)
+            parts.Add($"{toc.AnomaliesRecovered:N0} recovered");
+        if (toc.CopyWriteFailures > 0)
+            parts.Add($"{toc.CopiesWritten:N0} TOC copy(ies) written, {toc.CopyWriteFailures:N0} not");
+
+        var (level, headline, action) = AdviseTocText(advice, volumes);
+        _host.Report(level, headline);
+        if (parts.Count > 0)
+            _host.Report(level, string.Join(", ", parts), isSubEntry: true);
+        if (action.Length > 0)
+            _host.Report(ServiceReportLevel.Info, action, isSubEntry: true);
+        return advice;
+    }
+
+    /// <summary>
+    /// Reports what <paramref name="agent"/> recorded — the convenience every verb uses, the stand-alone TOC verbs
+    ///  included: their agent records anomalies without any notifiable.
+    /// </summary>
+    protected TocAnomalyAdvice ReportTocAnomalyOutcome(TapeAgentBase agent)
+    {
+        ArgumentNullException.ThrowIfNull(agent);
+        return ReportTocAnomalyOutcome(agent.Statistics.TocStats, agent.TocAnomalies, agent.TOCPlacement);
+    }
 
     #endregion
 }

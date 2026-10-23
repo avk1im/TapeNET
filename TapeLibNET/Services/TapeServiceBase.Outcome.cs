@@ -113,7 +113,7 @@ public partial class TapeServiceBase
         // Checked BEFORE the file counters: a refused destructive write processes no files, so every
         //  counter-based verdict below would describe it as "nothing happened" — which is true and
         //  useless. This is the verdict that names the cause.
-        if (result.Sets.SetWriteBlocked && result.FilesProcessed == 0)
+        if (result.SetStats.SetWriteBlocked && result.FilesProcessed == 0)
             return FileOperationVerdict.SetVerificationBlocked;
 
         if (result.FilesFailed > 0) return FileOperationVerdict.CompletedWithFailures;

@@ -189,7 +189,7 @@ internal static class BackupCommand
 
             var result = await service.ExecuteBackupAsync(options);
             return (int)VerbHost.ToExitCode(result.WasAborted, result.HasFailed || result.FilesFailed > 0,
-                result.Sets.SetWriteBlocked);
+                result.SetStats.SetWriteBlocked);
         });
 
         return cmd;

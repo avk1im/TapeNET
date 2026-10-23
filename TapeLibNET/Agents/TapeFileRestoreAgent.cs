@@ -651,6 +651,11 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
     /// Identifies the loaded cartridge as <paramref name="volume"/> of this series, holding the next set to restore.
     ///  Leaves <see cref="TapeAgentBase.TOC"/> as it was.
     /// </summary>
+    /// <remarks>
+    /// The cartridge's own TOC is read with the operation's notifiable and the requested volume: a copy that does not
+    ///  read is a TOC anomaly of THIS restore, on THAT volume — collected with the others for the final report
+    ///  (Design-TocLocation §5.3).
+    /// </remarks>
     private TapeResult CheckVolumeToResumeFrom(int volume)
     {
         // since we're on the new media volume, renew Navigator
@@ -662,9 +667,10 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
 
         // Read the cartridge's own TOC to identify it — then put ours back: it contains more sets than this volume's
         var orgTOC = new TapeTOC(TOC);
+        ITapeTocNotifiable? notify = MultiVolumeContext!.Value.fileNotify;
         try
         {
-            if (!RestoreTOC())
+            if (!RestoreTOCFromMedia(expectedVolume: volume, notify))
                 return RejectVolume($"Volume #{volume}: its table of contents could not be read ({LastErrorMessage})");
 
             if (orgTOC.MediaId != Guid.Empty && TOC.MediaId != Guid.Empty && TOC.MediaId != orgTOC.MediaId)
@@ -884,70 +890,11 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting restoring (packed) pre-selected files from current set #{Set} down", TOC.CurrentSetIndex);
 
         _stats.Reset();
-        _setAnomalies.Clear();
+        ClearAnomalies();
         ResetLatchedFailure();
         return RestoreFilesFromCurrentSetDownCore(filesSelected, ignoreFailures, fileNotify)
             ? TapeResult.OK : FailedOperationResult;
     }
-
-
-#if _
-    /// <summary>
-    ///  Routes content reads through the shared-block read packer; supports multi-volume continuation.
-    /// </summary>
-    public TapeResult RestoreFilesFromCurrentSet(ITapeFileFilter? fileFilter,
-        bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
-    {
-        m_logger.LogTrace("Starting restoring (packed) files from current set #{Set}",
-            TOC.CurrentSetIndex);
-
-        _stats.Reset();
-        _setAnomalies.Clear();
-        ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, fileFilter), ignoreFailures, fileNotify)
-            ? TapeResult.OK : FailedOperationResult;
-    }
-
-    /// <summary>
-    ///  Supports multi-volume continuation.
-    /// </summary>
-    public TapeResult RestoreAllFilesFromCurrentSet(
-        bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
-    {
-        m_logger.LogTrace("Starting restoring (packed) all files from current set #{Set}",
-            TOC.CurrentSetIndex);
-
-        _stats.Reset();
-        _setAnomalies.Clear();
-        ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, filter: null), ignoreFailures, fileNotify)
-            ? TapeResult.OK : FailedOperationResult;
-    }
-
-    /// <summary>Restores filtered files from the current set and its incremental chain.</summary>
-    public TapeResult RestoreFilesFromCurrentSetInc(ITapeFileFilter? fileFilter, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
-    {
-        m_logger.LogTrace("Starting incrementally restoring (packed) files from current set #{Set}", TOC.CurrentSetIndex);
-
-        _stats.Reset();
-        _setAnomalies.Clear();
-        ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, fileFilter), ignoreFailures, fileNotify)
-            ? TapeResult.OK : FailedOperationResult;
-    }
-
-    /// <summary>Restores filtered files from the current set and its incremental chain.</summary>
-    public TapeResult RestoreAllFilesFromCurrentSetInc(bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
-    {
-        m_logger.LogTrace("Starting incrementally restoring (packed) all files from current set #{Set}", TOC.CurrentSetIndex);
-
-        _stats.Reset();
-        _setAnomalies.Clear();
-        ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, filter: null), ignoreFailures, fileNotify)
-            ? TapeResult.OK : FailedOperationResult;
-    }
-#endif
 
     /// <summary>
     /// Runs a file selection; a LOCKED set in it (E6) becomes <c>ERROR_INVALID_PASSWORD</c>, set and latched, before
@@ -981,7 +928,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             TOC.CurrentSetIndex);
 
         _stats.Reset();
-        _setAnomalies.Clear();
+        ClearAnomalies();
         ResetLatchedFailure();
 
         if (!TrySelectFiles(() => TOC.SelectFiles(incremental: false, fileFilter), out var selected))
@@ -1000,7 +947,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             TOC.CurrentSetIndex);
 
         _stats.Reset();
-        _setAnomalies.Clear();
+        ClearAnomalies();
         ResetLatchedFailure();
 
         if (!TrySelectFiles(() => TOC.SelectFiles(incremental: false, filter: null), out var selected))
@@ -1015,7 +962,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting incrementally restoring (packed) files from current set #{Set}", TOC.CurrentSetIndex);
 
         _stats.Reset();
-        _setAnomalies.Clear();
+        ClearAnomalies();
         ResetLatchedFailure();
 
         if (!TrySelectFiles(() => TOC.SelectFiles(incremental: true, fileFilter), out var selected))
@@ -1030,7 +977,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting incrementally restoring (packed) all files from current set #{Set}", TOC.CurrentSetIndex);
 
         _stats.Reset();
-        _setAnomalies.Clear();
+        ClearAnomalies();
         ResetLatchedFailure();
 
         if (!TrySelectFiles(() => TOC.SelectFiles(incremental: true, filter: null), out var selected))
@@ -1062,7 +1009,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             return TapeResult.OK;
 
         _stats.Reset();
-        _setAnomalies.Clear();
+        ClearAnomalies();
         ResetLatchedFailure();
 
         m_logger.LogTrace("Restoring (packed) files from {Count} set(s): {Sets}",

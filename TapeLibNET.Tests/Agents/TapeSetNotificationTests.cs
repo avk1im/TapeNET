@@ -14,7 +14,7 @@ namespace TapeLibNET.Tests.Agents;
 ///  detail to prompt, the host's answer is honoured, and the operation's set statistics are accurate.
 /// <para>
 /// Two things under test, deliberately separated: the CHANNEL (payload, answer, abort convergence,
-///  silence) and the STATISTICS (<c>Statistics.Sets</c>). The statistics are what Step 6 will surface, so
+///  silence) and the STATISTICS (<c>Statistics.SetStats</c>). The statistics are what Step 6 will surface, so
 ///  a wrong count here becomes a wrong summary there — and the summary is the only place the person
 ///  holding the cartridge learns that it is drifting.
 /// </para>
@@ -127,7 +127,7 @@ public class TapeSetNotificationTests
                 agent.Navigator.SimulateSetMiscount = +1;
                 agent.Navigator.SimulateSetMiscountPersistent = true; // to prevent agent autorecovery
 
-                Assert.False(agent.DeleteSetsFromCurrentSetUp(fileNotify: notify));
+                Assert.False(agent.DeleteSetsFromCurrentSetUp(setNotify: notify));
             }
 
             var a = Assert.Single(notify.SetAnomalies).Anomaly;
@@ -173,7 +173,7 @@ public class TapeSetNotificationTests
             {
                 agent.ReadBomHeader();   // resolve BOM first, so the injector targets the SET read
                 fixture.Backend.ContentReadFaults.CorruptAlways(bits: 2, offset: 48); // keep corrupting to prevent agent autorecovery
-                Assert.False(agent.DeleteSetsFromCurrentSetUp(fileNotify: notify));
+                Assert.False(agent.DeleteSetsFromCurrentSetUp(setNotify: notify));
             }
 
             var a = Assert.Single(notify.SetAnomalies).Anomaly;
@@ -225,7 +225,7 @@ public class TapeSetNotificationTests
             using var agent = new TapeSetAgent(fixture.Drive, fixture.TOC);
             agent.Navigator.SimulateSetMiscount = +1;
 
-            var result = agent.DeleteSetsFromCurrentSetUp(fileNotify: notify);
+            var result = agent.DeleteSetsFromCurrentSetUp(setNotify: notify);
 
             Assert.False(result);
             Assert.True(agent.IsAbortRequested);                 // the abort IS recorded…
@@ -262,7 +262,7 @@ public class TapeSetNotificationTests
                 agent.Navigator.SimulateSetMiscount = +1;
 
                 // The exception must NOT escape: the public API is contractually TapeResult-based.
-                var r = agent.DeleteSetsFromCurrentSetUp(fileNotify: notify);
+                var r = agent.DeleteSetsFromCurrentSetUp(setNotify: notify);
                 Assert.False(r);
                 Assert.True(agent.IsAbortRequested);
                 return r;
@@ -300,7 +300,7 @@ public class TapeSetNotificationTests
             using var agent = new TapeSetAgent(fixture.Drive, fixture.TOC);
             agent.Navigator.SimulateSetMiscount = +1;
 
-            var result = agent.DeleteSetsFromCurrentSetUp(fileNotify: new BareNotifiable());
+            var result = agent.DeleteSetsFromCurrentSetUp(setNotify: new BareNotifiable());
 
             Assert.False(result);
             Assert.True(agent.IsAbortRequested);   // the DIM default declined…
@@ -318,7 +318,7 @@ public class TapeSetNotificationTests
     /// </summary>
     /// <remarks>
     /// This is the branch that keeps every legacy caller working. A blanket Abort default here would
-    ///  have turned every <c>fileNotify: null</c> call into a user-cancelled operation.
+    ///  have turned every <c>setNotify: null</c> call into a user-cancelled operation.
     /// </remarks>
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -339,7 +339,7 @@ public class TapeSetNotificationTests
 
             Assert.False(result);
             Assert.Equal((uint)WIN32_ERROR.ERROR_INVALID_DATA, result.ErrorCode);
-            Assert.True(agent.Statistics.Sets.SetWriteBlocked);
+            Assert.True(agent.Statistics.SetStats.SetWriteBlocked);
         }
         finally
         {
@@ -375,7 +375,7 @@ public class TapeSetNotificationTests
             {
                 Assert.True(restore.RestoreAllFilesFromCurrentSet(ignoreFailures: false, fileNotify: notify));
 
-                var sets = restore.Statistics.Sets;
+                var sets = restore.Statistics.SetStats;
                 Assert.False(sets.HasAnomalies);
                 Assert.Equal(0, sets.AnomaliesRecovered);
                 Assert.False(sets.SetWriteBlocked);
@@ -391,8 +391,8 @@ public class TapeSetNotificationTests
             fixture.TOC.CurrentSetIndex = 3;
             using (var agent = new TapeSetAgent(fixture.Drive, fixture.TOC))
             {
-                Assert.True(agent.DeleteSetsFromCurrentSetUp(fileNotify: notify));
-                Assert.False(agent.Statistics.Sets.HasAnomalies);
+                Assert.True(agent.DeleteSetsFromCurrentSetUp(setNotify: notify));
+                Assert.False(agent.Statistics.SetStats.HasAnomalies);
                 Assert.Empty(agent.SetAnomalies);
             }
 
@@ -429,7 +429,7 @@ public class TapeSetNotificationTests
             Assert.True(agent.RestoreFilesFromCurrentSetDown([null, null, null],
                 ignoreFailures: false, fileNotify: notify));
 
-            var sets = agent.Statistics.Sets;
+            var sets = agent.Statistics.SetStats;
             Assert.Equal(3, sets.SetsProcessed);
             Assert.Equal(3, sets.SetsSucceeded);
             Assert.False(sets.HasAnomalies);
@@ -468,9 +468,9 @@ public class TapeSetNotificationTests
             agent.Navigator.SimulateSetMiscount = +1;
             agent.Navigator.SimulateSetMiscountPersistent = true; // to prevent agent autorecovery
 
-            Assert.False(agent.DeleteSetsFromCurrentSetUp(fileNotify: notify));
+            Assert.False(agent.DeleteSetsFromCurrentSetUp(setNotify: notify));
 
-            var sets = agent.Statistics.Sets;
+            var sets = agent.Statistics.SetStats;
             Assert.Equal(1, sets.AnomaliesDetected);
             Assert.Equal(0, sets.AnomaliesRecovered);      // nothing was repaired
             Assert.True(sets.SetWriteBlocked);
@@ -515,7 +515,7 @@ public class TapeSetNotificationTests
             Assert.True(agent.RestoreAllFilesFromCurrentSet(ignoreFailures: false, fileNotify: notify),
                 "the read path repairs the drift");
 
-            var sets = agent.Statistics.Sets;
+            var sets = agent.Statistics.SetStats;
             Assert.Equal(1, sets.AnomaliesDetected);
             Assert.Equal(1, sets.AnomaliesRecovered);
             Assert.Equal(0, sets.AnomaliesRecoveredFromBom);   // the delta settled it (Step 5 adds the other)
@@ -556,7 +556,7 @@ public class TapeSetNotificationTests
             fixture.TOC.CurrentSetIndex = 3;
             agent.Navigator.SimulateSetMiscount = +1;
             Assert.True(agent.RestoreAllFilesFromCurrentSet(ignoreFailures: false));
-            Assert.Equal(1, agent.Statistics.Sets.AnomaliesRecovered);
+            Assert.Equal(1, agent.Statistics.SetStats.AnomaliesRecovered);
             Assert.Single(agent.SetAnomalies);
 
             // Second operation on the SAME agent: clean, and must report clean.
@@ -564,7 +564,7 @@ public class TapeSetNotificationTests
             Assert.Equal(0, agent.Navigator.SimulateSetMiscount);
             Assert.True(agent.RestoreAllFilesFromCurrentSet(ignoreFailures: false));
 
-            var sets = agent.Statistics.Sets;
+            var sets = agent.Statistics.SetStats;
             Assert.Equal(0, sets.AnomaliesDetected);
             Assert.Equal(0, sets.AnomaliesRecovered);
             Assert.False(sets.SetWriteBlocked);
@@ -612,7 +612,7 @@ public class TapeSetNotificationTests
             agent.Navigator.SimulateSetMiscount = 0;
 
             Assert.Single(notify.SetAnomalies);                              // asked ONCE…
-            Assert.True(agent.Statistics.Sets.AnomaliesDetected >= 1);       // …however often the ladder looked
+            Assert.True(agent.Statistics.SetStats.AnomaliesDetected >= 1);       // …however often the ladder looked
             Assert.Empty(notify.SetAnomaliesRecovered);                      // and nothing was repaired
         }
         finally
@@ -643,20 +643,20 @@ public class TapeSetNotificationTests
             agent.Navigator.SimulateSetMiscount = +1;
             agent.Navigator.SimulateSetMiscountPersistent = true; // to prevent agent autorecovery
 
-            Assert.False(agent.DeleteSetsFromCurrentSetUp(fileNotify: notify));
+            Assert.False(agent.DeleteSetsFromCurrentSetUp(setNotify: notify));
 
             // The SNAPSHOT is a by-value copy taken when OnSetAnomaly fired — at DETECTION, before
             //  either recovery stage ran. It can only carry what was known then: the anomaly exists,
             //  it is destructive, and nothing has been repaired yet.
             var incident = Assert.Single(notify.SetAnomalies);
-            Assert.Equal(1, incident.Stats.Sets.AnomaliesDetected);
-            Assert.Equal(0, incident.Stats.Sets.AnomaliesRecovered);
+            Assert.Equal(1, incident.Stats.SetStats.AnomaliesDetected);
+            Assert.Equal(0, incident.Stats.SetStats.AnomaliesRecovered);
             Assert.True(incident.Anomaly.IsDestructive);        // a destructive write is GATED on this…
             Assert.True(incident.Anomaly.CanAttemptRecovery);   // …and a stage was still untried
 
             // SetWriteBlocked belongs to the TERMINAL, two stages later, so it is only observable on
             //  the agent's live statistics — never on a snapshot handed to the prompt.
-            var sets = agent.Statistics.Sets;
+            var sets = agent.Statistics.SetStats;
             Assert.True(sets.SetWriteBlocked);
             Assert.Equal(0, sets.AnomaliesRecovered);
         }
