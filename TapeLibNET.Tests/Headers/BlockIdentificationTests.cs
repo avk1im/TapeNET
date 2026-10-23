@@ -33,9 +33,11 @@ public class BlockIdentificationTests
         toc.EnsureMediaId();
         toc.AddNewSetTOC();
         toc.CurrentSetTOC.Description = "One";
-        toc.AddNewSetTOC();
         toc.CurrentSetTOC.Append(new TapeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(5, 0),
             new TapeFileDescriptor(@"C:\x.bin") { CreationTime = T0, LastWriteTime = T0, LastAccessTime = T0 }));
+        toc.AddNewSetTOC();
+        toc.CurrentSetTOC.Append(new TapeFileInfo(toc.CurrentSetTOC.GenerateFileId(), new TapeAddress(7, 0),
+            new TapeFileDescriptor(@"C:\y.dat") { CreationTime = T0, LastWriteTime = T0, LastAccessTime = T0 }));
         return toc;
     }
 
