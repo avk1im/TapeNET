@@ -714,22 +714,94 @@ Each phase's instructions end with a precise list of what the next phase needs. 
 
 ### 12.0 Deviations from Phase 0
 
+- **R2 has two valid "empty" forms, not one.** `SettleAtBeginOfContentIfBlank` accepts end-of-data at begin-of-content
+  (blank), **and** a TOC copy standing at begin-of-content (a volume with zero content sets), identified by reading the
+  block. Begin-of-content is established by evidence — a media header read at BOM — not by cached presence.
+- **A refusal keeps the positional cause.** When the mark-based locate failed positionally (BOM, EOD, EOM), the refusal
+  reports that error instead of `ERROR_INVALID_DATA`, so the agent's SH-20 retry from begin-of-content can run. The
+  navigator still settles nowhere.
+- **The TOC-mark layout without a mark.** No TOC mark on tape means no TOC at all: content ends at end-of-data, provided a
+  closing filemark stands right before it. The mark is searched forward from the believed position, then backward from
+  end-of-data (a miscount leaves the head past it).
+- **`TOCMissing` on the navigator.** Set when end-of-content had to be located on a volume that carries no TOC; the agent
+  reports it once per volume as `NotFoundNatively` (`NoteVolumeWithoutToc`), and a TOC written later in the operation
+  settles it (`Retried`).
+- **Filemark layout, tail without its closing filemark.** When counting back three filemarks fails, the tail is checked:
+  a complete tail means too few marks (zero sets — left to R2); a tail without its closing filemark means the TOC write ran
+  into end-of-media, and copy 1 is located by identification (2nd, then 1st filemark back). Runs only after the regular
+  count failed: a healthy tape pays nothing.
+- **F2 needed no disarming.** `TapeDrive.WriteDirect(…, honorEwReserve)`: the reserve clamps content writes only; TOC
+  writes and the TOC mark's gap file bypass it. Early-warning tracking is unaffected.
+- **W1** checks the drive's error for the closing filemark (`Drive.RanToEOM`), the agent's own for the data.
+- **Error accessors.** `LastErrorWin32` is the single virtual error accessor (internal); `LastError`, `WentOK`,
+  `WentBad`, `RanToEOM`, `RanToEOMorEOD` derive from it. On a `TapeDriveHolder` all of them include the drive's error;
+  `OwnErrorWin32` reads the holder's own error alone.
+
 ### 12.1 Deviations from Phase 1
+
+- `TapeTOC.TryPeek` became internal; a TOC header cut off by the block length identifies as `NotFramed`.
+- Block 0 of the content partition goes through the same projection as every other block in the scanner: a TOC copy there
+  (a header-less, TOC-only volume) is a TOC fragment and is harvested.
+- `HeaderBlockIdentity.FileHeader`: a CRC-verified 2.1 file header at a block start is a positive identity.
 
 ### 12.2 Deviations from Phase 2
 
-1. **The TOC verbs never clear the records; the operations do.** v4 §5.3 had the stand-alone `BackupTOC` / `RestoreTOC`
-   clear. But the service calls the *public* `BackupTOC` between backup volumes, and the restore resume calls the
-   *public* `RestoreTOC` — clearing there would lose every earlier volume's anomalies. A fresh agent starts empty, so the
-   stand-alone verbs (load, rename, format) are still operations of their own.
-2. **Raised once the outcome is known.** A TOC anomaly asks nothing, and on read the volume is known only from the copy
-   that DID read (TL-10). So copy 1's failure is raised after copy 2 decided — detected and recovered together.
-3. **New stage `Retried`.** A later success on the same volume within the operation — the service's enforced TOC rewrite,
-   or a re-inserted cartridge whose TOC then reads — settles what was open there. Without it, a successful enforced
-   rewrite would still advise "no TOC on this volume".
-4. **New advice `TocUnreadable`** (no copy readable, or the TOC position unreachable) — v4's table had no row for it.
-5. **No `ServiceTocProgressHandler` yet.** The TOC-only verbs report afterwards through
-   `ReportTocAnomalyOutcome(agent)`; the agent records without a notifiable. The handler becomes necessary with the only
-   TOC *question*, `OnTocFullWalkConfirm`, in Phase 5. The interface member is already there (default: proceed).
-6. **`Block = -1`.** Phase 2 does not know where a copy stands; the ladder of Phase 4 does.
-7. **No menu paths invented** in the advice, except the existing *Media | Export TOC to file*.
+- **The anomaly records belong to the operation.** Backup, restore and delete clear them at their start; the TOC verbs
+  never do — the backup writes the TOC between volumes and the restore reads each cartridge's TOC through the public
+  verbs, and clearing there would lose the earlier volumes' anomalies. A fresh agent starts empty, so the stand-alone TOC
+  verbs (load, rename, format) are operations of their own.
+- **Raised once the outcome is known.** A TOC anomaly asks nothing, and the volume is known only from a copy that read
+  (TL-10): copy 1's failure is raised after copy 2 decided — detected and recovered together.
+- **Stage `Retried`.** A later success on the same volume within the operation — an enforced rewrite, a re-inserted
+  cartridge whose TOC then reads, or a TOC written to a volume found without one — settles what was open there.
+- **Advice `TocUnreadable`** (no copy readable, or the TOC position unreachable).
+- **No `ServiceTocProgressHandler` yet.** The TOC-only service verbs report after the fact from the agent's records; the
+  handler arrives with the only TOC question, `OnTocFullWalkConfirm` (Phase 5).
+- **TOC statistics come from the agent, not the progress handler**: they can change without a callback (the initial TOC
+  read, repeat findings on a volume). Set statistics change only inside callbacks.
+
+### 12.3 Deviations from Phase 3
+
+- `FirstBlockAfterSet` and `FirstBlockAfterContent`: plain non-negative `varuint` fields with default −1. The −1 never
+  reaches the wire — elided on write, applied on read when absent; any other negative value is refused on write.
+- `FirstBlockAfterSet` also travels in the clear stub of an encrypted set (field 9), so the per-volume lookup works while
+  the set is locked. **The stub is authoritative**: the sealed content carries field 15 as well, unchecked against the
+  stub, because a locked set may be restamped (trailing delete) while its sealed bytes are re-emitted verbatim.
+- **Captured by the stream manager** (`LastSetFirstBlockAfter`, right after the closing mark): `EndWriteContent` rethrows on
+  end-of-media and write faults after closing the set, so code behind that call in the agent would miss exactly those paths.
+- A trailing delete stamps the retained last set with the new end of content (only when it differs).
+- `CopyCount` records what the save intended (always 2) — a skipped copy 2 is what a reader must be able to suspect.
+
+### 12.4 Deviations from Phase 4
+
+- **No ±W window around the expected position (S3).** v3 computed the position by summing file sizes; v4 records it. The
+  block is exact: S3 jumps there, identifies, and moves on to S2 when it is not a TOC copy. The size-sum fallback for legacy
+  sets is dropped — a set without the value skips S3. On the TOC-mark layout, S3 skips the known structure (gap + three
+  filemarks) before identifying.
+- **Partition-explicit moves (TL-11).** Every absolute position names its partition: `TapeDrive.MoveToBlock(partition,
+  block)` — a combined locate on partitioned media. The plain `MoveToBlock(block)` moves within the current partition and
+  skips a move whose block number matches, whatever the partition.
+- **The ladder on partitioned media.** S0 and S1 as before (initiator block 0). S3 does not apply to the TOC there — the
+  recorded end describes the content partition, and the TOC always starts at initiator block 0. S2 walks the whole
+  initiator partition (small, exhaustive). A blank initiator partition fails with that finding in the diagnosis.
+  The plausibility check (content end ≤ the copy's block) applies only to copies standing in the content partition.
+- **Anchors (S2).** The series anchor (start of the volume's last set) first; Setmarks: just after the last setmark;
+  filemark layouts: the deepest of five…one filemarks back from end-of-data — not the TOC-mark search, which S0 ran
+  already. A setmark tape whose last setmark is gone is left to S4.
+- **The scanner is the walker.** `TapeScanner.WalkFrom(partition, block)` walks one partition from a position with the
+  scan's identification and mark handling; `ScanMediaOptions.StopAfterTocCopies` bounds it; TOC fragments carry their
+  peek (`TocPeek`) for filtering and ranking.
+- **Identity filtering only against what is expected**: the series' MediaId (a resume) and the requested volume. A plain
+  load expects nothing — the in-memory TOC may belong to the previous cartridge.
+- **The block-length rule.** TapeNET writes TOC copies and media / set headers at 16 KiB, always. A read at another size
+  than the block on tape reports `ERROR_INVALID_BLOCK_LENGTH`, delivers the data, and leaves the head past the block —
+  real drives do, and the virtual drive now does too. Identification reads (`TapeHeaderBlock`) absorb it: a block of
+  another size is not ours, but may be a set's first block, so it is identified and the error cleared. TOC stream and
+  content reads keep failing on it; calibration absorbs it while walking back over the run header.
+- **Identification on small-block drives** reads one block at the size the writer used: 16 KiB, clamped to the drive's
+  maximum — never several blocks, which could cross a mark.
+- **Resume identification (§7)** as designed, with step 3 locating the set by the previous set's `FirstBlockAfterSet`, else
+  by counting from begin-of-content; legacy and encrypted sets cannot be identified by their first block.
+- **The append guard (§8.1)** settles at the TOC's recorded end of content only when the tape confirms it — the layout's
+  closing mark right before, the TOC area (a copy, the TOC mark, or end-of-data) right at it. Otherwise the navigator
+  locates it as before. A legacy copy's end of content is not used.

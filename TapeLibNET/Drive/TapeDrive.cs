@@ -524,7 +524,12 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
                 ResetError();
             }
             if (!tapemark && !eof)
-                LogErrorAsDebug("Read encountered error");
+            {
+                if (LastErrorWin32 == WIN32_ERROR.ERROR_INVALID_BLOCK_LENGTH)
+                    LogErrorAsTrace("Read a block of another size");    // a finding for identification reads
+                else
+                    LogErrorAsDebug("Read encountered error");
+            }
         }
 
         m_byteCounter += read;

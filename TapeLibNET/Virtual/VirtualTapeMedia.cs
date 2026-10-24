@@ -633,6 +633,8 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
 #endif
 
         int totalRead = 0;
+        bool blockSizeMismatch = false;
+        long correctSize = 0L;
 
         try
         {
@@ -660,6 +662,12 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
                 // Read logical blocks from this virtual data block
                 while (count >= m_blockSize && vb.ContainsBlock(m_currentBlock))
                 {
+                    if (vb.BlockSize != m_blockSize)
+                    {
+                        blockSizeMismatch = true;      // read at another size than written (Design-TocLocation §12.4)
+                        correctSize = vb.BlockSize;
+                    }
+
                     long streamPos = vb.GetStreamOffsetForBlock(m_currentBlock);
                     m_stream.Position = streamPos;
 
@@ -697,6 +705,10 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
             LogErrorAsDebug("Stream read failed");
         }
 
+        // As a real drive: the data is delivered, the head is past the block — and the size mismatch is reported.
+        if (blockSizeMismatch && WentOK)
+            SetError(WIN32_ERROR.ERROR_INVALID_BLOCK_LENGTH,
+                $"Block size mismatch: read with {m_blockSize} B vs. block on tape size {correctSize} B");
         return totalRead;
     }
 
