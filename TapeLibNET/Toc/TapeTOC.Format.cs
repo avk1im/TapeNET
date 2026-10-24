@@ -601,8 +601,12 @@ public partial class TapeTOC : ITapeBlockPeeker<TapeTocPeek>
     /// <see cref="SaveTo(Stream)"/> for one of the on-tape copies: stamps <paramref name="copyIndex"/> of
     ///  <paramref name="copyCount"/> into the header (Design-TocLocation §6).
     /// </summary>
+    /// <remarks>
+    /// All copies of one save carry ONE save time — the one copy 1 stamped. Otherwise each later copy would look newer
+    ///  than its sibling, and the TOC search, which ranks copies by save time (TL-5), would always prefer the last copy.
+    /// </remarks>
     internal void SaveTo(Stream stream, byte copyIndex, byte copyCount)
-        => SaveTo(stream, DateTime.UtcNow, DefaultWrittenBy, copyIndex, copyCount);
+        => SaveTo(stream, copyIndex > 1 ? LastSaveTime : DateTime.UtcNow, DefaultWrittenBy, copyIndex, copyCount);
 
     /// <summary>Deterministic form of <see cref="SaveTo(Stream)"/> — tests and goldens pin time, writer and copy.</summary>
     internal void SaveTo(Stream stream, DateTime saveTimeUtc, string writtenBy, byte copyIndex = 0, byte copyCount = 0)

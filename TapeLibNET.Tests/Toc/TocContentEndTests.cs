@@ -209,6 +209,33 @@ public class TocContentEndTests
 
     #endregion
 
+    #region *** Saved times ***
+
+    /// <summary>Both copies of one save carry one save time — the ranking must not prefer copy 2 for being written later.</summary>
+    [Theory]
+    [MemberData(nameof(ProfilesAndHeaders))]
+    public void BothCopiesOfOneSave_CarryOneSaveTime(DriveProfile profile, bool headed)
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("time", count: 2, minSize: 512, maxSize: 4 * 1024);
+        using var fixture = new VirtualTapeFixture(profile, withMediaHeader: headed, withSetHeaders: headed);
+        fixture.BackupFiles(tree.Files, description: "Time");
+
+        using var agent = new TapeAgentBase(fixture.Drive, fixture.TOC);
+        agent.EnsureMediaHeaderResolved();
+        agent.Navigator.ResetContentSet();
+        Assert.True(agent.Navigator.MoveToBeginOfTOC(), agent.Navigator.LastErrorMessage);
+        Assert.True(TapeHeaderBlock.ReadAndIdentify(fixture.Drive, out _, out _, out _, out _).TryGetToc(out TapeTocPeek copy1));
+        Assert.True(agent.Navigator.MoveToBeginOfTOC() && agent.Navigator.MoveToNextTOCFilemark());
+        Assert.True(TapeHeaderBlock.ReadAndIdentify(fixture.Drive, out _, out _, out _, out _).TryGetToc(out TapeTocPeek copy2));
+
+        Assert.Equal((byte?)1, copy1.CopyIndex);
+        Assert.Equal((byte?)2, copy2.CopyIndex);
+        Assert.Equal(copy1.LastSaveTime, copy2.LastSaveTime);
+    }
+
+    #endregion
+
     #region *** Lookup per volume ***
 
     [Fact]

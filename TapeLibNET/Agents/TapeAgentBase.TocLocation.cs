@@ -148,6 +148,9 @@ public partial class TapeAgentBase
         NotifyTocAnomaly(tocNotify, BuildTocAnomaly(kind, unknownVolume, 0, failure)
             with { Block = nativeBlock, CanAttemptRecovery = false });     // Phase 5: S4 remains, asked first
         ReportSkippedCopies(tocNotify, skipped, unknownVolume);
+
+        // The search's verdict supersedes the native one — it carries the native message PLUS what the search found.
+        ResetLatchedFailure();
         SetError(failure.ErrorCode, failure.ErrorMessage);
         LatchFailure();
         return FailedOperationResult;
