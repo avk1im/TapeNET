@@ -129,9 +129,14 @@ public partial class TapeServiceBase
     {
         ArgumentNullException.ThrowIfNull(anomalies);
 
+        // A detection about one copy is settled by a recovery of THAT copy; one about no particular copy (CopyIndex 0 —
+        //  the TOC position, a search) by any recovery of its kind on its volume: the recovery names the copy it found.
         bool SettledBy(TapeTocAnomaly d, Func<TapeTocAnomalyStage, bool> stage) => anomalies.Any(r => r.IsRecovery
-            && r.Volume == d.Volume && r.Kind == d.Kind && r.CopyIndex == d.CopyIndex && stage(r.Stage));
+            && r.Volume == d.Volume && r.Kind == d.Kind && stage(r.Stage)
+            && (d.CopyIndex == 0 || r.CopyIndex == d.CopyIndex));
+
         bool Settled(TapeTocAnomaly d) => SettledBy(d, _ => true);
+
         bool Rewritten(TapeTocAnomaly d) => SettledBy(d, s => s == TapeTocAnomalyStage.Retried);
 
         List<int> Volumes(Func<TapeTocAnomaly, bool> which)

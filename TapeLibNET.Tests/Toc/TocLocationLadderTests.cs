@@ -1,9 +1,10 @@
-using Windows.Win32.Foundation;
 using TapeLibNET.Agents;
 using TapeLibNET.Drive;
 using TapeLibNET.Headers;
-using TapeLibNET.Toc;
+using TapeLibNET.Services;
 using TapeLibNET.Tests.Helpers;
+using TapeLibNET.Toc;
+using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Tests.Toc;
 
@@ -88,9 +89,14 @@ public class TocLocationLadderTests
 
         Assert.Equal(1, reader.TOC.Count);
         Assert.Equal(tree.Files.Count, reader.TOC[1].Count);
+        
         TapeTocAnomaly recovered = Recovered(reader);
         Assert.Equal(TapeTocAnomalyStage.AnchorWalk, recovered.Stage);
         Assert.Equal(TapeTocAnomalyKind.NoReadableCopy, recovered.Kind);
+
+        var (advice, _) = TapeServiceBase.AdviseOnTocAnomalies(reader.TocAnomalies, reader.TOCPlacement);
+        Assert.Equal(TocAnomalyAdvice.TocFoundBySearch, advice);
+
         Assert.Equal(1, recovered.CopyIndex);
         Assert.Equal(1, reader.Statistics.TocStats.AnomaliesRecoveredByWalk);
         Assert.Single(notify.TocAnomalies);
