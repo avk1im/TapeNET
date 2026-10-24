@@ -1,7 +1,7 @@
 using TapeLibNET.Agents;
 using TapeLibNET.Tests.Helpers;
 
-namespace TapeLibNET.Tests.MultiVolume;
+namespace TapeLibNET.Tests.Scenarios;
 
 /// <summary>
 /// Design-TocLocation §7, Phase 4: a multi-volume restore identifies each cartridge even when its own TOC does not read —

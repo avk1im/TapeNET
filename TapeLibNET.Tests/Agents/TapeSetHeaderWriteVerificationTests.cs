@@ -400,38 +400,127 @@ public class TapeSetHeaderWriteVerificationTests
     }
 
 #if TEST_HOOKS
+    private static int ConfirmationReads(DriveProfile profile) => profile switch
+    {
+        DriveProfile.Partitions => 0,       // end of content = end-of-data of the content partition: exact, nothing read
+        DriveProfile.SeqFilemarks => 2,     // the gap file, then copy 1 behind the TOC mark
+        _ => 1,                             // the TOC copy at the recorded end
+    };
+
+    public static TheoryData<DriveProfile> InSetProfiles =>
+        [DriveProfile.Setmarks, DriveProfile.SeqFilemarks, DriveProfile.FilemarksOnly];
+
     /// <summary>
-    /// §3's performance claim, asserted rather than assumed: appending at end-of-data reads NOTHING.
-    ///  There is no predecessor record where the append will write, so verification must not arm — and
-    ///  the read-fault injector proves it by going unconsumed.
+    /// §3's claim, restated precisely: an append verifies NO set header. Its only read is the one confirming the end of
+    ///  content (Design-TocLocation §8.1) — which replaces the mark search rather than adding to it. The injector lets those
+    ///  reads pass and must then go unconsumed.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
-    public void Append_AtEod_PerformsNoVerification(DriveProfile profile)
+    public void Append_AtEod_PerformsNoSetHeaderVerification(DriveProfile profile)
     {
         TempFileTree[] trees = [];
         using var appended = new TempFileTree();
         appended.AddFiles("ap", count: 2, minSize: 512, maxSize: 4 * 1024);
-
         try
         {
             using var fixture = new VirtualTapeFixture(profile, withMediaHeader: true, withSetHeaders: true);
             trees = BuildMultiSetTape(fixture, setCount: 2, prefix: "ap");
 
             using var agent = fixture.CreateBackupAgent();
-            agent.ReadBomHeader();                       // resolve BOM first, so the injector targets a SET read
+            agent.ReadBomHeader();
             fixture.Backend.ContentReadFaults.FailOnce();
+            fixture.Backend.ContentReadFaults.SkipN = ConfirmationReads(profile);
 
             fixture.TOC.AddNewSetTOC();
             Assert.True(agent.BackupFileListToCurrentSet(newSet: true, appended.Files, ignoreFailures: false));
 
-            Assert.Equal(0, fixture.Backend.ContentReadFaults.Occurrences);   // nothing was read at all
+            Assert.Equal(0, fixture.Backend.ContentReadFaults.Occurrences);     // no read beyond the confirmation
+            Assert.Empty(agent.SetAnomalies);
         }
         finally
         {
             DisposeAll(trees);
         }
     }
+
+    /// <summary>
+    /// The confirming read fails: no evidence either way. The marks locate the end instead — and since they agree with
+    ///  the TOC, the append goes there, warned about, with no anomaly: the TOC itself read fine.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(InSetProfiles))]
+    public void Append_ConfirmationReadFails_MarksAgree_AppendsAtRecordedEnd(DriveProfile profile)
+    {
+        TempFileTree[] trees = [];
+        using var appended = new TempFileTree();
+        appended.AddFiles("ap", count: 2, minSize: 512, maxSize: 4 * 1024);
+        try
+        {
+            using var fixture = new VirtualTapeFixture(profile, withMediaHeader: true, withSetHeaders: true);
+            trees = BuildMultiSetTape(fixture, setCount: 2, prefix: "ap");
+            long recordedEnd = fixture.TOC[2].FirstBlockAfterSet;
+
+            using var agent = fixture.CreateBackupAgent();
+            agent.ReadBomHeader();
+            fixture.Backend.ContentReadFaults.FailOnce();
+
+            fixture.TOC.AddNewSetTOC();
+            Assert.True(agent.BackupFileListToCurrentSet(newSet: true, appended.Files, ignoreFailures: false));
+
+            Assert.Equal(1, fixture.Backend.ContentReadFaults.Occurrences);     // the confirmation consumed it
+            Assert.Empty(agent.SetAnomalies);
+            Assert.Empty(agent.TocAnomalies);
+            Assert.Equal(recordedEnd + 1, fixture.TOC[3][0].Address.Block);     // set header at the recorded end
+            Assert.True(agent.BackupTOC());
+            fixture.LoadTOC();
+            Assert.Equal(3, fixture.TOC.Count);
+        }
+        finally
+        {
+            DisposeAll(trees);
+        }
+    }
+
+    /// <summary>
+    /// A TOC whose recorded end names the start of set 2 — a set header stands there, not the TOC area. The marks lead
+    ///  elsewhere: the two disagree, and the append is refused before anything is written. Set 2 survives byte for byte.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(InSetProfiles))]
+    public void Append_RecordedEndDisputed_IsRefused_TapeUnchanged(DriveProfile profile)
+    {
+        TempFileTree[] trees = [];
+        using var appended = new TempFileTree();
+        appended.AddFiles("ap", count: 2, minSize: 512, maxSize: 4 * 1024);
+        string restoreDir = NewRestoreDir();
+        try
+        {
+            using var fixture = new VirtualTapeFixture(profile, withMediaHeader: true, withSetHeaders: true);
+            trees = BuildMultiSetTape(fixture, setCount: 2, prefix: "ap");
+            fixture.TOC[2].FirstBlockAfterSet = fixture.TOC[1].FirstBlockAfterSet;   // stale: names set 2's start
+
+            using (var agent = fixture.CreateBackupAgent())
+            {
+                fixture.TOC.AddNewSetTOC();
+                Assert.False(agent.BackupFileListToCurrentSet(newSet: true, appended.Files, ignoreFailures: false));
+                Assert.Equal((uint)WIN32_ERROR.ERROR_INVALID_DATA, agent.LastResult.ErrorCode);
+            }
+
+            fixture.LoadTOC();
+            Assert.Equal(2, fixture.TOC.Count);
+            fixture.TOC.CurrentSetIndex = 2;
+            using var restore = fixture.CreateRestoreAgent(restoreDir);
+            Assert.True(restore.RestoreAllFilesFromCurrentSet(ignoreFailures: false));
+            AssertRestoredMatches(trees[1], restoreDir);
+        }
+        finally
+        {
+            DisposeAll(trees);
+            TryDeleteDirectory(restoreDir);
+        }
+    }
+
 #endif // TEST_HOOKS
 
     /// <summary>
