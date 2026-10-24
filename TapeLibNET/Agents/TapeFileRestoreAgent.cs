@@ -652,9 +652,16 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
     ///  Leaves <see cref="TapeAgentBase.TOC"/> as it was.
     /// </summary>
     /// <remarks>
-    /// The cartridge's own TOC is read with the operation's notifiable and the requested volume: a copy that does not
-    ///  read is a TOC anomaly of THIS restore, on THAT volume — collected with the others for the final report
-    ///  (Design-TocLocation §5.3).
+    /// <para>Three steps, by the strength of their evidence (Design-TocLocation §7):</para>
+    /// <list type="number">
+    ///  <item><b>The media header</b> at BOM: series and volume. A mismatch rejects the cartridge.</item>
+    ///  <item><b>Its own TOC</b>, through the ladder with the series TOC at hand (S3 for the identified volume). Read: the set
+    ///   it holds must be the one the series describes. Unreadable, but step 1 identified the cartridge: restore anyway — the
+    ///   series TOC addresses every file, and each file's header still guards it.</item>
+    ///  <item><b>The set's first block</b>, when neither the header nor the TOC speaks: a set header or a 2.1 file header with
+    ///   the expected SetId.</item>
+    /// </list>
+    /// <para>The TOC anomalies of the read belong to THIS restore, on THAT volume (§5.3).</para>
     /// </remarks>
     private TapeResult CheckVolumeToResumeFrom(int volume)
     {
@@ -668,31 +675,115 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         // Read the cartridge's own TOC to identify it — then put ours back: it contains more sets than this volume's
         var orgTOC = new TapeTOC(TOC);
         ITapeTocNotifiable? notify = MultiVolumeContext!.Value.fileNotify;
+        int setIdx = MultiVolumeContext!.Value.initialCurrSetIdx - MultiVolumeContext.Value.filesSelectedIdx;
         try
         {
-            if (!RestoreTOCFromMedia(expectedVolume: volume, notify))
-                return RejectVolume($"Volume #{volume}: its table of contents could not be read ({LastErrorMessage})");
+            // ── 1. The media header ──
+            TapeMediaHeader? media = ReadBomHeader() as TapeMediaHeader;
+            ResetError();
+            if (media is not null)
+            {
+                if (orgTOC.MediaId != Guid.Empty && media.MediaId != Guid.Empty && media.MediaId != orgTOC.MediaId)
+                    return RejectVolume("The inserted cartridge belongs to another backup series", WIN32_ERROR.ERROR_WRONG_DISK);
+                if (media.Volume != volume)
+                    return RejectVolume($"The inserted cartridge is volume #{media.Volume}, not volume #{volume}",
+                        WIN32_ERROR.ERROR_WRONG_DISK);
+            }
 
-            if (orgTOC.MediaId != Guid.Empty && TOC.MediaId != Guid.Empty && TOC.MediaId != orgTOC.MediaId)
-                return RejectVolume("The inserted cartridge belongs to another backup series", WIN32_ERROR.ERROR_WRONG_DISK);
+            // ── 2. Its own TOC ──
+            if (RestoreTOCFromMedia(expectedVolume: volume, notify, seriesToc: orgTOC))
+            {
+                if (orgTOC.MediaId != Guid.Empty && TOC.MediaId != Guid.Empty && TOC.MediaId != orgTOC.MediaId)
+                    return RejectVolume("The inserted cartridge belongs to another backup series", WIN32_ERROR.ERROR_WRONG_DISK);
+                if (TOC.Volume != volume)
+                    return RejectVolume($"The inserted cartridge is volume #{TOC.Volume}, not volume #{volume}",
+                        WIN32_ERROR.ERROR_WRONG_DISK);
+                // The freshly loaded TOC has its encrypted sets LOCKED — compare what a stub can tell (Design-Encryption §9.5).
+                if (setIdx > TOC.Count || !SameSetOnTape(TOC[setIdx], orgTOC[setIdx]))
+                    return RejectVolume($"Volume #{volume} does not hold set #{setIdx} as the table of contents describes it",
+                        WIN32_ERROR.ERROR_WRONG_DISK);
+                return TapeResult.OK;
+            }
+            if (IsAbortRequested)
+                return FailedOperationResult;
+            string tocError = LastErrorMessage;
 
-            if (TOC.Volume != volume)
-                return RejectVolume($"The inserted cartridge is volume #{TOC.Volume}, not volume #{volume}",
-                    WIN32_ERROR.ERROR_WRONG_DISK);
+            if (media is not null)
+            {
+                m_logger.LogWarning("Volume #{Volume}: its table of contents is unreadable ({Error}); identified by its " +
+                    "media header — restoring with the series TOC", volume, tocError);
+                ResetError();
+                return TapeResult.OK;
+            }
 
-            // As the final test, check the next backup set to restore is the same on the new volume. The freshly loaded
-            //  TOC has its encrypted sets LOCKED — compare what a stub can tell (Design-Encryption §9.5).
-            int setIdx = MultiVolumeContext!.Value.initialCurrSetIdx - MultiVolumeContext.Value.filesSelectedIdx;
-            if (setIdx > TOC.Count || !SameSetOnTape(TOC[setIdx], orgTOC[setIdx]))
-                return RejectVolume($"Volume #{volume} does not hold set #{setIdx} as the table of contents describes it",
-                    WIN32_ERROR.ERROR_WRONG_DISK);
-
-            return TapeResult.OK;
+            // ── 3. The set's first block ──
+            if (IdentifySetOnVolume(orgTOC, setIdx, volume))
+            {
+                m_logger.LogWarning("Volume #{Volume}: its table of contents is unreadable ({Error}); identified by the " +
+                    "first block of set #{Set} — restoring with the series TOC", volume, tocError, setIdx);
+                ResetError();
+                return TapeResult.OK;
+            }
+            return RejectVolume($"Volume #{volume}: its table of contents could not be read ({tocError}), and neither a " +
+                $"media header nor the first block of set #{setIdx} identifies it");
         }
         finally
         {
             TOC.CopyFrom(orgTOC); // restore the original TOC
+            Manager.EndReadWrite();
+            Navigator.ResetContentSet();
         }
+    }
+
+    /// <summary>
+    /// Step 3 of the identification: whether the first block of set <paramref name="setIdx"/> on this cartridge carries the
+    ///  series' SetId — in its set header, or in its first file's 2.1 header.
+    /// </summary>
+    /// <remarks>
+    /// Located by the previous set's <see cref="TapeSetTOC.FirstBlockAfterSet"/> when recorded, else by counting marks from
+    ///  begin-of-content. A legacy set carries no SetId, and an encrypted set's file headers are sealed: neither can be
+    ///  identified this way.
+    /// </remarks>
+    private bool IdentifySetOnVolume(TapeTOC series, int setIdx, int volume)
+    {
+        if (setIdx < 1 || setIdx > series.Count)
+            return false;
+        TapeSetTOC set = series[setIdx];
+        if (set.SetId == Guid.Empty)
+            return false;
+
+        int onVolume = 0;
+        long start = -1;
+        for (int i = 1; i < setIdx; i++)
+        {
+            if (series[i].Volume != volume)
+                continue;
+            onVolume++;
+            start = series[i].FirstBlockAfterSet;
+        }
+
+        bool located;
+        if (onVolume == 0)
+            located = Navigator.MoveToBeginOfContent();
+        else if (start >= 0)
+            located = Drive.MoveToBlock(MediaPartition.Content, start);
+        else
+        {
+            Navigator.ResetContentSet();
+            Navigator.TargetContentSet = onVolume;
+            located = Navigator.MoveToTargetContentSet();
+        }
+        if (!located)
+        {
+            ResetError();
+            return false;
+        }
+
+        IdentifiedBlock id = TapeHeaderBlock.ReadAndIdentify(Drive, out _, out _, out _, out _);
+        ResetError();
+        return (id.TryGetHeader(out TapeSetHeader? header) && header.SetId == set.SetId
+                && (series.MediaId == Guid.Empty || header.MediaId == series.MediaId))
+            || (id.TryGetFile(out TapeFilePeek file) && file.SetId == set.SetId);
     }
 
     /// <summary>Sets and returns a rejection: <paramref name="error"/>, else the current error, else invalid data.</summary>

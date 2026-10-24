@@ -481,12 +481,15 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// </summary>
     /// <param name="restoreDir">Target directory for restored files.</param>
     /// <param name="notifiable">Optional callback handler.</param>
+    /// <param name="configure">Optional configuration action for the restore agent.</param>
     /// <returns>Statistics snapshot after the entire restore completes.</returns>
     public TapeFileStatistics RestoreAllFilesFromCurrentSet(
         string restoreDir,
-        ITapeFileNotifiable? notifiable = null)
+        ITapeFileNotifiable? notifiable = null,
+        Action<TapeFileRestoreAgentEx>? configure = null)
     {
         using var agent = CreateRestoreAgent(restoreDir);
+        configure?.Invoke(agent);
 
         TapeResult result = agent.RestoreAllFilesFromCurrentSet(
             ignoreFailures: true, fileNotify: notifiable);

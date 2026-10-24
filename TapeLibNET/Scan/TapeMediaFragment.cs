@@ -134,6 +134,13 @@ public sealed record TapeMediaFragment
     public ushort? TocVersion { get; init; }
 
     /// <summary>
+    /// What the copy's first block says — identity, volume, save time, copy marker, content end — for the TOC search to
+    ///  filter and rank copies without reading them. Null unless <see cref="Kind"/> is <see cref="FragmentKind.TOC"/>.
+    /// </summary>
+    [JsonIgnore]
+    public TapeTocPeek? TocPeek { get; init; }
+
+    /// <summary>
     /// The harvested table of contents — the most valuable thing recoverable from a damaged cartridge.
     ///  Null unless the harvest ran AND succeeded.
     /// </summary>

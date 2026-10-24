@@ -177,7 +177,7 @@ public static partial class TapeHeaderBlock
     public static int Read(TapeDrive drive, byte[] buffer, out TapeHeader? header,
                            out bool tapemark, out bool eod)
     {
-        int read = ReadBlock(drive, buffer, out tapemark, out eod);
+        int read = ReadBlock(drive, buffer, Size, Size, out tapemark, out eod);
         header = read > 0 ? Classify(buffer, read) : null;
         return read;
     }
@@ -193,63 +193,54 @@ public static partial class TapeHeaderBlock
     /// <returns>What the block is; <see cref="IdentifiedBlock.Foreign"/> when nothing was read.</returns>
     /// <remarks>
     /// <para>
-    /// <b>Small-block drives</b> (Design-ScanMedia §4.6, and not optional). <see cref="IsSupportedBy"/> is false when the
-    ///  drive's maximum block is under 16 KiB — tiny virtual media, some pre-LTO drives — and the read then takes one
-    ///  native block instead; without the fallback every block on such a cartridge would identify as foreign.
+    /// <b>Read at the size our records are written at</b> — 16 KiB, or on a drive whose maximum block is smaller, that maximum:
+    ///  the clamp <see cref="TapeDrive.SetBlockSize"/> applies to the writer as well. ONE block: a read must never cross a mark.
     /// </para>
     /// <para>
-    /// The 16 KiB read also covers a TOC copy: the TOC is written at the same fixed block size as the headers, so its
-    ///  first block arrives whole.
+    /// <b>A block of another size is a finding</b> (Design-TocLocation §12.4): the drive delivers its data with
+    ///  <c>ERROR_INVALID_BLOCK_LENGTH</c> and the head past it. It cannot be a header or a TOC copy — those are always 16 KiB —
+    ///  but it may be the first block of a set (a file header frame at its front), so it is identified like any block and
+    ///  the error is cleared.
     /// </para>
-    /// <para>
-    /// <b>Moves the head</b> past the block (or the mark). Callers that must stay put return to the block themselves.
-    /// </para>
+    /// <para><b>Moves the head</b> past the block (or the mark). Callers that must stay put return to the block themselves.</para>
     /// </remarks>
     internal static IdentifiedBlock ReadAndIdentify(TapeDrive drive, out byte[] buffer, out int read,
                                                     out bool tapemark, out bool eod)
     {
         ArgumentNullException.ThrowIfNull(drive);
-
-        if (IsSupportedBy(drive))
-        {
-            buffer = new byte[Size];
-            read = ReadBlock(drive, buffer, out tapemark, out eod);     // sets AND restores the block size
-        }
-        else
-        {
-            uint blockSize = drive.BlockSize > 0 ? drive.BlockSize : drive.DefaultBlockSize;
-            buffer = new byte[blockSize];
-            read = drive.ReadDirect(buffer, 0, buffer.Length, out tapemark, out bool boundary);
-            eod = boundary && !tapemark;    // the drive's `eof` covers marks too
-        }
-
+        uint size = IsSupportedBy(drive) ? (uint)Size : drive.MaximumBlockSize;
+        buffer = new byte[Size];
+        read = ReadBlock(drive, buffer, size, (int)size, out tapemark, out eod);
         return read > 0 ? IdentifyBlock(buffer, read) : IdentifiedBlock.Foreign;
     }
 
-    /// <summary>One standard block, raw: sets and restores the block size, reports the boundaries.</summary>
-    private static int ReadBlock(TapeDrive drive, byte[] buffer, out bool tapemark, out bool eod)
+    /// <summary>
+    /// Reads <paramref name="count"/> bytes at block size <paramref name="size"/>, raw: sets and restores the block size,
+    ///  reports the boundaries, absorbs a block-length mismatch.
+    /// </summary>
+    private static int ReadBlock(TapeDrive drive, byte[] buffer, uint size, int count, out bool tapemark, out bool eod)
     {
         ArgumentNullException.ThrowIfNull(drive);
         ArgumentNullException.ThrowIfNull(buffer);
-
         tapemark = false;
         eod = false;
-
-        if (buffer.Length < Size)
+        if (buffer.Length < count)
         {
-            drive.SetError(WIN32_ERROR.ERROR_INSUFFICIENT_BUFFER, "Header buffer smaller than the standard block");
+            drive.SetError(WIN32_ERROR.ERROR_INSUFFICIENT_BUFFER, "Header buffer smaller than the read");
             return -1;
         }
 
         uint previous = drive.BlockSize;
         try
         {
-            if (!drive.SetBlockSize(Size))
+            if (!drive.SetBlockSize(size))
                 return -1;
-
-            int read = drive.ReadDirect(buffer, 0, Size, out tapemark, out bool boundary);
+            int read = drive.ReadDirect(buffer, 0, count, out tapemark, out bool boundary);
             // The drive's `eof` covers marks too; only a boundary WITHOUT a mark is end-of-data.
             eod = boundary && !tapemark;
+            // A block of another size: delivered, head past it — not ours, and no fault (§12.4).
+            if (read > 0 && drive.LastErrorWin32 == WIN32_ERROR.ERROR_INVALID_BLOCK_LENGTH)
+                drive.ResetError();
             return read;
         }
         finally
@@ -274,7 +265,7 @@ public static partial class TapeHeaderBlock
     {
         // Leaving the drive on the header block would silently reshape whatever the caller writes next
         //  (content set, calibration payload). Restoring is the single-point discipline that prevents it.
-        if (previous != 0 && previous != Size)
+        if (previous != 0 && previous != drive.BlockSize)
             drive.SetBlockSize(previous);
     }
 

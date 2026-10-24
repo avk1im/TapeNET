@@ -23,6 +23,12 @@ public sealed record ScanMediaOptions
     /// <summary>Runaway guard; hitting it truncates the map (SM-5).</summary>
     public int MaxFragments { get; init; } = DefaultMaxFragments;
 
+    /// <summary>
+    /// Stop the walk after this many TOC copies; 0 = no limit. Internal: the TOC search walks from an anchor and
+    ///  needs only the copies near it (Design-TocLocation §4.4).
+    /// </summary>
+    internal int StopAfterTocCopies { get; init; }
+
     /// <summary>Detect TOC copies without deserializing them; do not inspect calibration trails.</summary>
     public static ScanMediaOptions Default { get; } = new();
 }

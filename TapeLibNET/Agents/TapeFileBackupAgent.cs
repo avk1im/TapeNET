@@ -235,6 +235,12 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
         BytesBackedupMarker = BytesBackedup; // important in case of multi-volume backup continuation
 
+        // Design-TocLocation §8.1 (TL-3): an append goes where the TOC says content ends —
+        //  on THIS volume (TOC.Volume is the one the TOC was read from), and only once
+        //  the tape confirms it. Otherwise the navigator locates it.
+        if (newSet && Navigator.TargetContentSet == -1)
+            Navigator.TrySettleAtRecordedEndOfContent(TOC.FirstBlockAfterContentOnVolume(TOC.Volume));
+
         // Apply the set's preferred block size BEFORE entering the writing-content state.
         //  This matters for the packed path: TapeStreamManager.EnsurePackerCreated() (called
         //  from BeginWriteContent) captures Drive.BlockSize at packer-creation time. If we

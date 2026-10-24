@@ -1439,6 +1439,28 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         return true;
     }
 
+    /// <summary>
+    /// Positions at <paramref name="block"/> of <paramref name="partition"/>: one combined locate on partitioned media, a
+    ///  plain block locate otherwise. Never skipped by a matching block number in another partition.
+    /// </summary>
+    /// <remarks>
+    /// The one way to an ABSOLUTE position that may lie in either partition (Design-TocLocation §12.4): after a TOC read
+    ///  the head stands in the initiator partition, where "content block n" would be a different block.
+    /// </remarks>
+    public bool MoveToBlock(MediaPartition partition, long block)
+    {
+        if (partition == MediaPartition.Current || !HasInitiatorPartition)
+        {
+            if (partition == MediaPartition.Initiator)
+            {
+                SetError(WIN32_ERROR.ERROR_INVALID_PARAMETER, "This medium has no initiator partition");
+                return false;
+            }
+            return MoveToBlock(block);
+        }
+        return MoveToPartition(partition, block);
+    }
+
     /// <summary>Queries the current logical block address from the device. Returns −1 on failure.</summary>
     public long GetCurrentBlock()
     {

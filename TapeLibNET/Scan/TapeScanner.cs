@@ -151,6 +151,52 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
         }
     }
 
+    /// <summary>
+    /// Walks ONE partition forward from <paramref name="block"/> to its end of data — the TOC search's S2 (Design-TocLocation
+    ///  §4.2). Same identification, same mark handling as <see cref="Scan"/>; no BOM ceremony, no second partition.
+    /// </summary>
+    /// <returns>The fragments met; <see langword="null"/> when the start could not be reached (see <see cref="LastResult"/>).</returns>
+    /// <remarks>Set <see cref="ScanMediaOptions.HarvestTocCopies"/> false to only peek. Read-only; restores the block size.</remarks>
+    internal IReadOnlyList<TapeMediaFragment>? WalkFrom(MediaPartition partition, long block)
+    {
+        ResetError();
+        ResetLatchedFailure();
+        IsAbortRequested = false;
+        if (!Drive.IsMediaLoaded)
+        {
+            SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
+            LatchFailure();
+            return null;
+        }
+
+        TapeMediaLayout layout = TapeMediaLayout.Predict(Drive);
+        BlockSizeGuard guard = new(this);
+        try
+        {
+            if (!MoveTo(partition, block))
+            {
+                SyncErrorFrom(Drive);
+                LatchFailure();
+                return null;
+            }
+            List<TapeMediaFragment> fragments = [];
+            bool ours = false;
+            WalkPartition(partition, layout, fragments, progress: null, crossFirstClosingMark: false, ref ours);
+            return fragments;
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            LatchFailure();
+            m_logger.LogError(ex, "{Prefix}: Walk: unexpected exception", LogPrefix);
+            return null;
+        }
+        finally
+        {
+            guard.Restore();
+        }
+    }
+
     #endregion
 
     #region *** The walk ***
@@ -317,6 +363,7 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
 
         bool crossClosingMark = crossFirstClosingMark;
         int runMarks = 0;               // adjacent marks read since the last data fragment
+        int tocCopies = 0;
         long runStart = -1L;            // block of the first of them
 
         do // while (true)
@@ -410,6 +457,11 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
             }
 
             ours |= IsOurs(fragment);
+
+            if (fragment.Kind == FragmentKind.TOC && options.StopAfterTocCopies > 0
+                && ++tocCopies >= options.StopAfterTocCopies)
+                break;                              // enough copies for the TOC search (§4.4)
+
             crossClosingMark = true;
 
         } while (true);
@@ -576,10 +628,7 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
     /// Moves to <paramref name="block"/> of <paramref name="partition"/> — a combined locate on partitioned media, a plain
     ///  block locate otherwise. The scanner's only way back to a position it left (SM-12).
     /// </summary>
-    private bool MoveTo(MediaPartition partition, long block)
-        => Drive.PartitionCount > 1
-            ? Drive.MoveToPartition(partition, block)
-            : Drive.MoveToBlock(block);
+    private bool MoveTo(MediaPartition partition, long block) => Drive.MoveToBlock(partition, block);
 
     /// <summary>
     /// Best-effort: returns the drive to block 0 of the content partition after a scan of a partitioned cartridge, where
@@ -776,8 +825,8 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
 
     /// <summary>Restores the drive's block size on the way out (SM-9), whatever happened in between.</summary>
     /// <remarks>
-    /// <see cref="TapeHeaderBlock.Read"/> restores its own, but the small-block fallback and the TOC harvest both set the
-    ///  size deliberately. Mirrors <c>TapeCalibrator.RunGuard</c> in shape.
+    /// <see cref="TapeHeaderBlock.Read"/> restores its own, but the small-block fallback and
+    ///  the TOC harvest both set the size deliberately. Mirrors <see cref="TapeCalibrator.RunGuard"/> in shape.
     /// </remarks>
     private readonly struct BlockSizeGuard(TapeScanner scanner)
     {

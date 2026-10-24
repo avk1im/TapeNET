@@ -275,6 +275,8 @@ public sealed partial class TapeScanner
             Kind = FragmentKind.TOC,
             TocVersion = toc.Version,
             Id = toc.MediaId == Guid.Empty ? null : toc.MediaId,
+            Volume = toc.Volume,
+            TocPeek = toc,
         }; // TOC recovery is a walk step — see TapeScanner.Harvest.cs
     }
 
