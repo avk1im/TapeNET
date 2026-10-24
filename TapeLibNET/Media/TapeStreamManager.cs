@@ -36,6 +36,16 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     /// </summary>
     public bool LastSetClosedByEom { get; private set; } = false;
 
+    /// <summary>
+    /// The first block after the closing mark of the set ended by the last <see cref="EndWriteContent"/> — where the next
+    ///  set, or the TOC, begins (Design-TocLocation §6). −1 when no mark closed it: end-of-media (F32), a failed mark, or
+    ///  no write session yet. Read right after the mark, so it counts marks exactly as this
+    ///  <see cref="TapeDriveHolder{TapeStreamManager}.Drive"/> numbers blocks — like every file address.
+    ///  Cleared by <see cref="BeginWriteContent"/>; survives the idempotent second
+    ///  <see cref="EndWriteContent"/> of the EOM path, like <see cref="LastSetClosedByEom"/>.
+    /// </summary>
+    public long LastSetFirstBlockAfter { get; private set; } = -1;
+
     /// <summary>Currently active <see cref="TapeStream"/>, or <see langword="null"/> when idle.</summary>
     public TapeStream? Stream { get; private set; } = null;
     /// <summary>Whether a stream is currently checked out and in use.</summary>
@@ -373,6 +383,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
 
         ContentWritten = false;         // no content written yet in this session
         LastSetClosedByEom = false;     // a fresh session decides afresh how its set ends (F32)
+        LastSetFirstBlockAfter = -1;    // likewise
 
         BeginReadWrite(TapeState.WritingContent);
         if (WentOK)
@@ -1012,8 +1023,11 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
 
         if (marked)
         {
+            LastSetClosedByEom = false;
+            LastSetFirstBlockAfter = Drive.CurrentBlock; // right past the mark — before anything moves (Design-TocLocation §6)
             Navigator.OnContentWritten();   // we're surely at the end of the content!
-            m_logger.LogTrace("Drive #{Drive}: Ended writing set", DriveNumber);
+            m_logger.LogTrace("Drive #{Drive}: Ended writing set; content ends at block {Block}",
+                DriveNumber, LastSetFirstBlockAfter);
             return true;
         }
 

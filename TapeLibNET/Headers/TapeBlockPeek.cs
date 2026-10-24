@@ -64,14 +64,20 @@ internal static class TapeBlockPeek
 /// <param name="Volume">The volume this copy describes; <see langword="null"/> when the first block does not tell (legacy).</param>
 /// <param name="LastSaveTime">When this copy was saved (UTC); <see langword="null"/> for legacy.</param>
 /// <param name="SetCount">Sets the copy declares; <see langword="null"/> for legacy.</param>
-/// <remarks>Phase 3 adds the copy markers and <c>FirstBlockAfterContent</c>.</remarks>
+/// <param name="CopyIndex">Which copy (1-based); <see langword="null"/> when unmarked — an export, a legacy copy.</param>
+/// <param name="CopyCount">How many copies that save wrote; <see langword="null"/> when unmarked.</param>
+/// <param name="FirstBlockAfterContent">Where content ends on the copy's own volume; <see langword="null"/> when
+///  unknown (Design-TocLocation §6).</param>
 public readonly record struct TapeTocPeek(
     ushort Version,
     Guid MediaId,
     bool IsLegacy,
     int? Volume = null,
     DateTime? LastSaveTime = null,
-    int? SetCount = null);
+    int? SetCount = null,
+    byte? CopyIndex = null,
+    byte? CopyCount = null,
+    long? FirstBlockAfterContent = null);
 
 /// <summary>
 /// What a 2.1 file header frame at a block start says: the set it belongs to and its first file — enough to count and

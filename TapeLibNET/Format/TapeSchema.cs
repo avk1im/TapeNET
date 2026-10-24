@@ -369,19 +369,30 @@ public sealed class TapeSchema<T>(TapeRecordKind? kind = null,
     public void Add(int n, Func<T, int> get, Action<T, int> set, FieldFlags flags = FieldFlags.None)
         => Add(n, get, set, 0, flags);
 
-    /// <summary>Adds a ZigZag <c>varint</c> field mapped to <see langword="int"/> (negative values ok).</summary>
+    /// <summary>
+    /// Marks a schema default as SIGNED: the field is written as a ZigZag <c>varint</c> and may hold negative values.
+    ///  Plain <see langword="int"/>/<see langword="long"/> defaults mean a non-negative <c>varuint</c>.
+    /// </summary>
+    public readonly record struct Signed<V>(V Value) where V : struct;
+
+    public static class Signed
+    {
+        public static Signed<int> Of(int value) => new(value);
+        public static Signed<long> Of(long value) => new(value);
+    }
+
+    /// <summary>Adds a ZigZag <c>varint</c> field mapped to <see langword="int"/> (negative values ok),
+    ///  with <see cref="Int32"/> range checking.
+    /// <para>Usage example:<c>{ 16, w => w.SkewTicks, (w, v) => w.SkewTicks = v, TapeSchema.Signed.Of(0) },</c></para>
+    /// </summary>
     /// <remarks>We use <c>checked((int)r.ReadInt())</c> rather than simply casting. A corrupt or future writer
     ///  could theoretically emit a ZigZag varint outside the <see cref="Int32"/> range. <see langword="checked"/>
     ///  would produce a clean overflow exception instead of silent truncation. The existing unsigned overloads
     ///  already perform explicit range checking, so this keeps the style consistent.</remarks>
-    public void AddSigned(int n, Func<T, int> get, Action<T, int> set, int @default, FieldFlags flags = FieldFlags.None)
-        => AddValue(n, get, set, @default, flags,
+    public void Add(int n, Func<T, int> get, Action<T, int> set, Signed<int> @default, FieldFlags flags = FieldFlags.None)
+        => AddValue(n, get, set, @default.Value, flags,
             static (w, num, v, c) => w.WriteInt(num, v, c),
             static r => checked((int)r.ReadInt()));
-
-    /// <inheritdoc cref="AddSigned(int, Func{T, int}, Action{T, int}, int, FieldFlags)"/>
-    public void AddSigned(int n, Func<T, int> get, Action<T, int> set, FieldFlags flags = FieldFlags.None)
-        => AddSigned(n, get, set, 0, flags);
 
     /// <summary>Adds a <c>varuint</c> field mapped to a non-negative <see langword="long"/> (negative on write throws).</summary>
     public void Add(int n, Func<T, long> get, Action<T, long> set, long @default, FieldFlags flags = FieldFlags.None)
@@ -391,15 +402,15 @@ public sealed class TapeSchema<T>(TapeRecordKind? kind = null,
     public void Add(int n, Func<T, long> get, Action<T, long> set, FieldFlags flags = FieldFlags.None)
         => Add(n, get, set, 0L, flags);
 
-    /// <summary>Adds a ZigZag <c>varint</c> field mapped to <see langword="long"/> (negative values ok).</summary>
-    public void AddSigned(int n, Func<T, long> get, Action<T, long> set, long @default, FieldFlags flags = FieldFlags.None)
-        => AddValue(n, get, set, @default, flags,
+    /// <summary>Adds a ZigZag <c>varint</c> field mapped to <see langword="long"/> (negative values ok).
+    /// <para>Usage example:
+    ///  <code>{ 16, w => w.SkewTicks, (w, v) => w.SkewTicks = v, TapeSchema.Signed.Of(0L) },</code>
+    ///  — notice <c>0<b>L</b></c> indicating <see langword="long"/>.</para>
+    /// </summary>
+    public void Add(int n, Func<T, long> get, Action<T, long> set, Signed<long> @default, FieldFlags flags = FieldFlags.None)
+        => AddValue(n, get, set, @default.Value, flags,
             static (w, num, v, c) => w.WriteInt(num, v, c),
             static r => r.ReadInt());
-
-    /// <inheritdoc cref="AddSigned(int, Func{T, long}, Action{T, long}, long, FieldFlags)"/>
-    public void AddSigned(int n, Func<T, long> get, Action<T, long> set, FieldFlags flags = FieldFlags.None)
-        => AddSigned(n, get, set, 0L, flags);
 
     /// <summary>Adds an <c>f64</c> field.</summary>
     public void Add(int n, Func<T, double> get, Action<T, double> set, double @default, FieldFlags flags = FieldFlags.None)

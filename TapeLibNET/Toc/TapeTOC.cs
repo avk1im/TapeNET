@@ -399,10 +399,25 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
     public bool ClosedByEom { get; internal set; } = false;
 
     /// <summary>
+    /// The first block after this set's closing mark — where the next set, or the TOC, begins (Design-TocLocation §6).
+    ///  −1 when unknown: a set closed by end-of-media (F32) or by a failed mark, a legacy set, or one written before the
+    ///  field existed. Same block numbering as every <see cref="TapeAddress"/>, partition-relative.
+    /// </summary>
+    /// <remarks>
+    /// Never hidden by encryption: it travels in the plain stub, because the per-volume lookup must work on a TOC whose
+    ///  encrypted sets are locked. It reveals nothing <see cref="SizeOnTapeTotal"/> does not already.
+    /// </remarks>
+    public long FirstBlockAfterSet { get; internal set; } = -1;
+
+    /// <summary>
     /// Snapshots this set's metadata (description, hash, block size, incremental, capacity — and its encryption)
     ///  into a <see cref="TapeSetTOCParams"/> bundle suitable for seeding a continuation
     ///  set on the next volume via <see cref="TapeTOC.AddContinuationSetTOC"/>. Throws on a locked set.
     /// </summary>
+    /// <remarks>
+    /// Deliberately does NOT carry <see cref="FirstBlockAfterSet"/>: a continuation part starts at −1 and
+    ///  gets its own value on its own volume.
+    /// </remarks>
     public TapeSetTOCParams ToParams() =>
         new(Description, HashAlgorithm, BlockSize, Incremental, Capacity, Compression, CompressionLevel,
             SetId, NextFileId, m_encryption, Envelope, Key);
@@ -456,6 +471,7 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
         SetId = set.SetId;
         DataFormat = set.DataFormat;
         ClosedByEom = set.ClosedByEom;
+        FirstBlockAfterSet = set.FirstBlockAfterSet;
         // ContinuedFromPrevVolume is init-only: the copy constructor carries it
         m_isPackedLayout = set.m_isPackedLayout;
 
@@ -1063,6 +1079,38 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     }
     public int FirstSetOnVolume => InternalToSetIndex(FirstSetInternalOnVolume);
     public int LastSetOnVolume => InternalToSetIndex(LastSetInternalOnVolume);
+
+    /// <summary>
+    /// Where content ends on <paramref name="volume"/> — the <see cref="TapeSetTOC.FirstBlockAfterSet"/> of its last set
+    ///  (Design-TocLocation §6, TL-10).
+    /// </summary>
+    /// <param name="volume">
+    /// The volume IDENTIFIED on the loaded cartridge — never <see cref="Volume"/> by assumption: a series TOC held in
+    ///  memory describes every volume, and the cartridge in the drive may be any of them.
+    /// </param>
+    /// <param name="beginOfContent">What to answer for a volume holding no set: its begin-of-content, which only the
+    ///  caller (the navigator) knows; −1 when it does not either.</param>
+    /// <returns>The block, or −1 when the record does not tell.</returns>
+    /// <remarks>
+    /// A trailing VACANT set with no recorded end never reached the tape (a backup refused before moving) and is looked
+    ///  past. A set that holds files and records no end makes the answer unknown — it is never guessed from an earlier
+    ///  set.
+    /// </remarks>
+    public long FirstBlockAfterContentOnVolume(int volume, long beginOfContent = -1)
+    {
+        for (int i = m_setTOCs.Count - 1; i >= 0; i--)
+        {
+            TapeSetTOC set = m_setTOCs[i];
+            if (set.Volume != volume)
+                continue;
+            if (set.FirstBlockAfterSet >= 0)
+                return set.FirstBlockAfterSet;
+            if (!set.IsVacant)
+                return -1;
+        }
+        return beginOfContent;
+    }
+
     public bool IsCurrentSetOnVolume => CurrentSetTOC.Volume == Volume;
     public bool IsCurrentSetLast => CurrentSetIndex == MaxSetIndex;
     public bool IsCurrentSetContOnNextVolume => IsCurrentSetLast ? ContinuedOnNextVolume :
@@ -1188,20 +1236,23 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     }
 
     /// <summary>
-    /// Replaces the current set with a fresh empty <see cref="TapeSetTOC"/>, preserving the volume assignment. Guarantees a
-    ///  new object identity so that consumers can detect the replacement via reference equality.
+    /// Replaces the current set with a fresh empty <see cref="TapeSetTOC"/>, preserving the volume assignment.
+    ///  Guarantees a new object identity so that consumers can detect the replacement via reference equality.
     /// </summary>
     /// <remarks>
-    /// Keeps <see cref="TapeSetTOC.ClosedByEom"/>: until the replacement is written, the TAPE still ends inside the old
-    ///  set, and the overwrite's own positioning must count marks as the tape stands (F32).
+    /// Keeps <see cref="TapeSetTOC.ClosedByEom"/> and <see cref="TapeSetTOC.FirstBlockAfterSet"/>: until
+    ///  the replacement is written, the TAPE still ends inside the old set, and the overwrite's own
+    ///  positioning must count marks as the tape stands (F32).
     /// </remarks>
     public void ReplaceCurrentSetTOC(int capacity = 0, bool incremental = false)
     {
-        bool closedByEom = m_setTOCs[m_currSetInternal].ClosedByEom;
+        // Until the replacement is written, the TAPE still ends as the old set left it — keep both traits.
+        TapeSetTOC old = m_setTOCs[m_currSetInternal];
         m_setTOCs[m_currSetInternal] = new TapeSetTOC(Volume, capacity,
             incremental && m_setTOCs.Count > 1)     // the very first set shouldn't be incremental
         {
-            ClosedByEom = closedByEom,
+            ClosedByEom = old.ClosedByEom,
+            FirstBlockAfterSet = old.FirstBlockAfterSet,
         };
     }
 

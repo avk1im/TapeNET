@@ -16,7 +16,7 @@ namespace TapeLibNET.Tests.Helpers;
 /// <para>
 /// <b>Everything here is fixed</b> — GUIDs, UTC times, names, sample values. A golden that depends on the clock, the
 ///  machine or a random number is not a golden. The TOC is written through the deterministic
-///  <see cref="TapeTOC.SaveTo(System.IO.Stream, System.DateTime, string)"/>, which stamps the given time and writer
+///  <see cref="TapeTOC.SaveTo(Stream, DateTime, string, byte, byte)"/>, which stamps the given time and writer
 ///  instead of now / the running build.
 /// </para>
 /// <para>
@@ -236,6 +236,40 @@ internal static class GoldenV21
     }
 
     /// <summary>
+    /// A volume-2 TOC whose sets record where they end (Design-TocLocation §6): a set on volume 1, its continuation and a
+    ///  second set on volume 2. Saved as copy 2 of 2.
+    /// </summary>
+    internal static TapeTOC BuildContentEndToc()
+    {
+        var toc = new TapeTOC("Golden 2.1 — content end") { CreationTime = T0, MediaId = s_mediaId, Volume = 1 };
+
+        toc.AddNewSetTOC();
+        TapeSetTOC first = toc.CurrentSetTOC;
+        first.SetId = s_setIdA;
+        first.CreationTime = T0;
+        first.BlockSize = 64 * 1024;
+        first.Append(File(first, @"C:\End\a.bin", 1_000, 3, 0));
+        first.FirstBlockAfterSet = 40;
+
+        toc.Volume = 2;
+        toc.AddContinuationSetTOC(new TapeSetTOCParams("", TapeHashAlgorithm.Crc32, 64 * 1024, Incremental: false,
+            SetId: s_setIdA, NextFileId: first.NextFileId), contFromPrevVolume: true);
+        TapeSetTOC part = toc.CurrentSetTOC;
+        part.CreationTime = T1;
+        part.Append(File(part, @"C:\End\b.bin", 2_000, 2, 0));
+        part.FirstBlockAfterSet = 9;
+
+        toc.AddNewSetTOC();
+        TapeSetTOC second = toc.CurrentSetTOC;
+        second.SetId = s_setIdB;
+        second.CreationTime = T2;
+        second.BlockSize = 64 * 1024;
+        second.Append(File(second, @"C:\End\c.bin", 3_000, 10, 0));
+        second.FirstBlockAfterSet = 25;
+        return toc;
+    }
+
+    /// <summary>
     /// Four sets for Design-Encryption §5: a plain set, a Software-encrypted base, its encrypted incremental (same DEK,
     ///  fresh envelope), and a set of the reserved <see cref="TapeEncryption.Hardware"/> scheme — which this build
     ///  carries but never opens (E15). Call inside <see cref="Deterministic{T}"/>.
@@ -306,6 +340,13 @@ internal static class GoldenV21
         return ms.ToArray();
     }
 
+    private static byte[] WriteTocAsCopy(TapeTOC toc, byte copyIndex, byte copyCount)
+    {
+        using var ms = new MemoryStream();
+        toc.SaveTo(ms, SaveTime, WrittenBy, copyIndex, copyCount);
+        return ms.ToArray();
+    }
+
     /// <summary>Builds a TOC, saves it the same way the golden was saved, and checks the bytes read back into it.</summary>
     private static void AssertTocReads(byte[] bytes, Func<TapeTOC> build)
     {
@@ -317,6 +358,16 @@ internal static class GoldenV21
         AssertTocHeaderReads(expected, actual);
         for (int s = 1; s <= expected.Count; s++)
             AssertSetReads(expected[s], actual[s]);
+    }
+
+    private static void AssertContentEndTocReads(byte[] bytes)
+    {
+        AssertTocReads(bytes, BuildContentEndToc);
+        Assert.True(TapeHeaderBlock.IdentifyBlock(bytes, Math.Min(bytes.Length, TapeHeaderBlock.Size))
+            .TryGetToc(out TapeTocPeek peek));
+        Assert.Equal((byte?)2, peek.CopyIndex);
+        Assert.Equal((byte?)2, peek.CopyCount);
+        Assert.Equal(25L, peek.FirstBlockAfterContent);     // the last set on volume 2, not on volume 1
     }
 
     /// <summary>The sealed TOC: plain set as usual; sealed sets locked, then opened with the fixed password.</summary>
@@ -394,6 +445,7 @@ internal static class GoldenV21
         Assert.Equal(e.Incremental, a.Incremental);
         Assert.Equal(e.ContinuedFromPrevVolume, a.ContinuedFromPrevVolume);
         Assert.Equal(e.ClosedByEom, a.ClosedByEom);
+        Assert.Equal(e.FirstBlockAfterSet, a.FirstBlockAfterSet);
         Assert.Equal(e.Count, a.Count);
         for (int f = 0; f < e.Count; f++)
         {
@@ -609,6 +661,10 @@ internal static class GoldenV21
         new("toc-closed-by-eom.v21.bin",
             "TOC stream: a set closed by end-of-media (field 14, F32)",
             () => WriteToc(BuildEomToc()), b => AssertTocReads(b, BuildEomToc)),
+        new("toc-content-end.v21.bin",
+            "TOC stream: per-set FirstBlockAfterSet (field 15), copy markers and FirstBlockAfterContent in the header " +
+            "(fields 7–9) — Design-TocLocation §6",
+            () => WriteTocAsCopy(BuildContentEndToc(), 2, 2), AssertContentEndTocReads),
         new("toc-sealed.v21.bin",
             "TOC stream: plain set, Software-encrypted base and incremental, reserved Hardware scheme (Design-Encryption §5)",
             () => Deterministic(() => WriteToc(BuildSealedToc())), AssertSealedTocReads),

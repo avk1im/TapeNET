@@ -197,13 +197,15 @@ public class TapeSetAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgen
                     return FailedOperationResult;
                 }
 
-                // Rewrite the content setmark here — physically overwrites the zombie data and advances EOD.
+                // Rewrite the content setmark here — physically overwrites the doomed data and advances EOD.
                 Navigator.WriteContentSetmark();
                 if (Navigator.WentBad)
                 {
                     SyncErrorFrom(Navigator);
                     return FailedOperationResult;
                 }
+                // Design-TocLocation §6: content now ends right here. Captured before anything moves.
+                long contentEnd = Drive.CurrentBlock;
 
                 // The navigator now thinks we're past the end of content.
                 Navigator.OnContentWritten();
@@ -212,6 +214,12 @@ public class TapeSetAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : TapeAgen
                 //  remove everything after it.
                 TOC.CurrentSetIndex = TOC.CurrentSetIndex - 1;
                 TOC.RemoveSetsAfterCurrent();
+
+                // The retained last set ends where its mark was just rewritten — which also fills in a value its record
+                //  never had (a legacy set, or one written before the field existed). Only when it differs: a locked
+                //  set's stub then stays byte-identical (E7).
+                if (TOC.CurrentSetTOC.FirstBlockAfterSet != contentEnd)
+                    TOC.CurrentSetTOC.FirstBlockAfterSet = contentEnd;
 
                 _stats.SetStats.SetsSucceeded += setsAffected; // we're done deleting
 

@@ -352,10 +352,10 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     }
 
     /// <summary>
-    /// Writes a single TOC copy to the tape.
+    /// Writes TOC copy <paramref name="copyIndex"/> (of two) to the tape.
     /// </summary>
     /// <returns><see langword="true"/> only if every byte reached the tape.</returns>
-    private bool BackupTOCCore()
+    private bool BackupTOCCore(byte copyIndex)
     {
         try
         {
@@ -373,7 +373,7 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
             // data-integrity operation and must never be aborted.
 
             // The emitter owns the format and the integrity trailer; it never disposes wstream.
-            RecordEmitter.WriteTOC(TOC, wstream);
+            RecordEmitter.WriteTOC(TOC, wstream, copyIndex, copyCount: 2); // copyCount is always 2
             LastTOCCopyBytes = wstream.Length;
             BytesBackedup += wstream.Length;
             return true;
@@ -457,7 +457,7 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
         }
 
         // To ensure TOC integrity, backup TOC twice
-        bool result1 = BackupTOCCore();
+        bool result1 = BackupTOCCore(copyIndex: 1);
 
         // W1: did the 1st copy run into end-of-media — its data (result1 false: the agent's own error, set by
         //  BackupTOCCore from the stream's exception), or only its closing filemark (the drive's error, left by the
@@ -490,7 +490,7 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
             if (result1)
                 ResetLatchedFailure(); // copy 1 is on tape: a failing copy 2 is no failure of the operation
 
-            result2 = BackupTOCCore();
+            result2 = BackupTOCCore(copyIndex: 2);
             failure2 = result2 ? TapeResult.OK : TapeResult.Fail(this);
             if (result2)
                 m_logger.LogTrace("TOC 2nd copy backed up ok");

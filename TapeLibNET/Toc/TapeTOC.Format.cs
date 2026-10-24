@@ -43,8 +43,11 @@ internal sealed class TocHeaderWire : ITapeRecord<TocHeaderWire>
     public int Volume = 1;
     public bool ContinuedOnNextVolume;
     public int SetCount;
-    public string Description = "";
-    public string WrittenBy = "";
+    public byte CopyIndex;                      // ← added by Design-TocLocation §6
+    public byte CopyCount;                      // ← added by Design-TocLocation §6
+    public long FirstBlockAfterContent = -1;    // ← added by Design-TocLocation §6
+    public string Description = string.Empty;
+    public string WrittenBy = string.Empty;
 
     private static readonly TapeSchema<TocHeaderWire> s_schema = new(TapeRecordKind.TocHeader)
     {
@@ -55,6 +58,11 @@ internal sealed class TocHeaderWire : ITapeRecord<TocHeaderWire>
         { 4,  h => h.Volume,                (h, v) => h.Volume = v,                1 },
         { 5,  h => h.ContinuedOnNextVolume, (h, v) => h.ContinuedOnNextVolume = v },
         { 6,  h => h.SetCount,              (h, v) => h.SetCount = v,              FieldFlags.Required },
+        // Design-TocLocation §6 fields. Optional, NOT critical, elided at their defaults: diagnostic orientation for
+        //  the search, never a reason to refuse a copy. Not cross-validated either — an inconsistent marker is merely "unknown".
+        { 7,  h => h.CopyIndex,             (h, v) => h.CopyIndex = v },
+        { 8,  h => h.CopyCount,             (h, v) => h.CopyCount = v },
+        { 9,  h => h.FirstBlockAfterContent, (h, v) => h.FirstBlockAfterContent = v, -1L }, // -1L-elided still ok for varuint
         // ── strings 32–47 ──
         { 32, h => h.Description,           (h, v) => h.Description = v },
         { 33, h => h.WrittenBy,             (h, v) => h.WrittenBy = v },
@@ -65,7 +73,9 @@ internal sealed class TocHeaderWire : ITapeRecord<TocHeaderWire>
     public static bool Accepts(TapeRecordKind kind) => kind == TapeRecordKind.TocHeader;
     public static TocHeaderWire ReadBody(TapeFieldReader fields) => s_schema.Read(fields, new TocHeaderWire());
 
-    public static TocHeaderWire From(TapeTOC toc) => new()
+    /// <param name="copyIndex">Which copy this is (1-based); 0 = unmarked (an export).</param>
+    /// <param name="copyCount">How many copies this save writes; 0 = unmarked.</param>
+    public static TocHeaderWire From(TapeTOC toc, byte copyIndex = 0, byte copyCount = 0) => new()
     {
         MediaId = toc.MediaId,
         CreationTime = toc.CreationTime,
@@ -73,6 +83,11 @@ internal sealed class TocHeaderWire : ITapeRecord<TocHeaderWire>
         Volume = toc.Volume,
         ContinuedOnNextVolume = toc.ContinuedOnNextVolume,
         SetCount = toc.Count,
+        CopyIndex = copyIndex,
+        CopyCount = copyCount,
+        // The copy's OWN volume: whoever finds this copy learns where content ends there from the first block alone
+        //  (the per-set records may lie beyond it). An empty volume says −1: begin-of-content is the navigator's.
+        FirstBlockAfterContent = toc.FirstBlockAfterContentOnVolume(toc.Volume),
         Description = TapeTextRules.ClampWellFormed(toc.Description, MaxDescriptionBytes),
         WrittenBy = TapeTextRules.ClampWellFormed(toc.WrittenBy, MaxWrittenByBytes),
     };
@@ -301,7 +316,7 @@ public partial class TapeSetTOC
         Guid SetId, TapeDataFormat DataFormat, ulong NextFileId, int FileCount,
         string Description, DateTime CreationTime, uint BlockSize, TapeHashAlgorithm HashAlgorithm,
         TapeCompression Compression, int CompressionLevel, bool Incremental, int Volume, bool ContinuedFromPrevVolume,
-        bool ClosedByEom, TapeEncryption Encryption, TapeKeyEnvelope? Envelope);
+        bool ClosedByEom, long FirstBlockAfterSet, TapeEncryption Encryption, TapeKeyEnvelope? Envelope);
 
     // The state as last saved or loaded; null for a set never persisted (a new set is always "modified").
     //  Copied by CopyFrom (TapeTOC.cs), so a loaded set copied into the live TOC stays unmodified.
@@ -309,7 +324,7 @@ public partial class TapeSetTOC
 
     private PersistedState CaptureState() => new(
         SetId, DataFormat, NextFileId, Count, Description, CreationTime, BlockSize, HashAlgorithm,
-        Compression, CompressionLevel, Incremental, Volume, ContinuedFromPrevVolume, ClosedByEom,
+        Compression, CompressionLevel, Incremental, Volume, ContinuedFromPrevVolume, ClosedByEom, FirstBlockAfterSet,
         Encryption, Envelope);
 
     /// <summary>
@@ -357,7 +372,8 @@ public partial class TapeSetTOC
         public bool ContinuedFromPrevVolume;
         public int FileCount;
         public bool ClosedByEom;
-        public string Description = "";
+        public long FirstBlockAfterSet = -1;    // ← added by Design-TocLocation §6
+        public string Description = string.Empty;
 
         private static readonly TapeSchema<Wire> s_schema = new(TapeRecordKind.TocSet, validate: Validate)
         {
@@ -378,6 +394,8 @@ public partial class TapeSetTOC
             // F32. Optional, NOT critical: a reader that drops it miscounts by one mark at the volume's tail — which the
             //  set-header verification detects and repairs. Elided when false: every existing TOC stays byte-identical.
             { 14, w => w.ClosedByEom,             (w, v) => w.ClosedByEom = v },
+            // Design-TocLocation §6. Optional, NOT critical, elided at −1: every existing TOC stays byte-identical.
+            { 15, w => w.FirstBlockAfterSet,      (w, v) => w.FirstBlockAfterSet = v,      -1L }, // -1L-elided still ok for varuint
             // ── strings 32–47 ──
             { 32, w => w.Description,             (w, v) => w.Description = v },
         };
@@ -413,6 +431,7 @@ public partial class TapeSetTOC
             ContinuedFromPrevVolume = set.ContinuedFromPrevVolume,
             FileCount = set.Count,
             ClosedByEom = set.ClosedByEom,
+            FirstBlockAfterSet = set.FirstBlockAfterSet,
             Description = TapeTextRules.ClampWellFormed(set.Description, TapeFormat.MaxStringBytes),
         };
 
@@ -431,6 +450,7 @@ public partial class TapeSetTOC
             CompressionLevel = CompressionLevel,
             ContinuedFromPrevVolume = ContinuedFromPrevVolume,
             ClosedByEom = ClosedByEom,
+            FirstBlockAfterSet = FirstBlockAfterSet,
         };
     }
 
@@ -577,8 +597,15 @@ public partial class TapeTOC : ITapeBlockPeeker<TapeTocPeek>
     /// <param name="stream">Destination; written forward only, never disposed.</param>
     public void SaveTo(Stream stream) => SaveTo(stream, DateTime.UtcNow, DefaultWrittenBy);
 
-    /// <summary>Deterministic form of <see cref="SaveTo(Stream)"/> — tests and goldens pin time and writer.</summary>
-    internal void SaveTo(Stream stream, DateTime saveTimeUtc, string writtenBy)
+    /// <summary>
+    /// <see cref="SaveTo(Stream)"/> for one of the on-tape copies: stamps <paramref name="copyIndex"/> of
+    ///  <paramref name="copyCount"/> into the header (Design-TocLocation §6).
+    /// </summary>
+    internal void SaveTo(Stream stream, byte copyIndex, byte copyCount)
+        => SaveTo(stream, DateTime.UtcNow, DefaultWrittenBy, copyIndex, copyCount);
+
+    /// <summary>Deterministic form of <see cref="SaveTo(Stream)"/> — tests and goldens pin time, writer and copy.</summary>
+    internal void SaveTo(Stream stream, DateTime saveTimeUtc, string writtenBy, byte copyIndex = 0, byte copyCount = 0)
     {
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(writtenBy);
@@ -594,7 +621,7 @@ public partial class TapeTOC : ITapeBlockPeeker<TapeTocPeek>
         TapeCrc64Envelope.Write(stream, s =>
         {
             using var writer = new TapeRecordWriter(s);
-            WriteRecords(writer);
+            WriteRecords(writer, copyIndex, copyCount);
         });
 
         // Only after the whole stream went out: a failed save leaves the sets "modified" for the next attempt
@@ -602,9 +629,9 @@ public partial class TapeTOC : ITapeBlockPeeker<TapeTocPeek>
             set.MarkSaved();
     }
 
-    private void WriteRecords(TapeRecordWriter writer)
+    private void WriteRecords(TapeRecordWriter writer, byte copyIndex, byte copyCount)
     {
-        writer.Write(TocHeaderWire.From(this));
+        writer.Write(TocHeaderWire.From(this, copyIndex, copyCount));
 
         var entry = new TocFileEntryWire();
         var coder = new TapeNameFrontCoder();
@@ -812,7 +839,10 @@ public partial class TapeTOC : ITapeBlockPeeker<TapeTocPeek>
                 IsLegacy: false,
                 Volume: header.Volume,
                 LastSaveTime: header.LastSaveTime,
-                SetCount: header.SetCount);
+                SetCount: header.SetCount,
+                CopyIndex: header.CopyIndex == 0 ? null : header.CopyIndex,
+                CopyCount: header.CopyCount == 0 ? null : header.CopyCount,
+                FirstBlockAfterContent: header.FirstBlockAfterContent < 0 ? null : header.FirstBlockAfterContent);
             return TapeFrameStatus.Ok;
         }
         catch (TapeFormatException)

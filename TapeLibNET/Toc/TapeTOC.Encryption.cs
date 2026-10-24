@@ -84,6 +84,7 @@ internal sealed class TocSealedSetWire : ITapeRecord<TocSealedSetWire>
     public long SizeOnTapeTotal;
     public bool ClosedByEom;
     public bool ContinuedFromPrevVolume;
+    public long FirstBlockAfterSet = -1;    // ← added by Design-TocLocation §6
     public int ChunkCount;
     public byte[] SealNoncePrefix = [];
     public KeyEnvelopeWire? Envelope;
@@ -99,6 +100,8 @@ internal sealed class TocSealedSetWire : ITapeRecord<TocSealedSetWire>
         { 6,  w => w.ClosedByEom,             (w, v) => w.ClosedByEom = v },
         { 7,  w => w.ContinuedFromPrevVolume, (w, v) => w.ContinuedFromPrevVolume = v },
         { 8,  w => w.ChunkCount,              (w, v) => w.ChunkCount = v,              FieldFlags.Required },
+        // Design-TocLocation §6 — in the clear: the per-volume lookup must work while the set is locked.
+        { 9,  w => w.FirstBlockAfterSet,      (w, v) => w.FirstBlockAfterSet = v,      -1L }, // -1L-elided is still ok for varuint
         // ── blobs 32–47 ──
         { 32, w => w.SealNoncePrefix,         (w, v) => w.SealNoncePrefix = v,         FieldFlags.Required },
         // ── groups 48–63 ──
@@ -144,6 +147,7 @@ internal sealed class TocSealedSetWire : ITapeRecord<TocSealedSetWire>
             SizeOnTapeTotal = set.SealedSizeOnTape,
             ClosedByEom = set.ClosedByEom,
             ContinuedFromPrevVolume = set.ContinuedFromPrevVolume,
+            FirstBlockAfterSet = set.FirstBlockAfterSet,
             ChunkCount = payload.Chunks.Count,
             SealNoncePrefix = payload.NoncePrefix,
             Envelope = KeyEnvelopeWire.From(envelope),
@@ -354,6 +358,7 @@ public partial class TapeSetTOC : ITapeLockableSet
         var set = new TapeSetTOC(stub.Volume)
         {
             ContinuedFromPrevVolume = stub.ContinuedFromPrevVolume,
+            FirstBlockAfterSet = stub.FirstBlockAfterSet,
             SetId = stub.SetId,
             DataFormat = TapeDataFormat.V2,
             ClosedByEom = stub.ClosedByEom
@@ -430,6 +435,10 @@ public partial class TapeSetTOC : ITapeLockableSet
     /// <summary>
     /// Parses opened content with today's set readers and checks it against this stub.
     /// </summary>
+    /// <remarks>
+    /// Deliberately does NOT cross-check <see cref="FirstBlockAfterSet"/>: the value may be restamped on a locked set
+    ///  (the trailing delete does, §10), and the chunks of a locked set are re-emitted verbatim (E7).
+    /// </remarks>
     /// <exception cref="TapeFormatException">Any parse failure, or a record that disagrees with the stub.</exception>
     private TapeSetTOC ParseSealedContent(byte[] content)
     {

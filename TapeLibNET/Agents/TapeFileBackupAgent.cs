@@ -1131,6 +1131,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             //  a TOC-in-partition volume. flag survives the idempotent EndWriteContent
             //  calls of the EOM path; only a new write session clears it.
             TOC.CurrentSetTOC.ClosedByEom = Manager.LastSetClosedByEom;
+            // Design-TocLocation §6: where this set ends on tape — or −1 when no mark closed it.
+            TOC.CurrentSetTOC.FirstBlockAfterSet = Manager.LastSetFirstBlockAfter;
 
             // Drain post-process for tail commits that arrived during EndWriteContent.
             //  If the caller throws a TapeAbortRequestedException during post-notify,
