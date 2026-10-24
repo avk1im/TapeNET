@@ -235,11 +235,16 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
         BytesBackedupMarker = BytesBackedup; // important in case of multi-volume backup continuation
 
-        // Design-TocLocation §8.1 (TL-3): an append goes where the TOC says content ends —
-        //  on THIS volume (TOC.Volume is the one the TOC was read from), and only once
-        //  the tape confirms it. Otherwise the navigator locates it.
+        // Design-TocLocation §8.1 (TL-3): an append goes where the TOC says content ends on THIS volume
+        //  — confirmed by the tape, or cross-checked against the marks below when the tape couldn't confirm it.
+        long recordedEnd = -1;
+        RecordedEndOfContent endCheck = RecordedEndOfContent.NotApplicable;
         if (newSet && Navigator.TargetContentSet == -1)
-            Navigator.TrySettleAtRecordedEndOfContent(TOC.FirstBlockAfterContentOnVolume(TOC.Volume));
+        {
+            recordedEnd = TOC.FirstBlockAfterContentOnVolume(TOC.Volume);
+            endCheck = Navigator.CheckRecordedEndOfContent(recordedEnd);
+        }
+        bool crossCheckEnd = endCheck is RecordedEndOfContent.Unverifiable or RecordedEndOfContent.Disputed;
 
         // Apply the set's preferred block size BEFORE entering the writing-content state.
         //  This matters for the packed path: TapeStreamManager.EnsurePackerCreated() (called
@@ -299,7 +304,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         bool verifies = !newSet && VerifiesSetHeader && Navigator.SetHeadersExpected;
         bool writesSetHeader = WritesSetHeaders && Navigator.MediaHeaderPresence == TapeHeaderPresence.Present;
 
-        if (verifies || writesSetHeader || deferMediaHeaderWrite)
+        if (verifies || writesSetHeader || deferMediaHeaderWrite || crossCheckEnd)
         {
             // SH-4: idempotent, so BeginWriteContent's own call below is a genuine no-op.
             // SH-20: a backward count that fails positionally is retried from begin-of-content.
@@ -309,6 +314,9 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                     nameof(BeginWriteContentForCurrentSet));
                 return false;   // NavigateToTargetContentSet already synced the error
             }
+
+            if (crossCheckEnd && !CrossCheckEndOfContent(recordedEnd, endCheck))
+                return false;   // error set and latched; nothing written
         }
 
         if (verifies)
@@ -381,6 +389,32 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
         return true;
     } // BeginWriteContentForCurrentSet()
+
+    /// <summary>
+    /// The recorded end of content could not be confirmed on tape; the marks located one instead. Agreement of the two
+    ///  independent sources authorizes the append; disagreement refuses it — one of them is wrong, and either could
+    ///  name a set (TL-3).
+    /// </summary>
+    private bool CrossCheckEndOfContent(long recorded, RecordedEndOfContent check)
+    {
+        long landed = Drive.CurrentBlock;
+        string why = check == RecordedEndOfContent.Unverifiable
+            ? "the confirming read failed" : "the TOC area there is not as written";
+        if (landed == recorded)
+        {
+            m_logger.LogWarning("End of content at block {Block}: {Why}, but the marks agree with the TOC — appending there",
+                recorded, why);
+            ResetError();
+            return true;
+        }
+
+        SetError(WIN32_ERROR.ERROR_INVALID_DATA,
+            $"End of content disputed: the TOC records block {recorded}, the marks lead to block {landed} ({why}) — " +
+            "refusing to append at an unconfirmed position. Scan the media, or reload its table of contents.");
+        m_logger.LogError("{Message}", LastErrorMessage);
+        LatchFailure();
+        return false;
+    }
 
     /// <summary>Returns <see langword="true"/> if <paramref name="pattern"/> contains <c>*</c> or <c>?</c> wildcards.</summary>
     public static bool HasWildcards(string pattern)

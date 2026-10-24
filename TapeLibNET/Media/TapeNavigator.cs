@@ -31,6 +31,19 @@ public enum TapeHeaderPresence
     // NotNeeded, // indeed not needed anymore since we write content header also for TOC-in-partition
 }
 
+/// <summary>What the tape says about the end of content the TOC recorded (Design-TocLocation §8.1).</summary>
+internal enum RecordedEndOfContent
+{
+    /// <summary>No recorded end, or a layout that needs none (TOC in partition).</summary>
+    NotApplicable,
+    /// <summary>The layout's closing mark right before it, the TOC area right at it. The navigator stands there.</summary>
+    Confirmed,
+    /// <summary>A transport fault prevented the check: no evidence either way.</summary>
+    Unverifiable,
+    /// <summary>The tape contradicts the record: no closing mark there, or not the TOC area.</summary>
+    Disputed,
+}
+
 /// <summary>
 /// Handles tape positioning across a content area (zero or more content sets) and a TOC area.
 /// <para>Subclasses implement the physical layout; use <see cref="ProduceNavigator"/> to create
@@ -619,14 +632,12 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     }
 
     /// <summary>
-    /// Settles at <paramref name="block"/> as end-of-content IF the tape confirms it
-    ///  (Design-TocLocation §8.1): the end the TOC recorded. Layouts that need no help
-    ///  (e.g., TOC-in-partition) return <see langword="false"/> and leave the position alone.
+    /// Checks <paramref name="block"/>, the end of content the TOC recorded, against the tape
+    ///  (Design-TocLocation §8.1). Only <see cref="RecordedEndOfContent.Confirmed"/> leaves
+    ///  a believed position (−1); every other outcome leaves none.
     /// </summary>
-    /// <returns>
-    /// <see langword="true"/> with <see cref="CurrentContentSet"/> = −1; otherwise nothing believed.
-    /// </returns>
-    internal virtual bool TrySettleAtRecordedEndOfContent(long block) => false;
+    internal virtual RecordedEndOfContent CheckRecordedEndOfContent(long block)
+        => RecordedEndOfContent.NotApplicable;
 
     #endregion
 
@@ -1276,45 +1287,56 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
     // MoveToBeginOfTOCCore() and MoveToEndOfContentCore(`) remain up to descendants to implement
 
     /// <inheritdoc/>
-    /// <remarks>
-    /// Two pieces of evidence: the layout's closing mark stands right before <paramref name="block"/>, and the TOC area
-    ///  starts at it (<see cref="IsTOCAreaAt"/>). Either missing — a stale value, a damaged tail — and the navigator's own
-    ///  search decides, as before.
-    /// </remarks>
-    internal override bool TrySettleAtRecordedEndOfContent(long block)
+    internal override RecordedEndOfContent CheckRecordedEndOfContent(long block)
     {
-        if (CurrentContentSet == -1)
-            return true;
         if (block < 0)
-            return false;
+            return RecordedEndOfContent.NotApplicable;
 
         ResetError();
-        bool confirmed = Drive.MoveToBlock(block)
-            && (UseSmks
-                ? Drive.MoveToNextSetmark(-1) && Drive.MoveToNextSetmark(1)
-                : Drive.MoveToNextFilemark(-1) && Drive.MoveToNextFilemark(1))
-            && Drive.CurrentBlock == block
-            && IsTOCAreaAt(block)
-            && Drive.MoveToBlock(block);
+        RecordedEndOfContent verdict = ProbeRecordedEndOfContent(block);
+        if (verdict == RecordedEndOfContent.Confirmed && !Drive.MoveToBlock(block))
+            verdict = RecordedEndOfContent.Unverifiable;
         ResetError();
 
-        if (!confirmed)
+        if (verdict == RecordedEndOfContent.Confirmed)
+        {
+            CurrentContentSet = -1;
+            m_logger.LogTrace("Drive #{Drive}: At the recorded end of content, block {Block}", DriveNumber, block);
+        }
+        else
         {
             ResetContentSet();
-            m_logger.LogTrace("Drive #{Drive}: Recorded end of content (block {Block}) not confirmed on tape — " +
-                "locating it by marks", DriveNumber, block);
-            return false;
+            m_logger.LogWarning("Drive #{Drive}: Recorded end of content (block {Block}) {Verdict} — locating it by marks",
+                DriveNumber, block, verdict == RecordedEndOfContent.Disputed ? "disputed by the tape" : "could not be checked");
         }
-        CurrentContentSet = -1;
-        m_logger.LogTrace("Drive #{Drive}: At the recorded end of content, block {Block}", DriveNumber, block);
-        return true;
+        return verdict;
     }
 
-    /// <summary>Whether the TOC area starts at <paramref name="block"/>: a TOC copy, or end-of-data. Moves the head.</summary>
-    private protected virtual bool IsTOCAreaAt(long block)
+    /// <summary>A move ran out of marks or medium, rather than the drive failing.</summary>
+    private protected static bool IsPositional(WIN32_ERROR error) => error is
+        WIN32_ERROR.ERROR_NO_DATA_DETECTED or WIN32_ERROR.ERROR_END_OF_MEDIA or WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA
+        or WIN32_ERROR.ERROR_FILEMARK_DETECTED or WIN32_ERROR.ERROR_SETMARK_DETECTED;
+    
+    /// <summary>The layout's closing mark right before <paramref name="block"/>, then the TOC area at it. Moves the head.</summary>
+    private RecordedEndOfContent ProbeRecordedEndOfContent(long block)
     {
-        IdentifiedBlock id = TapeHeaderBlock.ReadAndIdentify(Drive, out _, out _, out _, out bool eod);
-        return eod || id.Kind == HeaderBlockIdentity.TocCopy;
+        if (!Drive.MoveToBlock(block))
+            return RecordedEndOfContent.Unverifiable;
+        bool closed = UseSmks
+            ? Drive.MoveToNextSetmark(-1) && Drive.MoveToNextSetmark(1)
+            : Drive.MoveToNextFilemark(-1) && Drive.MoveToNextFilemark(1);
+        if (!closed)
+            return IsPositional(Drive.LastErrorWin32) ? RecordedEndOfContent.Disputed : RecordedEndOfContent.Unverifiable;
+        return Drive.CurrentBlock == block ? ProbeTocAreaAt() : RecordedEndOfContent.Disputed;
+    }
+
+    /// <summary>Whether the TOC area starts at the head: a TOC copy, or end-of-data. Moves the head.</summary>
+    private protected virtual RecordedEndOfContent ProbeTocAreaAt()
+    {
+        IdentifiedBlock id = TapeHeaderBlock.ReadAndIdentify(Drive, out _, out int read, out bool tapemark, out bool eod);
+        if (eod || id.Kind == HeaderBlockIdentity.TocCopy)
+            return RecordedEndOfContent.Confirmed;
+        return read <= 0 && !tapemark ? RecordedEndOfContent.Unverifiable : RecordedEndOfContent.Disputed;
     }
 
     /// <summary>
@@ -1896,20 +1918,23 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
     }
 
     /// <inheritdoc/>
-    /// <remarks>
-    /// Here the TOC area starts with the TOC mark: <c>[gap][FM][FM][FM][toc1]</c>. One forward pass, no step back: read
-    ///  the block at the head — end-of-data means no TOC was written yet, so content ends here; the gap file means
-    ///  the mark follows — then cross the mark and identify copy 1.
-    /// </remarks>
-    private protected override bool IsTOCAreaAt(long block)
+    /// <remarks>Here the TOC area starts with the TOC mark: <c>[gap][FM][FM][FM][toc1]</c> — one forward pass.</remarks>
+    private protected override RecordedEndOfContent ProbeTocAreaAt()
     {
         IdentifiedBlock id = TapeHeaderBlock.ReadAndIdentify(Drive, out _, out int read, out bool tapemark, out bool eod);
         if (eod)
-            return true;                    // content ends at end-of-data: no TOC written yet
-        if (read <= 0 || tapemark || id.Kind == HeaderBlockIdentity.TocCopy)
-            return false;                   // no gap file here: not the structure this layout writes
-        // The read left the head past the gap block, in front of the gap's closing filemark — the first of the mark's.
-        return Drive.MoveToNextFilemark(FmksAsTOCMark) && IsTOCAtCurrentBlock();
+            return RecordedEndOfContent.Confirmed;                  // no TOC written yet: content ends here
+        if (read <= 0)
+            return tapemark ? RecordedEndOfContent.Disputed : RecordedEndOfContent.Unverifiable;
+        if (id.Kind == HeaderBlockIdentity.TocCopy)
+            return RecordedEndOfContent.Disputed;                   // a copy without its mark
+        if (!Drive.MoveToNextFilemark(FmksAsTOCMark))
+            return IsPositional(Drive.LastErrorWin32) ? RecordedEndOfContent.Disputed : RecordedEndOfContent.Unverifiable;
+
+        id = TapeHeaderBlock.ReadAndIdentify(Drive, out _, out read, out tapemark, out eod);
+        if (id.Kind == HeaderBlockIdentity.TocCopy)
+            return RecordedEndOfContent.Confirmed;
+        return read <= 0 && !tapemark && !eod ? RecordedEndOfContent.Unverifiable : RecordedEndOfContent.Disputed;
     }
 
     #endregion // Content positioning

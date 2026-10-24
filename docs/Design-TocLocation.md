@@ -805,3 +805,4 @@ Each phase's instructions end with a precise list of what the next phase needs. 
 - **The append guard (§8.1)** settles at the TOC's recorded end of content only when the tape confirms it — the layout's
   closing mark right before, the TOC area (a copy, the TOC mark, or end-of-data) right at it. Otherwise the navigator
   locates it as before. A legacy copy's end of content is not used.
+- **The append guard reports what it found**: confirmed, unverifiable, or disputed. Confirmed replaces the mark search, so an append still verifies no set header and costs about the same; the "zero cost" of the verified-write design §3 now reads "no set-header read". Unverifiable or disputed: the marks locate the end of content, and the append goes ahead only if they land on the recorded block (logged at Warning). Otherwise it is refused before anything is written.
