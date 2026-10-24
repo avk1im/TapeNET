@@ -85,9 +85,13 @@ public readonly record struct TapeTocAnomaly(
         TapeTocAnomalyStage.Sibling => "the TOC was read from its other copy",
         TapeTocAnomalyStage.ExpectedPosition => "the TOC was found at its expected position",
         TapeTocAnomalyStage.AnchorWalk or TapeTocAnomalyStage.FullWalk => "the TOC was found by searching",
-        TapeTocAnomalyStage.Retried => Kind is TapeTocAnomalyKind.CopyWriteFailed or TapeTocAnomalyKind.NoCopyWritten
-            ? "the TOC was written on a further attempt"
-            : "the TOC was read on a further attempt",
+        TapeTocAnomalyStage.Retried => Kind switch
+        {
+            TapeTocAnomalyKind.CopyWriteFailed or TapeTocAnomalyKind.NoCopyWritten
+                => "the TOC was written on a further attempt",
+            TapeTocAnomalyKind.CopyUnreadable => "the damaged TOC copy was replaced by this operation's TOC",
+            _ => "the TOC was read on a further attempt",
+        },
         _ => "settled",
     };
 

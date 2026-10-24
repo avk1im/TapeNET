@@ -68,7 +68,7 @@ public partial class TapeAgentBase
         TOCPlacement == TapeTocPlacement.InPartition ? MediaPartition.Initiator : MediaPartition.Content;
 
     /// <summary>A detection on this layout's TOC partition. Phase 2 knows no block and has no further stage.</summary>
-    private TapeTocAnomaly BuildTocAnomaly(TapeTocAnomalyKind kind, int volume, byte copyIndex, TapeResult diagnosis)
+    private protected TapeTocAnomaly BuildTocAnomaly(TapeTocAnomalyKind kind, int volume, byte copyIndex, TapeResult diagnosis)
         => new(kind, TapeTocAnomalyStage.Detected, volume, copyIndex, TOCPartition,
             Block: -1, CanAttemptRecovery: false, diagnosis);
 
@@ -89,7 +89,7 @@ public partial class TapeAgentBase
         m_logger.LogWarning("TOC anomaly: {Anomaly} — {Diagnosis}", anomaly, anomaly.Diagnosis.ErrorMessage);
 
         TapeTocAnomaly a = anomaly;
-        bool settleable = anomaly.Kind is not (TapeTocAnomalyKind.CopyUnreadable or TapeTocAnomalyKind.ForeignCopySkipped);
+        bool settleable = anomaly.Kind is not TapeTocAnomalyKind.ForeignCopySkipped;
         if (settleable && !m_tocUnresolved.Exists(u => u.Volume == a.Volume && u.Kind == a.Kind && u.CopyIndex == a.CopyIndex))
             m_tocUnresolved.Add(anomaly);
 

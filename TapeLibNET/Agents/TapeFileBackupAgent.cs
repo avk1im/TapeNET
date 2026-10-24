@@ -239,10 +239,11 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         //  — confirmed by the tape, or cross-checked against the marks below when the tape couldn't confirm it.
         long recordedEnd = -1;
         RecordedEndOfContent endCheck = RecordedEndOfContent.NotApplicable;
+        TapeResult endEvicence = TapeResult.OK;
         if (newSet && Navigator.TargetContentSet == -1)
         {
             recordedEnd = TOC.FirstBlockAfterContentOnVolume(TOC.Volume);
-            endCheck = Navigator.CheckRecordedEndOfContent(recordedEnd);
+            endCheck = Navigator.CheckRecordedEndOfContent(recordedEnd, out endEvicence);
         }
         bool crossCheckEnd = endCheck is RecordedEndOfContent.Unverifiable or RecordedEndOfContent.Disputed;
 
@@ -315,7 +316,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 return false;   // NavigateToTargetContentSet already synced the error
             }
 
-            if (crossCheckEnd && !CrossCheckEndOfContent(recordedEnd, endCheck))
+            if (crossCheckEnd && !CrossCheckEndOfContent(recordedEnd, endCheck, endEvicence, fileNotify))
                 return false;   // error set and latched; nothing written
         }
 
@@ -395,7 +396,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     ///  independent sources authorizes the append; disagreement refuses it — one of them is wrong, and either could
     ///  name a set (TL-3).
     /// </summary>
-    private bool CrossCheckEndOfContent(long recorded, RecordedEndOfContent check)
+    private bool CrossCheckEndOfContent(long recorded, RecordedEndOfContent check, TapeResult evidence,
+        ITapeTocNotifiable? tocNotify)
     {
         long landed = Drive.CurrentBlock;
         string why = check == RecordedEndOfContent.Unverifiable
@@ -404,10 +406,16 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         {
             m_logger.LogWarning("End of content at block {Block}: {Why}, but the marks agree with the TOC — appending there",
                 recorded, why);
+            // The copy at the recorded end did not read as one. The append overwrites it, and this operation's TOC
+            //  write replaces it (settled as Retried) — reported, so a drive or medium that keeps doing this is noticed.
+            NotifyTocAnomaly(tocNotify,
+                BuildTocAnomaly(TapeTocAnomalyKind.CopyUnreadable, TOC.Volume, copyIndex: 1, evidence)
+                    with { Block = recorded });
             ResetError();
             return true;
         }
 
+        // The refusal
         SetError(WIN32_ERROR.ERROR_INVALID_DATA,
             $"End of content disputed: the TOC records block {recorded}, the marks lead to block {landed} ({why}) — " +
             "refusing to append at an unconfirmed position. Scan the media, or reload its table of contents.");

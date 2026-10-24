@@ -470,9 +470,16 @@ public class TapeSetHeaderWriteVerificationTests
 
             Assert.Equal(1, fixture.Backend.ContentReadFaults.Occurrences);     // the confirmation consumed it
             Assert.Empty(agent.SetAnomalies);
-            Assert.Empty(agent.TocAnomalies);
+
+            var detected = Assert.Single(agent.TocAnomalies, a => !a.IsRecovery);
+            Assert.Equal((TapeTocAnomalyKind.CopyUnreadable, recordedEnd), (detected.Kind, detected.Block));
+
             Assert.Equal(recordedEnd + 1, fixture.TOC[3][0].Address.Block);     // set header at the recorded end
+
             Assert.True(agent.BackupTOC());
+            var settled = Assert.Single(agent.TocAnomalies, a => a.IsRecovery);
+            Assert.Equal(TapeTocAnomalyStage.Retried, settled.Stage);
+
             fixture.LoadTOC();
             Assert.Equal(3, fixture.TOC.Count);
         }

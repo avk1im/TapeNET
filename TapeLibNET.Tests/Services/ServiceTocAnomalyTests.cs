@@ -64,7 +64,7 @@ public class ServiceTocAnomalyTests : ServiceTestBase
             TapeTocPlacement.InSet);
 
         Assert.Equal(TocAnomalyAdvice.TocLost, advice);
-        Assert.Equal(new[] { 2, 3 }, volumes);          // the volumes it concerns, sorted, once each
+        Assert.Equal([2, 3], volumes);          // the volumes it concerns, sorted, once each
     }
 
     /// <summary>A lost TOC that a later attempt wrote after all advises nothing.</summary>
@@ -74,6 +74,52 @@ public class ServiceTocAnomalyTests : ServiceTestBase
             [A(TapeTocAnomalyKind.NoCopyWritten),
              A(TapeTocAnomalyKind.NoCopyWritten, stage: TapeTocAnomalyStage.Retried)],
             TapeTocPlacement.InSet).Advice);
+
+    private static TapeTocAnomaly Detected(TapeTocAnomalyKind kind, int volume = 1, byte copy = 1) =>
+    new(kind, TapeTocAnomalyStage.Detected, volume, copy, MediaPartition.Content, Block: 8,
+        CanAttemptRecovery: false, TapeResult.Fail(1, "test"));
+
+    [Fact]
+    public void Advice_CopyUnreadable_SettledBySibling_StillAdvisesResave()
+    {
+        var d = Detected(TapeTocAnomalyKind.CopyUnreadable);
+        var (advice, volumes) = TapeServiceBase.AdviseOnTocAnomalies(
+            [d, d with { Stage = TapeTocAnomalyStage.Sibling, Diagnosis = TapeResult.OK }], TapeTocPlacement.InSet);
+        Assert.Equal(TocAnomalyAdvice.SingleCopyDamaged, advice);
+        Assert.Equal([1], volumes);
+    }
+
+    [Fact]
+    public void Advice_CopyUnreadable_ReplacedByTocWrite_AdvisesNothing()
+    {
+        var d = Detected(TapeTocAnomalyKind.CopyUnreadable);
+        var (advice, _) = TapeServiceBase.AdviseOnTocAnomalies(
+            [d, d with { Stage = TapeTocAnomalyStage.Retried, Diagnosis = TapeResult.OK }], TapeTocPlacement.InSet);
+        Assert.Equal(TocAnomalyAdvice.None, advice);
+    }
+
+    [Fact]
+    public void Advice_FoundBySearch_ThenRewritten_AdvisesNothing()
+    {
+        var d = Detected(TapeTocAnomalyKind.NoReadableCopy, copy: 0);
+        var (advice, _) = TapeServiceBase.AdviseOnTocAnomalies(
+        [
+            d,
+            d with { Stage = TapeTocAnomalyStage.AnchorWalk, CopyIndex = 1, Diagnosis = TapeResult.OK },
+            d with { Stage = TapeTocAnomalyStage.Retried, Diagnosis = TapeResult.OK },
+        ], TapeTocPlacement.InSet);
+        Assert.Equal(TocAnomalyAdvice.None, advice);
+    }
+
+    [Fact]
+    public void Advice_FoundBySearch_NotRewritten_AdvisesResave()
+    {
+        var d = Detected(TapeTocAnomalyKind.NoReadableCopy, copy: 0);
+        var (advice, _) = TapeServiceBase.AdviseOnTocAnomalies(
+            [d, d with { Stage = TapeTocAnomalyStage.AnchorWalk, CopyIndex = 1, Diagnosis = TapeResult.OK }],
+            TapeTocPlacement.InSet);
+        Assert.Equal(TocAnomalyAdvice.TocFoundBySearch, advice);
+    }
 
     [Theory]
     [InlineData(TapeTocAnomalyKind.NoReadableCopy)]

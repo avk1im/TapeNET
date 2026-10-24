@@ -636,8 +636,11 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     ///  (Design-TocLocation §8.1). Only <see cref="RecordedEndOfContent.Confirmed"/> leaves
     ///  a believed position (−1); every other outcome leaves none.
     /// </summary>
-    internal virtual RecordedEndOfContent CheckRecordedEndOfContent(long block)
-        => RecordedEndOfContent.NotApplicable;
+    internal virtual RecordedEndOfContent CheckRecordedEndOfContent(long block, out TapeResult evidence)
+    {
+        evidence = TapeResult.OK;
+        return RecordedEndOfContent.NotApplicable;
+    }
 
     #endregion
 
@@ -1287,15 +1290,22 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
     // MoveToBeginOfTOCCore() and MoveToEndOfContentCore(`) remain up to descendants to implement
 
     /// <inheritdoc/>
-    internal override RecordedEndOfContent CheckRecordedEndOfContent(long block)
+    internal override RecordedEndOfContent CheckRecordedEndOfContent(long block, out TapeResult evidence)
     {
         if (block < 0)
-            return RecordedEndOfContent.NotApplicable;
+            return base.CheckRecordedEndOfContent(block, out evidence);
 
         ResetError();
         RecordedEndOfContent verdict = ProbeRecordedEndOfContent(block);
         if (verdict == RecordedEndOfContent.Confirmed && !Drive.MoveToBlock(block))
             verdict = RecordedEndOfContent.Unverifiable;
+        evidence = verdict switch
+        {
+            RecordedEndOfContent.Unverifiable => TapeResult.Fail(this),     // the drive's own error
+            RecordedEndOfContent.Disputed => TapeResult.Fail((uint)WIN32_ERROR.ERROR_INVALID_DATA,
+                $"Block {block}, the recorded end of content, does not hold the TOC area"),
+            _ => TapeResult.OK,
+        };
         ResetError();
 
         if (verdict == RecordedEndOfContent.Confirmed)

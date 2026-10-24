@@ -114,9 +114,10 @@ public partial class TapeServiceBase
     /// </summary>
     /// <remarks>
     /// <para>
-    /// A detection counts as SETTLED when the trail holds a recovery for the same volume, kind and copy — e.g. an
-    ///  enforced rewrite that wrote the copies after all. Settled detections advise nothing, with one exception: an
-    ///  unreadable copy stays damaged on tape although its sibling read, so it always advises a re-save.
+    /// A detection is SETTLED when the trail holds a recovery for the same volume, kind and copy — settled detections advise
+    ///  nothing. One exception: a copy that did not read stays damaged on tape when its sibling settled it
+    ///  (<see cref="TapeTocAnomalyStage.Sibling"/>); only a TOC write on that volume (<see cref="TapeTocAnomalyStage.Retried"/>)
+    ///  replaces it.
     /// </para>
     /// <para>
     /// Severity order: no TOC written → no TOC readable → one copy for lack of room → one copy for another reason or a
@@ -128,8 +129,10 @@ public partial class TapeServiceBase
     {
         ArgumentNullException.ThrowIfNull(anomalies);
 
-        bool Settled(TapeTocAnomaly d) => anomalies.Any(r => r.IsRecovery
-            && r.Volume == d.Volume && r.Kind == d.Kind && r.CopyIndex == d.CopyIndex);
+        bool SettledBy(TapeTocAnomaly d, Func<TapeTocAnomalyStage, bool> stage) => anomalies.Any(r => r.IsRecovery
+            && r.Volume == d.Volume && r.Kind == d.Kind && r.CopyIndex == d.CopyIndex && stage(r.Stage));
+        bool Settled(TapeTocAnomaly d) => SettledBy(d, _ => true);
+        bool Rewritten(TapeTocAnomaly d) => SettledBy(d, s => s == TapeTocAnomalyStage.Retried);
 
         List<int> Volumes(Func<TapeTocAnomaly, bool> which)
             => [.. anomalies.Where(a => !a.IsRecovery && which(a)).Select(a => a.Volume).Distinct().Order()];
@@ -138,7 +141,8 @@ public partial class TapeServiceBase
         if (v.Count > 0)
             return (TocAnomalyAdvice.TocLost, v);
 
-        v = Volumes(a => a.Kind is TapeTocAnomalyKind.NotFoundNatively or TapeTocAnomalyKind.NoReadableCopy && !Settled(a));
+        v = Volumes(a => a.Kind is TapeTocAnomalyKind.NotFoundNatively or TapeTocAnomalyKind.NoReadableCopy
+                         && !Settled(a));
         if (v.Count > 0)
             return (TocAnomalyAdvice.TocUnreadable, v);
 
@@ -148,14 +152,17 @@ public partial class TapeServiceBase
             return (placement == TapeTocPlacement.InPartition
                 ? TocAnomalyAdvice.TocPartitionFull : TocAnomalyAdvice.SingleCopyReserve, v);
 
-        v = Volumes(a => a.Kind == TapeTocAnomalyKind.CopyUnreadable
-                         || a.Kind == TapeTocAnomalyKind.CopyWriteFailed && !Settled(a));
+        // A damaged copy: still on tape unless a TOC write replaced it; a failed write: unless a later write succeeded.
+        v = Volumes(a => (a.Kind == TapeTocAnomalyKind.CopyUnreadable && !Rewritten(a))
+                         || (a.Kind == TapeTocAnomalyKind.CopyWriteFailed && !Settled(a)));
         if (v.Count > 0)
             return (TocAnomalyAdvice.SingleCopyDamaged, v);
 
+        // Found only by searching — unless a TOC write on that volume has since put it back where the layout keeps it.
         v = [.. anomalies.Where(r => r.Stage is TapeTocAnomalyStage.ExpectedPosition
-                or TapeTocAnomalyStage.AnchorWalk or TapeTocAnomalyStage.FullWalk)
-            .Select(r => r.Volume).Distinct().Order()];
+                    or TapeTocAnomalyStage.AnchorWalk or TapeTocAnomalyStage.FullWalk)
+                .Where(r => !anomalies.Any(w => w.Stage == TapeTocAnomalyStage.Retried && w.Volume == r.Volume))
+                .Select(r => r.Volume).Distinct().Order()];
         if (v.Count > 0)
             return (TocAnomalyAdvice.TocFoundBySearch, v);
 
