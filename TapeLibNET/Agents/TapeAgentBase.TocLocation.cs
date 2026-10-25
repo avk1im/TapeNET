@@ -237,6 +237,14 @@ public partial class TapeAgentBase
         }
 
         // ── S2: walk from an anchor ──
+#warning Phase 5: Optimize S2 to avoid re-reading S3 blocks and SM probing on every fragment (s. comment below)
+        /*
+S2 on setmark layouts: two avoidable moves (optional)
+- S2 re-reads S3's block. S3 has just identified block 258 as "not a TOC", and the S2 anchor is the same block, so the walk reads it again. Pass S3's checked block to the walk and start one file later when the anchor equals it.
+- A setmark probe on every fragment. For each fragment, the scanner's nearest-mark logic also tries a forward setmark space, which runs to end-of-data and fails, followed by a locate back. Past the last setmark there can be no further setmark by definition, since the TOC area holds only filemarks. When WalkFrom starts at the last-setmark anchor, the TOC-only options can disable setmark probing. Here the end of data is close, so it's cheap, but it costs two extra moves per fragment.
+
+Neither affects correctness, so fold them into Phase 5's walker work.
+         */
         foreach ((MediaPartition partition, long block) in Anchors(expectedVolume, seriesToc))
         {
             if (IsAbortRequested)

@@ -762,29 +762,59 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             start = series[i].FirstBlockAfterSet;
         }
 
-        bool located;
         if (onVolume == 0)
-            located = Navigator.MoveToBeginOfContent();
-        else if (start >= 0)
-            located = Drive.MoveToBlock(MediaPartition.Content, start);
-        else
         {
-            Navigator.ResetContentSet();
-            Navigator.TargetContentSet = onVolume;
-            located = Navigator.MoveToTargetContentSet();
+            // Begin-of-content by EVIDENCE: a media header that did not read still left its filemark. The set's first
+            //  block stands at BOM or just past the first filemark — try both.
+            foreach (bool pastHeaderMark in (ReadOnlySpan<bool>)[false, true])
+            {
+                ResetError();
+                if (!Drive.MoveToBlock(MediaPartition.Content, 0) || (pastHeaderMark && !Drive.MoveToNextFilemark(1)))
+                    break;
+                if (IsFirstBlockOfSet(series, set, out bool bySetHeader))
+                {
+                    // A block stands at BOM with its filemark: a damaged media header. Content starts past it.
+                    if (pastHeaderMark)
+                        Navigator.ResolveMediaHeaderPresence(TapeHeaderPresence.Present, setHeadersExpected: bySetHeader);
+                    return true;
+                }
+            }
+            ResetError();
+            return false;
         }
+
+        bool located = start >= 0
+            ? Drive.MoveToBlock(MediaPartition.Content, start)
+            : LocateByCount(onVolume);
         if (!located)
         {
             ResetError();
             return false;
         }
-
-        IdentifiedBlock id = TapeHeaderBlock.ReadAndIdentify(Drive, out _, out _, out _, out _);
+        bool identified = IsFirstBlockOfSet(series, set, out _); // located by block → no need to distinguish set header vs. file header
         ResetError();
-        return (id.TryGetHeader(out TapeSetHeader? header) && header.SetId == set.SetId
-                && (series.MediaId == Guid.Empty || header.MediaId == series.MediaId))
-            || (id.TryGetFile(out TapeFilePeek file) && file.SetId == set.SetId);
+        return identified;
     }
+
+    /// <summary>Navigates to on-volume set <paramref name="onVolume"/> by counting marks.</summary>
+    private bool LocateByCount(int onVolume)
+    {
+        Navigator.ResetContentSet();
+        Navigator.TargetContentSet = onVolume;
+        return Navigator.MoveToTargetContentSet();
+    }
+
+    /// <summary>Whether the block at the head carries <paramref name="set"/>'s SetId —
+    ///  set header (in which case we set <paramref name="bySetHeader"/> to <see langword="true"/>)
+    ///  or V2.1 file header.</summary>
+    private bool IsFirstBlockOfSet(TapeTOC series, TapeSetTOC set, out bool bySetHeader)
+    {
+        IdentifiedBlock id = TapeHeaderBlock.ReadAndIdentify(Drive, out _, out _, out _, out _);
+        bySetHeader = id.TryGetHeader(out TapeSetHeader? header) && header.SetId == set.SetId
+            && (series.MediaId == Guid.Empty || header.MediaId == series.MediaId);
+        return bySetHeader || (id.TryGetFile(out TapeFilePeek file) && file.SetId == set.SetId);
+    }
+
 
     /// <summary>Sets and returns a rejection: <paramref name="error"/>, else the current error, else invalid data.</summary>
     private TapeResult RejectVolume(string message, WIN32_ERROR? error = null)

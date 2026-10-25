@@ -99,17 +99,34 @@ public class MultiVolumeResumeTests
             Assert.False(File.Exists(Path.Combine(root, Path.GetRelativePath(tree.RootPath, missing))));
     }
 
+    /// <summary>
+    /// Makes every block of the loaded cartridge unidentifiable — media header, TOC copies, the set's first block — so the
+    ///  agent cannot identify the volume at all (Design-TocLocation §7) and must reject it. A merely unreadable TOC is no
+    ///  longer enough: the volume would be identified by its header or its set, and restored with the series TOC.
+    /// </summary>
+    private static void SetCartridgeUnreadable(MultiVolumeVirtualTapeFixture fixture, bool unreadable)
+    {
+        foreach (var faults in new[] { fixture.Backend.ContentReadFaults, fixture.Backend.InitiatorReadFaults })
+        {
+            if (unreadable)
+                faults.CorruptAlways(bits: 2, offset: 0);   // the magic: nothing identifies, nothing parses
+            else
+                faults.Reset(); // also disables
+        }
+    }
+
     #endregion
 
     #region *** Restore: rejection instead of an endless loop ***
 
     /// <summary>
-    /// The originating defect: the requested cartridge's TOC cannot be read. Before the fix the agent kept asking for the
-    ///  same volume, and every caller looping on <c>CanResumeFromAnotherVolume</c> spun forever.
+    /// The originating defect: neither TOC nor any identifiable header on the requested cartridge
+    ///  can be read. Before the fix the agent kept asking for the same volume, and every caller
+    ///  looping on <see cref="TapeFileRestoreBaseAgent.CanResumeFromAnotherVolume"/> spun forever.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
-    public void Restore_UnreadableTocOnRequestedVolume_IsRejected_ThenRetrySucceeds(DriveProfile profile)
+    public void Restore_UnidentifiableVolume_IsRejected_ThenRetrySucceeds(DriveProfile profile)
     {
         using var tree = SpanningTree();
         using var fixture = new MultiVolumeVirtualTapeFixture(profile);
@@ -120,7 +137,9 @@ public class MultiVolumeResumeTests
             int volume = agent.VolumeToResumeFrom;
             fixture.SwapToVolume(volume);
 
-            agent.SimulateTOCFailureMask = 7;                          // every TOC copy of this cartridge fails
+            // INSUFFICIENT: agent.SimulateTOCFailureMask = 7;                          // every TOC copy of this cartridge fails
+            SetCartridgeUnreadable(fixture, true);                    // nothing on this cartridge identifies
+            
             TapeResult rejected = agent.ResumeRestoreFromAnotherVolume();
 
             Assert.False(rejected.Success);
@@ -130,12 +149,53 @@ public class MultiVolumeResumeTests
             Assert.Equal(volume, agent.VolumeToResumeFrom);            // still the volume it needs
             Assert.False(string.IsNullOrWhiteSpace(rejected.ErrorMessage));
 
-            agent.SimulateTOCFailureMask = 0;                          // "the user cleaned the cartridge"
+            // INSUFFICIENT: agent.SimulateTOCFailureMask = 0;                          // "the user cleaned the cartridge"
+            SetCartridgeUnreadable(fixture, false);                   // "the user cleaned the cartridge"
+            
             TapeResult done = ResumeToTheEnd(fixture, agent);
 
             Assert.True(done.Success, done.ErrorMessage);
             Assert.True(agent.LastResult.Success, "the rejected attempt must not linger in the diagnosis");
             Assert.False(agent.IsMultiVolumePending);
+            FileComparer.AssertFilesMatch(tree.RootPath, tree.Files, RestoreEquivalentRoot(restoreDir, tree.RootPath));
+        }
+        finally
+        {
+            TryDeleteDirectory(restoreDir);
+        }
+    }
+
+    /// <summary>
+    /// Design-TocLocation §7: a cartridge whose own TOC does not read is NOT rejected when
+    ///  its set identifies it — the series TOC addresses every file.
+    ///  The unreadable TOC is recorded, not fatal.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Restore_UnreadableTocOnRequestedVolume_IdentifiedBySet_Restores(DriveProfile profile)
+    {
+        using var tree = SpanningTree();
+        using var fixture = new MultiVolumeVirtualTapeFixture(profile);
+        string restoreDir = MakeRestoreDir();
+        try
+        {
+            using var agent = StartSpanningRestore(fixture, tree, restoreDir);
+            int volume = agent.VolumeToResumeFrom;
+            fixture.SwapToVolume(volume);
+            agent.SimulateTOCFailureMask = -1;                         // no TOC copy of this cartridge reads
+
+            TapeResult result = agent.ResumeRestoreFromAnotherVolume();
+            Assert.False(agent.IsVolumeRejected);
+            Assert.Contains(agent.TocAnomalies,
+                a => a.Kind == TapeTocAnomalyKind.NoReadableCopy && a.Volume == volume && !a.IsRecovery);
+
+            agent.SimulateTOCFailureMask = 0;
+            while (!result.Success && agent.CanResumeFromAnotherVolume)
+            {
+                fixture.SwapToVolume(agent.VolumeToResumeFrom);
+                result = agent.ResumeRestoreFromAnotherVolume();
+            }
+            Assert.True(result.Success, result.ErrorMessage);
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files, RestoreEquivalentRoot(restoreDir, tree.RootPath));
         }
         finally
@@ -197,9 +257,14 @@ public class MultiVolumeResumeTests
             using var agent = StartSpanningRestore(fixture, tree, restoreDir);
             int skippedVolume = agent.VolumeToResumeFrom;
             fixture.SwapToVolume(skippedVolume);
-            agent.SimulateTOCFailureMask = 7;
+
+            // INSUFFICIENT: agent.SimulateTOCFailureMask = 7;                          // every TOC copy of this cartridge fails
+            SetCartridgeUnreadable(fixture, true);                    // nothing on this cartridge identifies
+
             Assert.False(agent.ResumeRestoreFromAnotherVolume().Success);
-            agent.SimulateTOCFailureMask = 0;
+
+            // INSUFFICIENT: agent.SimulateTOCFailureMask = 0;                          // "the user cleaned the cartridge"
+            SetCartridgeUnreadable(fixture, false);                   // "the user cleaned the cartridge"
 
             TapeResult result = agent.SkipRequestedVolume(out int sets, out int files);
             Assert.True(sets >= 1);
@@ -287,6 +352,45 @@ public class MultiVolumeResumeTests
             Assert.False(result.Success);
             Assert.Contains("Simulated", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(FileCount - 1, agent.Statistics.FilesSucceeded);
+        }
+        finally
+        {
+            TryDeleteDirectory(restoreDir);
+        }
+    }
+
+    /// <summary>
+    /// Design-TocLocation §7, step 3 on a HEADED volume: the media header at BOM is damaged and no TOC copy reads. The set
+    ///  header past the header's filemark still identifies the volume, and the restore completes.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Restore_DamagedMediaHeaderAndUnreadableToc_IdentifiedBySetHeader_Restores(DriveProfile profile)
+    {
+        using var tree = SpanningTree();
+        using var fixture = new MultiVolumeVirtualTapeFixture(profile, headerMode: VolumeHeaderMode.All);
+        string restoreDir = MakeRestoreDir();
+        try
+        {
+            using var agent = StartSpanningRestore(fixture, tree, restoreDir);
+            int volume = agent.VolumeToResumeFrom;
+            fixture.SwapToVolume(volume);
+            fixture.Backend.ContentReadFaults.CorruptOnce(bits: 2, offset: 0);  // the first read: the BOM header
+            agent.SimulateTOCFailureMask = -1;                                   // and no TOC copy reads
+
+            TapeResult result = agent.ResumeRestoreFromAnotherVolume();
+            Assert.False(agent.IsVolumeRejected, result.ErrorMessage);
+            Assert.Contains(agent.TocAnomalies,
+                a => a.Kind == TapeTocAnomalyKind.NoReadableCopy && a.Volume == volume && !a.IsRecovery);
+
+            agent.SimulateTOCFailureMask = 0;
+            while (!result.Success && agent.CanResumeFromAnotherVolume)
+            {
+                fixture.SwapToVolume(agent.VolumeToResumeFrom);
+                result = agent.ResumeRestoreFromAnotherVolume();
+            }
+            Assert.True(result.Success, result.ErrorMessage);
+            FileComparer.AssertFilesMatch(tree.RootPath, tree.Files, RestoreEquivalentRoot(restoreDir, tree.RootPath));
         }
         finally
         {

@@ -1,7 +1,9 @@
+using TapeLibNET.Headers; // TapeTocPlacement
 using TapeLibNET.Agents;
 using TapeLibNET.Services;
 using TapeLibNET.Toc;
 using TapeLibNET.Virtual;
+
 using TapeLibNET.Tests.Helpers; // TempFileTree, FileComparer, TempVirtualMedia, MultiVolumeTapeServiceHost
 
 namespace TapeLibNET.Tests.Services;
@@ -182,8 +184,9 @@ public class ServiceMultiVolumeErrorTests : ServiceTestBase
             var (svc, host) = await ReopenMultiVolumeAsync(volumes);
             using (svc)
             {
-                svc.OnAgentReady = a => a.SimulateTOCFailureMask = 7;   // every TOC copy of every requested volume fails
-                // VolumeErrorAnswers left empty: the test host answers End — the unattended default
+                // INSUFFICIENT: svc.OnAgentReady = a => a.SimulateTOCFailureMask = 7;   // every TOC copy of every requested volume fails
+                host.MakeVolumeUnreadable(1);                       // nothing on volume 1 identifies
+                // VolumeErrorAnswers left empty: the test host answers End as the unattended default
 
                 var result = await svc.ExecuteRestoreAsync(MakeRestoreRequest(svc.TOC!.LastSetOnVolume, restoreDir))
                     .WaitAsync(NoHang);
@@ -197,6 +200,9 @@ public class ServiceMultiVolumeErrorTests : ServiceTestBase
                 Assert.Equal(0, result.FilesSucceeded);                 // volume 1 comes first: nothing restored yet
                 Assert.Contains("table of contents", result.Message ?? "", StringComparison.OrdinalIgnoreCase);
                 Assert.True(host.ContainsMessage("Volume #1 cannot be used"), host.DumpReports());
+
+                Assert.DoesNotContain(result.TocAnomalies,
+                    a => a.IsRecovery && a.Volume == 1); // volume rejection isn't reported as a recovered TOC anomaly
             }
         }
     }
@@ -222,9 +228,10 @@ public class ServiceMultiVolumeErrorTests : ServiceTestBase
             var (svc, host) = await ReopenMultiVolumeAsync(volumes);
             using (svc)
             {
-                svc.OnAgentReady = a => a.SimulateTOCFailureMask = 7;
+                // INSUFFICIENT: svc.OnAgentReady = a => a.SimulateTOCFailureMask = 7;
+                host.MakeVolumeUnreadable(1);
                 host.VolumeErrorAnswers.Enqueue(VolumeAction.Insert);
-                host.OnVolumeErrorPrompted = _ => svc.Agent!.SimulateTOCFailureMask = 0;   // "the cartridge was cleaned"
+                host.OnVolumeErrorPrompted = _ => host.VolumeFaults.Remove(1);   // "cleaned": the re-insertion is clean
 
                 var result = await svc.ExecuteRestoreAsync(MakeRestoreRequest(svc.TOC!.LastSetOnVolume, restoreDir))
                     .WaitAsync(NoHang);
@@ -237,6 +244,14 @@ public class ServiceMultiVolumeErrorTests : ServiceTestBase
                 Assert.Equal(FileCount, result.FilesSucceeded);
                 Assert.Equal(0, result.FilesFailed);
                 FileComparer.AssertFilesMatch(tree.RootPath, tree.Files, FindRestoredRoot(restoreDir, tree.RootPath));
+
+                // The first insertion WAS unreadable: on record, settled by the re-insertion — and nothing left to advise.
+                var detected = Assert.Single(result.TocAnomalies, a => !a.IsRecovery);
+                Assert.Equal((TapeTocAnomalyKind.NoReadableCopy, 1), (detected.Kind, detected.Volume));
+                var settled = Assert.Single(result.TocAnomalies, a => a.IsRecovery);
+                Assert.Equal(TapeTocAnomalyStage.Retried, settled.Stage);
+                var placement = withInitiator ? TapeTocPlacement.InPartition : TapeTocPlacement.InSet;
+                Assert.Equal(TocAnomalyAdvice.None, TapeServiceBase.AdviseOnTocAnomalies(result.TocAnomalies, placement).Advice);
             }
         }
     }
@@ -267,9 +282,10 @@ public class ServiceMultiVolumeErrorTests : ServiceTestBase
                 var onVol1 = FilesOnVolume(toc, setIdx, 1);
                 var onVol2 = FilesOnVolume(toc, setIdx, 2);
 
-                svc.OnAgentReady = a => a.SimulateTOCFailureMask = 7;
+                // INSUFFICIENT: svc.OnAgentReady = a => a.SimulateTOCFailureMask = 7;
+                host.MakeVolumeUnreadable(1);                       // volume 2 is inserted clean: no failure plan for it
                 host.VolumeErrorAnswers.Enqueue(VolumeAction.Skip);
-                host.OnVolumeErrorPrompted = _ => svc.Agent!.SimulateTOCFailureMask = 0;   // only volume 1 is bad
+                // INSUFFICIENT: host.OnVolumeErrorPrompted = _ => svc.Agent!.SimulateTOCFailureMask = 0;   // only volume 1 is bad
 
                 var result = await svc.ExecuteRestoreAsync(MakeRestoreRequest(setIdx, restoreDir)).WaitAsync(NoHang);
 
@@ -283,9 +299,62 @@ public class ServiceMultiVolumeErrorTests : ServiceTestBase
                 Assert.Contains("Volume #1 skipped", result.Message ?? "", StringComparison.Ordinal);
 
                 AssertExactlyRestored(tree, restoreDir, onVol2);
+
+                Assert.DoesNotContain(result.TocAnomalies,
+                    a => a.IsRecovery && a.Volume == 1); // volume rejection isn't reported as a recovered TOC anomaly
+
             }
         }
     }
+
+    #region *** Restore: a volume whose TOC cannot be read, but which identifies ***
+
+    /// <summary>
+    /// Design-TocLocation §7 at service level: no TOC copy of any requested volume reads, yet every volume is identified —
+    ///  by its media header — and the whole set restores through the series TOC. No volume-error prompt; the unreadable
+    ///  TOCs are on record in the result, and the closing advice names them.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Restore_UnreadableToc_VolumeIdentified_RestoresEverything_ReportsToc(bool withInitiator)
+    {
+        var (vol1, vol2) = MakeVolumes(withInitiator);
+        using (vol1) using (vol2)
+        {
+            IReadOnlyList<TempVirtualMedia> volumes = [vol1, vol2];
+            using var tree = MakeTree();
+            await BackupAcrossTwoVolumesAsync(volumes, tree);
+
+            string restoreDir = Path.Combine(vol1.Root, "restore_toc_unreadable");
+            Directory.CreateDirectory(restoreDir);
+
+            var (svc, host) = await ReopenMultiVolumeAsync(volumes);
+            using (svc)
+            {
+                svc.OnAgentReady = a => a.SimulateTOCFailureMask = -1;   // no TOC copy of any cartridge reads
+
+                var result = await svc.ExecuteRestoreAsync(MakeRestoreRequest(svc.TOC!.LastSetOnVolume, restoreDir))
+                    .WaitAsync(NoHang);
+
+                // The restore itself: complete, byte for byte, no prompt about the volume
+                Assert.True(result.Success, $"{result.Message}\n{host.DumpReports()}");
+                Assert.Equal(FileCount, result.FilesSucceeded);
+                Assert.Equal(0, result.FilesFailed);
+                Assert.Empty(host.VolumeErrorPrompts);
+                FileComparer.AssertFilesMatch(tree.RootPath, tree.Files, FindRestoredRoot(restoreDir, tree.RootPath));
+
+                // The diagnostics: the unreadable TOC is on record, unsettled, and advised on
+                Assert.Contains(result.TocAnomalies,
+                    a => a.Kind == TapeTocAnomalyKind.NoReadableCopy && a.Volume == 1 && !a.IsRecovery);
+                Assert.DoesNotContain(result.TocAnomalies, a => a.IsRecovery && a.Volume == 1);
+                Assert.True(result.TocStats.AnomaliesDetected >= 1);
+                Assert.True(host.ContainsMessage("could not be read"), host.DumpReports());
+            }
+        }
+    }
+
+    #endregion
 
     #endregion
 

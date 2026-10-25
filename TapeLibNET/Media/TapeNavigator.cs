@@ -296,8 +296,10 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     #region *** Media header ***
 
     /// <summary>
-    /// Resets presence to <see cref="TapeHeaderPresence.Unknown"/> so the agent re-resolves it — call on
-    ///  every media (re)load (INV-10)./>.
+    /// Forgets what is known about the media header, so it can be resolved afresh. Called by
+    ///  <see cref="TapeAgentBase.ReadBomHeader(out int, out byte[])"/> — the one verb that resolves
+    ///  resence, and that must re-read even when a previous cartridge left
+    ///  <see cref="TapeHeaderPresence.Absent"/> behind.
     /// </summary>
     internal void InvalidateMediaHeaderPresence()
     {

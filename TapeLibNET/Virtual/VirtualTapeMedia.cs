@@ -629,7 +629,7 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
 #if TEST_HOOKS
         // After the EOD check, so an injected read fault is a MEDIUM fault, never a disguised EOD.
         if (ReadFaults is { } rf && rf.ShouldInjectNow())
-            return ApplyInjectedReadFault(rf, buffer, offset, count);
+            return ApplyInjectedReadFault(rf, buffer, offset, count, out markEncountered);
 #endif
 
         int totalRead = 0;
