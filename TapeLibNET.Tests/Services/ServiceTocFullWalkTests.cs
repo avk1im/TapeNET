@@ -1,9 +1,9 @@
-using TapeLibNET.Agents;
 using TapeLibNET.Services;
-using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Virtual;
+using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests.Services;
+
 
 /// <summary>
 /// Design-TocLocation Phase 5, service level: the one TOC question — search the whole medium? — asked through the media
@@ -19,7 +19,7 @@ public class ServiceTocFullWalkTests : ServiceTestBase
 #if TEST_HOOKS
     #region *** Helpers ***
 
-    private static async Task SeedAsync(ServiceTocFullWalkTests self, TempVirtualMedia media, bool withHeader = true)
+    private static async Task SeedAsync(ServiceTocFullWalkTests self, TempVirtualMedia media /*, bool withHeader = true*/)
     {
         using var src = new TempFileTree();
         src.AddFiles("walk", count: 3, minSize: 512, maxSize: 4_096);

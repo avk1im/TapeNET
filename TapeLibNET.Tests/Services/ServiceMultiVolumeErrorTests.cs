@@ -109,6 +109,17 @@ public class ServiceMultiVolumeErrorTests : ServiceTestBase
         return prompt;
     }
 
+    /// <summary>
+    /// Asserts a single media mismatch prompt was raised, returns it, and CLEARS the ledger so the teardown
+    ///  sweep stays meaningful.
+    /// </summary>
+    private static TestTapeServiceHost.MediaMismatchPrompt TakeSingleMediaMismatchPrompt(TestTapeServiceHost host)
+    {
+        var prompt = Assert.Single(host.MediaMismatchPrompts);
+        host.MediaMismatchPrompts.Clear();
+        return prompt;
+    }
+
     #endregion
 
     #region *** Restore: Skip Volume ***
@@ -412,7 +423,7 @@ public class ServiceMultiVolumeErrorTests : ServiceTestBase
             }
 
             // Nothing reached volume 2 — in particular no TOC
-            var (blank, _) = CreateMultiVolumeService(volumes);
+            var (blank, blankHost) = CreateMultiVolumeService(volumes);
             using (blank)
             {
                 var caps = vol2.HasInitiator
@@ -424,6 +435,10 @@ public class ServiceMultiVolumeErrorTests : ServiceTestBase
                 Assert.True(await blank.LoadMediaAsync(), blank.LastError);
                 Assert.Null(blank.LoadedMediaHeader);
                 Assert.False(await blank.RestoreTOCAsync().WaitAsync(NoHang), "the refused cartridge must hold no TOC");
+
+                var prompt = TakeSingleMediaMismatchPrompt(blankHost);
+                Assert.Equal(TapeMediaVerdict.Unidentified, prompt.Verdict);
+                Assert.Equal(MediaPromptContext.FullWalkForTOC, prompt.Context);
             }
         }
     }
