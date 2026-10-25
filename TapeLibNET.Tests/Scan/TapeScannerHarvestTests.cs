@@ -395,10 +395,10 @@ public class TapeScannerHarvestTests
     ///  scan's evidence. <b>A filemark-specific text.</b>
     /// </summary>
     /// <remarks>
-    /// Two junk files appended after <c>toc2</c> on the filemark layout. The navigator locates the TOC by
-    ///  "EOD, back three filemarks" — which now lands on the junk — so the ordinary restore FAILS, and the
-    ///  test asserts that first. Only the setmark-free, TOC-mark-free layout searches this way; the others
-    ///  anchor on a setmark or the TOC mark and would find the TOC anyway.
+    /// Two junk files appended after <c>toc2</c> on the filemark layout. The navigator locates the TOC by "EOD, back three
+    ///  filemarks", which now lands on the junk: its native read fails (asserted through the ladder's anomaly trail,
+    ///  which then finds the TOC by searching — Design-TocLocation §4). Only the setmark-free, TOC-mark-free layout
+    ///  searches this way; the others anchor on a setmark or the TOC mark and would find the TOC natively.
     /// </remarks>
     [Fact]
     public void Harvest_WhereTheNavigatorCannotFindTheToc_StillRecoversIt()
@@ -420,9 +420,16 @@ public class TapeScannerHarvestTests
                 Assert.True(fixture.Drive.WriteFilemark(1));
             }
 
-            // The navigator's own search now fails...
+            // The navigator's own search no longer finds the TOC: counting back from end-of-data lands on the junk.
+            //  Since Design-TocLocation Phase 4 the ladder recovers it anyway — by searching, which the anomaly trail proves.
             using (var ordinary = new TapeAgentBase(fixture.Drive, new TapeTOC()))
-                Assert.False(ordinary.RestoreTOC().Success, "the navigator should no longer find the TOC");
+            {
+                Assert.True(ordinary.RestoreTOC().Success, ordinary.LastErrorMessage);
+                var detected = Assert.Single(ordinary.TocAnomalies, a => !a.IsRecovery);
+                Assert.Equal(TapeTocAnomalyKind.NoReadableCopy, detected.Kind);
+                var recovered = Assert.Single(ordinary.TocAnomalies, a => a.IsRecovery);
+                Assert.Equal(TapeTocAnomalyStage.AnchorWalk, recovered.Stage);
+            }
 
             // ...while the scan finds both copies and recovers them.
             MediaScanMap map = Scan(fixture, harvest: true);
