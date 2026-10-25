@@ -148,6 +148,7 @@ public sealed class ConsoleUxServiceHost(IConsoleUx ux) : ITapeServiceHost
         string headline = context switch
         {
             MediaPromptContext.SearchForTOC => "This media could not be identified — searching for a table of contents may take a while.",
+            MediaPromptContext.FullWalkForTOC => "The table of contents was not found where it should be — searching the whole medium may take long.",
             MediaPromptContext.OverwriteBackup => "Loaded media already holds data — overwriting will erase it.",
             MediaPromptContext.ContinuationVolume => "Continuation volume is not blank — continuing will erase it.",
             MediaPromptContext.VerifyRestore => "Loaded media does not match the backup.",
@@ -189,7 +190,7 @@ public sealed class ConsoleUxServiceHost(IConsoleUx ux) : ITapeServiceHost
             mapping.Add(MediaMismatchChoice.Retry);
         }
 
-        string proceedLabel = context == MediaPromptContext.SearchForTOC
+        string proceedLabel = context is MediaPromptContext.SearchForTOC or MediaPromptContext.FullWalkForTOC
             ? "Search"
             : destructive ? "Proceed and overwrite" : "Proceed";
         choices.Add(proceedLabel);

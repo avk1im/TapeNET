@@ -810,3 +810,24 @@ Each phase's instructions end with a precise list of what the next phase needs. 
 - **Advice tells the two settlements of a damaged copy apart.** Settled by its sibling (read path), the damaged copy is still on tape: re-save. Settled by a TOC write on that volume (`Retried`), it was replaced: no advice. Likewise, a TOC found only by searching advises a re-save only until this operation writes the TOC to that volume.
 - **A detection that names no copy** (the TOC position, a search) is settled by any recovery of its kind on its volume; the recovery names the copy it found.
 - **Rejection now means "unidentifiable", not "TOC unreadable"**. A cartridge whose own TOC does not read is restored when its media header or its set's first block identifies it (§7), with NoReadableCopy on record. The multi-volume rejection tests (both `Scenarios` and `Services`) now must make the whole cartridge unidentifiable to construct a full rejection case. Design-MultiVolume §5.2/§5.3 to be updated in the final rewrite.
+
+### 12.5 Deviations from Phase 5
+
+- **S4 never runs on a multi-volume resume.** A series TOC is at hand: it addresses every file, and the volume is
+  identified by its header or its set (§7). S4 is for a TOC that is otherwise lost — a plain load, the restore's initial
+  read. Also skipped when an S2 walk already started at content block 0.
+- **S4 walks the content partition on every layout** — on partitioned media, S2 already walked the whole TOC partition.
+  No copy limit: every copy is collected and ranked.
+- **The question is a media prompt**, `MediaPromptContext.FullWalkForTOC` with verdict `Unidentified` — no new host API.
+  Unattended: Proceed (read-only). `IdentifyMediaAsync` does not ask it again after the user said "Search" to
+  `SearchForTOC`. No notifiable: S4 runs unasked.
+- **Progress and cancellation reuse the walker.** `ITapeTocNotifiable.OnTocSearchProgress` receives the scanner's samples
+  (phase `searching-toc`); the agent's abort flag reaches the walk through `ScanMediaOptions.AbortPoll`. An abort is
+  `ERROR_CANCELLED` and no anomaly. The service's TOC reads get a `ServiceTocProgressHandler` (factory
+  `CreateTocProgressHandler`); WPF shows the progress in the TOC load overlay, whose Cancel stops the walk.
+- **A declined S4** leaves the detection with `CanAttemptRecovery = true`, and the diagnosis says it was declined.
+- **S2 backlog:** an anchor equal to S3's block starts one file later; the setmark anchor walks with `NoSetmarksAhead`
+  (every fragment closed by a filemark — no setmark probe per fragment).
+- **Setmark → filemark fallback in the TOC walks** (`SetmarkFallbackToFilemark`): a set whose closing setmark is lost no
+  longer ends the walk before the TOC — the next filemark reaches the copy behind it. Scan Media keeps reporting such a set
+  as never completed.

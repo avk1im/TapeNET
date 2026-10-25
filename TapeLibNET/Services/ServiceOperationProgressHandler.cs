@@ -386,8 +386,22 @@ public abstract class ServiceOperationProgressHandler(
         ReportProgress(stats);
     }
 
-    private static string DescribeTocVolume(int volume) => volume > 0 ? $"Volume #{volume}" : "Loaded volume";
+    /// <summary>
+    /// Answers <see cref="OnTocFullWalkConfirm"/>; set by the service (<c>TapeServiceBase.ConfirmFullWalk</c>). Unset:
+    ///  proceed — the walk only reads.
+    /// </summary>
+    public Func<int, bool>? FullWalkConfirm { get; set; }
 
+    /// <inheritdoc/>
+    public virtual bool OnTocFullWalkConfirm(int volume) => FullWalkConfirm?.Invoke(volume) ?? true;
+
+    /// <inheritdoc/>
+    public void OnTocSearchProgress(in TapeScanProgress progress) => ReportTocSearchProgress(progress);
+
+    /// <summary>Hook for app-specific display of the full-media TOC search. No-op in the base.</summary>
+    protected virtual void ReportTocSearchProgress(TapeScanProgress progress) { }
+
+    private static string DescribeTocVolume(int volume) => volume > 0 ? $"Volume #{volume}" : "Loaded volume";
 
     /// <summary>
     /// Renders a set in the standard TapeNET notation — <c>#std | alt &gt;description&lt;</c>.
@@ -448,6 +462,50 @@ public class ServiceSetProgressHandler(
     bool skipAllErrors,
     string operationName)
     : ServiceOperationProgressHandler(host, agent, skipAllErrors, operationName);
+
+// ── TOC reads the service starts on its own ──────────────────────────────────
+
+/// <summary>
+/// The notifiable of a TOC read the service starts on its own — <c>RestoreTOCAsync</c>, <c>IdentifyMediaAsync</c>, the
+///  restore's initial read: answers the full-media search question (S4) and receives its progress. TOC anomalies are
+///  reported after the read, from the agent's records.
+/// </summary>
+/// <remarks>
+/// Cancellation needs nothing here: the walk polls the agent's abort flag, which the host's Cancel already sets
+///  (<c>TapeServiceBase.AbortTOCLoad</c>, or the operation token).
+/// </remarks>
+public class ServiceTocProgressHandler(ITapeServiceHost host, TapeAgentBase agent) : ITapeTocNotifiable
+{
+    /// <summary>The host — for subclasses that report more.</summary>
+    protected ITapeServiceHost Host { get; } = host;
+
+    /// <summary>The agent reading the TOC.</summary>
+    protected TapeAgentBase Agent { get; } = agent;
+
+    /// <summary>Answers the question; set by the service. Unset: proceed — the walk only reads.</summary>
+    public Func<int, bool>? FullWalkConfirm { get; set; }
+
+    /// <summary>Where the search stands.</summary>
+    public long CurrentBlock { get; private set; }
+
+    /// <summary>TOC copies met so far.</summary>
+    public int TocCopiesFound { get; private set; }
+
+    /// <inheritdoc/>
+    public bool OnTocFullWalkConfirm(int volume) => FullWalkConfirm?.Invoke(volume) ?? true;
+
+    /// <inheritdoc/>
+    public void OnTocSearchProgress(in TapeScanProgress progress)
+    {
+        CurrentBlock = progress.CurrentBlock;
+        if (progress.Fragment is { Kind: FragmentKind.TOC })
+            TocCopiesFound++;
+        ReportProgress(progress);
+    }
+
+    /// <summary>Hook for app-specific progress display. No-op in the base.</summary>
+    protected virtual void ReportProgress(TapeScanProgress progress) { }
+}
 
 // ── Backup ───────────────────────────────────────────────────────────────────
 

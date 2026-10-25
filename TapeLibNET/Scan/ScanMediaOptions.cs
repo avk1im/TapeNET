@@ -29,6 +29,25 @@ public sealed record ScanMediaOptions
     /// </summary>
     internal int StopAfterTocCopies { get; init; }
 
+    /// <summary>
+    /// Polled before every read, with <see cref="TapeScanner.IsAbortRequested"/>: a caller's own abort flag (the TOC search
+    ///  passes the agent's), so the walk stops at a block boundary without the caller reaching into the scanner. Internal.
+    /// </summary>
+    internal Func<bool>? AbortPoll { get; init; }
+
+    /// <summary>
+    /// The walk starts past the last setmark: no setmark can follow, so every fragment is closed by a filemark — no setmark
+    ///  probe to end-of-data per fragment (Design-TocLocation §12.5). Internal: the TOC search's setmark anchor.
+    /// </summary>
+    internal bool NoSetmarksAhead { get; init; }
+
+    /// <summary>
+    /// A fragment closed by a setmark, with no setmark ahead (end-of-data, a lost mark): cross the next FILEMARK instead of
+    ///  ending the partition — reaches a TOC copy behind a set whose closing setmark is gone. Internal: the TOC search only;
+    ///  Scan Media reports such a set as never completed.
+    /// </summary>
+    internal bool SetmarkFallbackToFilemark { get; init; }
+
     /// <summary>Detect TOC copies without deserializing them; do not inspect calibration trails.</summary>
     public static ScanMediaOptions Default { get; } = new();
 }
@@ -69,6 +88,9 @@ public readonly record struct TapeScanProgress(
 
     /// <summary>Walking the initiator (TOC) partition.</summary>
     public const string PhaseScanningInitiator = "scanning-initiator";
+
+    /// <summary>Walking the medium for a table of contents (the TOC search's full-media walk).</summary>
+    public const string PhaseSearchingToc = "searching-toc";
 
     /// <summary>Deserializing a table-of-contents copy.</summary>
     public const string PhaseHarvestingToc = "harvesting-toc";

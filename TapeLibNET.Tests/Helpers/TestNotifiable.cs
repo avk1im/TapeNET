@@ -1,5 +1,6 @@
-using TapeLibNET.Toc;
 using TapeLibNET.Agents;
+using TapeLibNET.Scan;
+using TapeLibNET.Toc;
 
 namespace TapeLibNET.Tests.Helpers;
 
@@ -45,6 +46,9 @@ public class TestNotifiable : ITapeFileNotifiable
 
     /// <summary>Every <see cref="OnTocFullWalkConfirm"/> call, by volume.</summary>
     public List<int> TocFullWalkConfirms { get; } = [];
+
+    /// <summary>Every <see cref="OnTocSearchProgress"/> sample.</summary>
+    public List<TapeScanProgress> TocSearchProgress { get; } = [];
 
     #endregion
 
@@ -142,6 +146,10 @@ public class TestNotifiable : ITapeFileNotifiable
     /// <summary>What <see cref="OnTocFullWalkConfirm"/> answers. Defaults to the interface default, proceed.</summary>
     public bool TocFullWalkAnswer { get; set; } = true;
 
+    /// <summary>Called with every scan-for-TOC (Step S4) progress sample, after it is recorded
+    ///  — e.g. to request an abort, or to throw one.</summary>
+    public Action<TapeScanProgress>? TocSearchProgressFunc { get; set; }
+
     #endregion
 
     #region *** ITapeFileNotifiable ***
@@ -232,6 +240,12 @@ public class TestNotifiable : ITapeFileNotifiable
     {
         TocFullWalkConfirms.Add(volume);
         return TocFullWalkAnswer;
+    }
+
+    public void OnTocSearchProgress(in TapeScanProgress progress)
+    {
+        TocSearchProgress.Add(progress);
+        TocSearchProgressFunc?.Invoke(progress);
     }
 
     #endregion

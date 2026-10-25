@@ -124,7 +124,24 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                 : 0.0;
 
             _viewModel.ScanProgressText =
-                $"Block {currentBlock:N0} · {fragmentsFound:N0} fragment(s) · {setsFound:N0} set(s) · {tocCopiesFound:N0} TOC copy(ies) found";
+                $"Block {currentBlock:N0} · {fragmentsFound:N0} fragment(s) · {setsFound:N0} set(s)"
+                    + $" · {tocCopiesFound:N0} TOC cop{(tocCopiesFound == 1 ? "y" : "ies")} found";
+        });
+    }
+
+    /// <summary>
+    /// Shows the progress of a full-media TOC search in the TOC load overlay's message. Safe to call from any thread.
+    /// </summary>
+    /// <param name="estimatedBlocks">Media capacity in blocks; 0 when unknown (no percentage).</param>
+    public void UpdateTocSearchProgress(long currentBlock, long estimatedBlocks, int tocCopiesFound)
+    {
+        _dispatcher.Invoke(() =>
+        {
+            string where = estimatedBlocks > 0
+                ? $"{Math.Clamp(currentBlock * 100.0 / estimatedBlocks, 0.0, 99.0):F0}% (block {currentBlock:N0})"
+                : $"block {currentBlock:N0}";
+            _viewModel.BusyMessage = $"Searching the whole medium for a TOC — {where}" +
+                (tocCopiesFound > 0 ? $", {tocCopiesFound:N0} cop{(tocCopiesFound == 1 ? "y" : "ies")} found" : string.Empty);
         });
     }
 
@@ -685,6 +702,15 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                 Detail: "The loaded media has no recognizable header. It may be a legacy backup media (which does "
                         + "have a table of contents) or unrelated / blank media. Searching reads to the end of the "
                         + "media, which can take a while and may find nothing.",
+                ProceedLabel: "Search",
+                Severity: WarningLevel.Warning),
+
+            MediaPromptContext.FullWalkForTOC => new(
+                Title: "Search the whole medium?",
+                Headline: "The table of contents was not found where it should be",
+                Detail: "Its usual place, and the area around it, hold no readable copy. A copy may still stand elsewhere "
+                        + "on the medium — e.g. behind data written later. Searching reads the whole medium, which can take "
+                        + "a long time; it changes nothing on the tape and can be cancelled.",
                 ProceedLabel: "Search",
                 Severity: WarningLevel.Warning),
 

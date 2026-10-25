@@ -17,7 +17,7 @@ public enum TocAnomalyAdvice
 {
     /// <summary>No anomalies — nothing to say.</summary>
     None,
-    /// <summary>A copy found only by searching (Phase 4): re-save it so it is found directly again.</summary>
+    /// <summary>A copy found only by searching: re-save it so it is found directly again.</summary>
     TocFoundBySearch,
     /// <summary>A copy could not be written for another reason, or did not read: the medium is suspect.</summary>
     SingleCopyDamaged,
@@ -65,7 +65,6 @@ public partial class TapeServiceBase
     protected TapeResult SaveTocCore(TapeAgentBase agent, bool enforce = false, ITapeTocNotifiable? tocNotify = null)
     {
         ArgumentNullException.ThrowIfNull(agent);
-
         bool wasLegacy = agent.TOC.LoadedFromLegacy;
         TapeResult result = agent.BackupTOC(enforce: enforce, tocNotify: tocNotify);
         ReportTocUpgrade(wasLegacy, agent.TOC);
@@ -82,7 +81,6 @@ public partial class TapeServiceBase
     {
         if (!wasLegacy || toc.LoadedFromLegacy)
             return;
-
         LogWarn("Table of contents upgraded to format 2.1");
         LogWarnSub("Earlier TapeNET versions can no longer read this tape's table of contents");
     }
@@ -96,6 +94,66 @@ public partial class TapeServiceBase
     protected static string DescribeDataFormat(TapeSetTOC set) => set.DataFormat == TapeDataFormat.Legacy
         ? "legacy (pre-2.1)"
         : "2.1";
+
+    #endregion
+
+    #region TOC search (Design-TocLocation §4, S4)
+
+    // ── TOC search ──────────────────────────────────────────────────────────
+    //  The one question the TOC location asks — before reading the whole medium (S4) — and its progress. Every TOC read the
+    //   service starts on its own (RestoreTOCAsync, IdentifyMediaAsync, the restore's initial read) goes through a
+    //   ServiceTocProgressHandler made by CreateTocProgressHandler; apps override the factory to show the progress.
+    //  A multi-volume resume never asks: it holds the series TOC, which addresses every file (the agent skips S4 there).
+
+    /// <summary>
+    /// Creates the notifiable for a TOC read the service starts on its own — the one that answers the full-media search
+    ///  question and receives its progress. Override in app subclasses to display the progress.
+    /// </summary>
+    /// <param name="agent">The agent about to read the TOC — its abort flag stops the search.</param>
+    protected virtual ServiceTocProgressHandler CreateTocProgressHandler(TapeAgentBase agent)
+        => new(_host, agent);
+
+    /// <summary>
+    /// The handler for a TOC read of <paramref name="agent"/>, wired to the service's full-media search question.
+    /// </summary>
+    /// <param name="alreadyConsented">
+    /// The user has just agreed to a lengthy TOC search on this cartridge (<see cref="MediaPromptContext.SearchForTOC"/>):
+    ///  asking again would be asking twice.
+    /// </param>
+    protected ServiceTocProgressHandler CreateTocProgressHandlerFor(TapeAgentBase agent, bool alreadyConsented = false)
+    {
+        ServiceTocProgressHandler handler = CreateTocProgressHandler(agent);
+        handler.FullWalkConfirm = alreadyConsented
+            ? volume => { LogInfo("Searching the whole medium for a table of contents..."); return true; }
+            : volume => ConfirmFullWalk(volume, suppress: false);
+        return handler;
+    }
+
+    /// <summary>
+    /// Asks — through the media prompt — whether to search the whole medium for the TOC of <paramref name="volume"/> (S4).
+    /// </summary>
+    /// <param name="volume">The volume concerned; 0 when unknown (a plain load).</param>
+    /// <param name="suppress">Answer Proceed without asking (unattended), logged.</param>
+    /// <returns><see langword="true"/> to search.</returns>
+    /// <remarks>
+    /// The verdict is <see cref="TapeMediaVerdict.Unidentified"/> — the TOC, not the cartridge, is what could not be
+    ///  identified — and the context <see cref="MediaPromptContext.FullWalkForTOC"/> tells the host to word it so: the
+    ///  cartridge may well carry a valid media header. Read-only, so Proceed is the unattended answer.
+    /// </remarks>
+    protected bool ConfirmFullWalk(int volume, bool suppress)
+    {
+        LogWarn($"The table of contents of {DescribeVolumes([volume])} was not found where it should be");
+        MediaMismatchChoice choice = PresentVerdict(TapeMediaVerdict.Unidentified, MediaPromptContext.FullWalkForTOC,
+            suppress, allowRetry: false, allowProceedAlways: false);
+        if (choice == MediaMismatchChoice.Abort)
+        {
+            LogInfo("Search of the whole medium declined");
+            return false;
+        }
+        LogInfo("Searching the whole medium for a table of contents...");
+        OnStatusUpdate("Searching for the TOC...");
+        return true;
+    }
 
     #endregion
 
@@ -134,9 +192,7 @@ public partial class TapeServiceBase
         bool SettledBy(TapeTocAnomaly d, Func<TapeTocAnomalyStage, bool> stage) => anomalies.Any(r => r.IsRecovery
             && r.Volume == d.Volume && r.Kind == d.Kind && stage(r.Stage)
             && (d.CopyIndex == 0 || r.CopyIndex == d.CopyIndex));
-
         bool Settled(TapeTocAnomaly d) => SettledBy(d, _ => true);
-
         bool Rewritten(TapeTocAnomaly d) => SettledBy(d, s => s == TapeTocAnomalyStage.Retried);
 
         List<int> Volumes(Func<TapeTocAnomaly, bool> which)

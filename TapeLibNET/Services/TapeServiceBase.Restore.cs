@@ -149,7 +149,7 @@ public partial class TapeServiceBase
                 LogInfo("Restoring TOC from tape...");
                 OnStatusUpdate("Reading TOC...");
 
-                var tocResult = agent.RestoreTOC();
+                var tocResult = agent.RestoreTOC(CreateTocProgressHandlerFor(agent));
                 ReportTocAnomalyOutcome(agent);
                 if (!tocResult)
                     throw new InvalidOperationException($"Couldn't restore TOC: {tocResult.ErrorMessage}");

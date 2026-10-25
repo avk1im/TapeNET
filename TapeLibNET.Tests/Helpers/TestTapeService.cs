@@ -109,4 +109,10 @@ public sealed class TestTapeService(ILoggerFactory lf, ITapeServiceHost host) : 
         return new TestServiceCalibrateProgressHandler(this,
             _host, calibrator, capacityReported);
     }
+
+    protected override ServiceTocProgressHandler CreateTocProgressHandler(TapeAgentBase agent)
+    {
+        OnAgentReady?.Invoke(agent);
+        return base.CreateTocProgressHandler(agent);
+    }
 }

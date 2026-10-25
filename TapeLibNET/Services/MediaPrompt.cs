@@ -50,6 +50,17 @@ public enum MediaPromptContext
     /// </remarks>
     SearchForTOC,
 
+    /// <summary>
+    /// TOC search: the TOC was not found where the layout keeps it, nor near it. Ask before reading
+    ///  the WHOLE medium for a     ///  copy (Design-TocLocation S4). Unlike <see cref="SearchForTOC"/>,
+    ///  the cartridge itself may be identified — only its     ///  TOC is missing.
+    ///  Read-only, therefore <c>Proceed</c> is the unattended answer.
+    /// </summary>
+    /// <remarks>
+    /// Like <see cref="SearchForTOC"/>, an <see cref="TapeMediaVerdict.Unidentified"/> verdict DOES prompt here.
+    /// </remarks>
+    FullWalkForTOC,
+
     /// <summary>Backup, overwrite mode: the loaded media holds content that overwriting will destroy.</summary>
     OverwriteBackup,
 

@@ -1074,7 +1074,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                     var a = _agent; if (a is not null) a.IsAbortRequested = true;
                 });
 
-                var tocResult = _agent.RestoreTOC();
+                var tocResult = _agent.RestoreTOC(CreateTocProgressHandlerFor(_agent));
                 ReportTocAnomalyOutcome(_agent);
                 if (!tocResult)
                 {
@@ -1162,6 +1162,8 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 _agent = null;
                 RefreshLoadedHeader();
 
+                bool searchConsented = false;
+
                 switch (_loadedHeader)
                 {
                     case TapeCalibrationHeader:
@@ -1191,6 +1193,8 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                             return IdentifyMediaOutcome.Unidentified;
                         }
 
+                        searchConsented = true; // the user who just said "Search" to SearchForTOC will not be asked again
+
                         break;   // Proceed → search for the TOC below
 
                     default:
@@ -1212,7 +1216,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                     if (a is not null) a.IsAbortRequested = true;
                 });
 
-                var tocResult = _agent.RestoreTOC();
+                var tocResult = _agent.RestoreTOC(CreateTocProgressHandlerFor(_agent, alreadyConsented: searchConsented));
                 ReportTocAnomalyOutcome(_agent);
                 if (!tocResult)
                 {
@@ -1464,10 +1468,11 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         bool allowRetry = false,
         bool allowProceedAlways = true)
     {
-        // Match is always benign. Unidentified is benign for identity-VERIFY contexts (backup/restore/import),
-        //  but under SearchForTOC it is precisely the case we must ask about — do the lengthy EOD seek or not?
+        // Match is always benign. Unidentified is benign for identity-VERIFY contexts (backup/restore/import), but under
+        //  the two TOC-search contexts it is precisely the case we must ask about — do the lengthy search or not?
         bool benign = verdict == TapeMediaVerdict.Match
-            || (verdict == TapeMediaVerdict.Unidentified && context != MediaPromptContext.SearchForTOC);
+            || (verdict == TapeMediaVerdict.Unidentified
+                && context is not (MediaPromptContext.SearchForTOC or MediaPromptContext.FullWalkForTOC));
         if (benign)
             return MediaMismatchChoice.Proceed;
 

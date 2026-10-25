@@ -9,8 +9,8 @@ using Windows.Win32.Foundation;
 namespace TapeLibNET.Agents;
 
 /// <summary>
-/// The TOC location ladder (Design-TocLocation §4, Phase 4): S0 native, S1 sibling, S3 expected position, S2 anchor walk.
-///  S4 — the full-media walk, asked first — follows in Phase 5.
+/// The TOC location ladder (Design-TocLocation §4): S0 native, S1 sibling, S3 expected position, S2 anchor walk, and S4 —
+///  the full-media walk, asked first.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -21,11 +21,18 @@ namespace TapeLibNET.Agents;
 /// <para>
 /// <b>Partition-explicit (TL-11).</b> Every absolute move names its partition (<see cref="TapeDrive.MoveToBlock(MediaPartition, long)"/>).
 ///  On partitioned media the TOC lives at block 0 of the initiator partition: S3 (a content-partition position) does not
-///  apply to the TOC there, and S2 walks the whole — small — initiator partition.
+///  apply to the TOC there, S2 walks the whole — small — initiator partition, and S4 walks the content partition.
 /// </para>
 /// <para>
-/// <b>Bounded, unasked (TL-4).</b> S3 is one locate; S2 starts at an anchor near the end of content and stops after a few
-///  copies. Nothing here writes.
+/// <b>Bounded, unasked — except S4 (TL-4).</b> S3 is one locate; S2 starts at an anchor near the end of content and stops
+///  after a few copies. S4 reads the medium from its beginning: it is asked first
+///  (<see cref="ITapeTocNotifiable.OnTocFullWalkConfirm"/>), reports progress, and stops at an abort. It is never run when a
+///  series TOC is at hand (a multi-volume resume): that TOC addresses every file, and the volume is identified otherwise.
+///  Nothing here writes.
+/// </para>
+/// <para>
+/// <b>One walker (TL-9).</b> S2 and S4 are both <see cref="TapeScanner.WalkFrom"/> — the same identification and mark handling
+///  as Scan Media.
 /// </para>
 /// </remarks>
 public partial class TapeAgentBase
@@ -35,12 +42,26 @@ public partial class TapeAgentBase
     /// <summary>Filemarks the anchor chain steps back from end-of-data at most — the TOC area and some debris after it.</summary>
     private const int c_anchorFilemarksBack = 5;
 
-    /// <summary>The walk stops after this many TOC copies: two of the current save, plus older ones to rank against.</summary>
+    /// <summary>The S2 walk stops after this many TOC copies: two of the current save, plus older ones to rank against.</summary>
     private const int c_walkTocCopies = 4;
 
     /// <summary>A TOC copy identified at a position, by the stage that found it.</summary>
     private readonly record struct TocCandidate(MediaPartition Partition, long Block, TapeTocPeek Peek,
         TapeTocAnomalyStage Stage);
+
+    /// <summary>Where an S2 walk may start, and whether no setmark can follow it (just past the last setmark).</summary>
+    private readonly record struct TocAnchor(MediaPartition Partition, long Block, bool NoSetmarksAhead);
+
+    /// <summary>How the search ended without a copy — feeds the failure diagnosis and the anomaly.</summary>
+    private enum FullWalkOutcome
+    {
+        /// <summary>S4 was not applicable (a series TOC was at hand, or an abort came first).</summary>
+        NotApplicable,
+        /// <summary>S4 ran and found no readable copy.</summary>
+        Ran,
+        /// <summary>The caller declined S4: a further stage remains.</summary>
+        Declined,
+    }
 
     #endregion
 
@@ -48,22 +69,27 @@ public partial class TapeAgentBase
 
     /// <summary>
     /// <see cref="RestoreTOC"/>, knowing which volume the cartridge should be and — on a multi-volume resume — the series
-    ///  TOC that describes it. Reads the TOC where the layout keeps it (S0, S1); failing that, searches (S3, S2).
+    ///  TOC that describes it. Reads the TOC where the layout keeps it (S0, S1); failing that, searches (S3, S2, S4).
     /// </summary>
     /// <param name="expectedVolume">The volume requested; <see langword="null"/> when nothing is expected.</param>
-    /// <param name="tocNotify">Optional callback for TOC anomalies.</param>
+    /// <param name="tocNotify">Optional callback for TOC anomalies, the S4 question, and the S4 progress.</param>
     /// <param name="seriesToc">
-    /// A TOC describing this volume (the series TOC of a resume): enables S3 and the series anchor, and its
-    ///  <see cref="TapeTOC.MediaId"/> filters foreign copies. <see langword="null"/>: no expectation beyond the volume.
+    /// A TOC describing this volume (the series TOC of a resume): enables S3 and the series anchor, its
+    ///  <see cref="TapeTOC.MediaId"/> filters foreign copies — and it rules out S4. <see langword="null"/>: no expectation
+    ///  beyond the volume.
     /// </param>
     /// <remarks>
     /// <para>
     /// <b>Anomalies</b>: a 1st copy that did not read while the 2nd did → <see cref="TapeTocAnomalyKind.CopyUnreadable"/>,
-    ///  recovered by <see cref="TapeTocAnomalyStage.Sibling"/> (as before). The layout's own position yielding no readable
-    ///  copy → <see cref="TapeTocAnomalyKind.NotFoundNatively"/> (position unreachable) or
-    ///  <see cref="TapeTocAnomalyKind.NoReadableCopy"/> (reached, nothing read) — recovered by
-    ///  <see cref="TapeTocAnomalyStage.ExpectedPosition"/> or <see cref="TapeTocAnomalyStage.AnchorWalk"/> when the search
-    ///  finds one. Copies of another series / volume, or implausibly placed, → <see cref="TapeTocAnomalyKind.ForeignCopySkipped"/>.
+    ///  recovered by <see cref="TapeTocAnomalyStage.Sibling"/>. The layout's own position yielding no readable copy →
+    ///  <see cref="TapeTocAnomalyKind.NotFoundNatively"/> (position unreachable) or <see cref="TapeTocAnomalyKind.NoReadableCopy"/>
+    ///  (reached, nothing read) — recovered by <see cref="TapeTocAnomalyStage.ExpectedPosition"/>,
+    ///  <see cref="TapeTocAnomalyStage.AnchorWalk"/> or <see cref="TapeTocAnomalyStage.FullWalk"/>. Copies of another
+    ///  series / volume, or implausibly placed, → <see cref="TapeTocAnomalyKind.ForeignCopySkipped"/>. A declined S4 leaves
+    ///  the detection with <see cref="TapeTocAnomaly.CanAttemptRecovery"/> set.
+    /// </para>
+    /// <para>
+    /// <b>An abort is no anomaly</b>: the search stops at a block boundary and the result is <c>ERROR_CANCELLED</c>.
     /// </para>
     /// <para>Resets the latched error on entry, like every TOC verb; never clears the anomaly records.</para>
     /// </remarks>
@@ -73,14 +99,9 @@ public partial class TapeAgentBase
 #if TEST_HOOKS
         _tocCopyCounter = 0;
 #endif
+
         // ── S0 / S1: where the layout keeps it ────────────────────────────────────────────────────
         bool positioned = ReadNativeCopies(out bool restored, out TapeResult copy1Failure, out long nativeBlock);
-
-        if (IsAbortRequested && WentOK)
-        {
-            m_logger.LogWarning("TOC restore aborted by user request");
-            SetError(WIN32_ERROR.ERROR_CANCELLED, "TOC loading aborted by user");
-        }
 
         if (restored)
         {
@@ -101,19 +122,23 @@ public partial class TapeAgentBase
         }
 
         if (IsAbortRequested)
-            return FailedOperationResult;
+            return Cancelled();
 
         TapeResult nativeFailure = FailedOperationResult;     // captured before the search resets anything
         TapeTocAnomalyKind kind = positioned ? TapeTocAnomalyKind.NoReadableCopy : TapeTocAnomalyKind.NotFoundNatively;
         m_logger.LogWarning("TOC not readable where this layout keeps it ({Error}) — searching", nativeFailure.ErrorMessage);
 
-        // ── S3, S2: search ────────────────────────────────────────────────────────────────────────
+        // ── S3, S2, S4: search ────────────────────────────────────────────────────────────────────
         var skipped = new List<TocCandidate>();
-        TocCandidate? winner = LocateTocByLadder(expectedVolume, seriesToc, skipped, out string? searchNote);
+        TocCandidate? winner = LocateTocByLadder(expectedVolume, seriesToc, tocNotify, skipped,
+            out string? searchNote, out FullWalkOutcome fullWalk);
 
         // Whatever the search did with the head: no believed position survives it.
         Manager.EndReadWrite();
         Navigator.ResetContentSet();
+
+        if (IsAbortRequested)
+            return Cancelled();
 
         if (winner is { } found)
         {
@@ -142,17 +167,36 @@ public partial class TapeAgentBase
 
         // ── Nothing readable ──────────────────────────────────────────────────────────────────────
         int unknownVolume = expectedVolume ?? 0;
-        TapeResult failure = searchNote is null
+        var notes = new List<string>(2);
+        if (searchNote is not null)
+            notes.Add(searchNote);
+        if (fullWalk == FullWalkOutcome.Declined)
+            notes.Add("the search of the whole medium was declined");
+        else if (fullWalk == FullWalkOutcome.Ran)
+            notes.Add("not even by searching the whole medium");
+        TapeResult failure = notes.Count == 0
             ? nativeFailure
-            : TapeResult.Fail(nativeFailure.ErrorCode, $"{nativeFailure.ErrorMessage} ({searchNote})");
+            : TapeResult.Fail(nativeFailure.ErrorCode, $"{nativeFailure.ErrorMessage} ({string.Join("; ", notes)})");
+
         NotifyTocAnomaly(tocNotify, BuildTocAnomaly(kind, unknownVolume, 0, failure)
-            with { Block = nativeBlock, CanAttemptRecovery = false });     // Phase 5: S4 remains, asked first
+            with { Block = nativeBlock, CanAttemptRecovery = fullWalk == FullWalkOutcome.Declined });
         ReportSkippedCopies(tocNotify, skipped, unknownVolume);
 
         // The search's verdict supersedes the native one — it carries the native message PLUS what the search found.
         ResetLatchedFailure();
         SetError(failure.ErrorCode, failure.ErrorMessage);
         LatchFailure();
+        return FailedOperationResult;
+    }
+
+    /// <summary>An abort ends the read with <c>ERROR_CANCELLED</c> — and no anomaly: nothing was found wanting.</summary>
+    private TapeResult Cancelled()
+    {
+        m_logger.LogWarning("TOC restore aborted by user request");
+        Manager.EndReadWrite();
+        Navigator.ResetContentSet();
+        ResetLatchedFailure();
+        SetError(WIN32_ERROR.ERROR_CANCELLED, "TOC loading aborted by user");
         return FailedOperationResult;
     }
 
@@ -202,6 +246,7 @@ public partial class TapeAgentBase
                 result = BeginReadTOC() && !IsAbortRequested
                     && Navigator.MoveToNextTOCFilemark() && !IsAbortRequested
                     && RestoreTOCCore();
+
                 if (result)
                     m_logger.LogTrace("TOC restored directly from 2nd copy");
                 else
@@ -213,14 +258,18 @@ public partial class TapeAgentBase
         return true;
     }
 
-    /// <summary>S3, then S2. Returns the copy that read (now in <see cref="TapeAgentBase.TOC"/>), or null.</summary>
+    /// <summary>S3, then S2, then — asked first — S4. Returns the copy that read (now in <see cref="TapeAgentBase.TOC"/>), or null.</summary>
     /// <param name="skipped">Collects the copies rejected by identity or plausibility.</param>
     /// <param name="note">A finding worth adding to the failure diagnosis (e.g. a blank TOC partition).</param>
-    private TocCandidate? LocateTocByLadder(int? expectedVolume, TapeTOC? seriesToc, List<TocCandidate> skipped,
-        out string? note)
+    /// <param name="fullWalk">Whether S4 ran, was declined, or did not apply.</param>
+    private TocCandidate? LocateTocByLadder(int? expectedVolume, TapeTOC? seriesToc, ITapeTocNotifiable? tocNotify,
+        List<TocCandidate> skipped, out string? note, out FullWalkOutcome fullWalk)
     {
         note = null;
+        fullWalk = FullWalkOutcome.NotApplicable;
         var tried = new HashSet<(MediaPartition, long)>();
+        long s3Block = -1;                                  // the content block S3 identified — S2 does not read it again
+        bool walkedFromContentStart = false;                // an S2 walk already covered the whole content partition
 
         // ── S3: the expected position, from a TOC describing this volume (TOC-in-set only) ──
         if (Navigator is TapeNavigatorTOCInSet && seriesToc is not null && expectedVolume is int volume)
@@ -231,32 +280,97 @@ public partial class TapeAgentBase
                 m_logger.LogTrace("TOC search S3: content of volume #{Volume} ends at block {Block}", volume, end);
                 List<TocCandidate> atEnd = PeekCopiesFrom(end,
                     skipTocMark: Navigator is TapeNavigatorTOCInSetWithFmksAndTOCMark);
+                s3Block = end;
                 if (TryCandidates(atEnd, expectedVolume, seriesToc, skipped, tried) is { } found)
                     return found;
             }
         }
 
         // ── S2: walk from an anchor ──
-#warning Phase 5: Optimize S2 to avoid re-reading S3 blocks and SM probing on every fragment (s. comment below)
-        /*
-S2 on setmark layouts: two avoidable moves (optional)
-- S2 re-reads S3's block. S3 has just identified block 258 as "not a TOC", and the S2 anchor is the same block, so the walk reads it again. Pass S3's checked block to the walk and start one file later when the anchor equals it.
-- A setmark probe on every fragment. For each fragment, the scanner's nearest-mark logic also tries a forward setmark space, which runs to end-of-data and fails, followed by a locate back. Past the last setmark there can be no further setmark by definition, since the TOC area holds only filemarks. When WalkFrom starts at the last-setmark anchor, the TOC-only options can disable setmark probing. Here the end of data is close, so it's cheap, but it costs two extra moves per fragment.
-
-Neither affects correctness, so fold them into Phase 5's walker work.
-         */
-        foreach ((MediaPartition partition, long block) in Anchors(expectedVolume, seriesToc))
+        foreach (TocAnchor anchor in Anchors(expectedVolume, seriesToc))
         {
             if (IsAbortRequested)
                 return null;
-            m_logger.LogTrace("TOC search S2: walking from block {Block} of the {Partition} partition", block, partition);
-            List<TocCandidate> walked = WalkForTocCopies(partition, block, out bool blank);
-            if (blank && partition == MediaPartition.Initiator)
+
+            // S3 has just identified this very block: start one file later rather than read it again.
+            long block = anchor.Block;
+            if (anchor.Partition == MediaPartition.Content && block == s3Block)
+            {
+                ResetError();
+                if (!Drive.MoveToBlock(MediaPartition.Content, block) || !Drive.MoveToNextFilemark(1))
+                {
+                    ResetError();
+                    continue;
+                }
+                block = Drive.CurrentBlock;
+            }
+
+            m_logger.LogTrace("TOC search S2: walking from block {Block} of the {Partition} partition", block, anchor.Partition);
+            List<TocCandidate> walked = WalkForTocCopies(anchor.Partition, block, TapeTocAnomalyStage.AnchorWalk,
+                c_walkTocCopies, anchor.NoSetmarksAhead, progress: null, out bool blank);
+            if (blank && anchor.Partition == MediaPartition.Initiator)
                 note = "the TOC partition is blank";
+            if (anchor.Partition == MediaPartition.Content && block == 0)
+                walkedFromContentStart = true;
             if (TryCandidates(walked, expectedVolume, seriesToc, skipped, tried) is { } found)
                 return found;
         }
-        return null;
+
+        // ── S4: the whole medium — never on a resume (the series TOC addresses every file), asked first ──
+        if (seriesToc is not null || walkedFromContentStart || IsAbortRequested)
+            return null;
+
+        int asked = expectedVolume ?? 0;
+        if (!ConfirmFullWalk(tocNotify, asked))
+        {
+            m_logger.LogWarning("TOC search S4 declined — the whole medium is not searched");
+            fullWalk = IsAbortRequested ? FullWalkOutcome.NotApplicable : FullWalkOutcome.Declined;
+            return null;
+        }
+
+        fullWalk = FullWalkOutcome.Ran;
+        m_logger.LogWarning("TOC search S4: walking the whole content partition");
+        List<TocCandidate> all = WalkForTocCopies(MediaPartition.Content, 0, TapeTocAnomalyStage.FullWalk,
+            stopAfterTocCopies: 0, noSetmarksAhead: false,
+            progress: tocNotify is null ? null : new TocSearchProgress(tocNotify), out _);
+        if (IsAbortRequested)
+            return null;
+        return TryCandidates(all, expectedVolume, seriesToc, skipped, tried);
+    }
+
+    /// <summary>
+    /// Asks whether to search the whole medium. No notifiable: proceed — the walk only reads, and nobody can be asked.
+    ///  An abort requested from the callback is recorded and declines.
+    /// </summary>
+    private bool ConfirmFullWalk(ITapeTocNotifiable? notify, int volume)
+    {
+        if (notify is null)
+            return true;
+        try
+        {
+            return notify.OnTocFullWalkConfirm(volume);
+        }
+        catch (TapeAbortRequestedException ex)
+        {
+            m_logger.LogInformation("Abort requested while asking for the full-media TOC search: {Exception}", ex);
+            IsAbortRequested = true;
+            return false;
+        }
+        catch (Exception ex)
+        {
+            m_logger.LogWarning("Exception {Exception} while asking for the full-media TOC search — declined", ex);
+            return false;
+        }
+    }
+
+    /// <summary>Forwards the walk's samples to <see cref="ITapeTocNotifiable.OnTocSearchProgress"/>.</summary>
+    /// <remarks>
+    /// A <see cref="TapeAbortRequestedException"/> thrown by the callback reaches the scanner's sink guard, which turns it into
+    ///  the scanner's abort flag (SM-10); the agent picks it up after the walk.
+    /// </remarks>
+    private sealed class TocSearchProgress(ITapeTocNotifiable notify) : IProgress<TapeScanProgress>
+    {
+        public void Report(TapeScanProgress value) => notify.OnTocSearchProgress(in value);
     }
 
     #endregion
@@ -293,24 +407,41 @@ Neither affects correctness, so fold them into Phase 5's walker work.
     }
 
     /// <summary>
-    /// S2: walks forward from <paramref name="block"/> of <paramref name="partition"/> with the scanner — the one walker —
-    ///  identifying every block after every mark, and returns the TOC copies it met.
+    /// S2 / S4: walks forward from <paramref name="block"/> of <paramref name="partition"/> with the scanner — the one
+    ///  walker — identifying every block after every mark, and returns the TOC copies it met.
     /// </summary>
+    /// <param name="stopAfterTocCopies">Stop after this many copies; 0 = walk to end-of-data.</param>
+    /// <param name="noSetmarksAhead">The walk starts past the last setmark: close every fragment by a filemark.</param>
+    /// <param name="progress">Samples for a lengthy walk (S4); null for S2.</param>
     /// <param name="blank">The walk found nothing at all.</param>
-    private List<TocCandidate> WalkForTocCopies(MediaPartition partition, long block, out bool blank)
+    /// <remarks>
+    /// The agent's abort flag reaches the walk through <see cref="ScanMediaOptions.AbortPoll"/>, checked between reads; an
+    ///  abort requested through the progress sink comes back as the scanner's flag and is copied to the agent's.
+    /// </remarks>
+    private List<TocCandidate> WalkForTocCopies(MediaPartition partition, long block, TapeTocAnomalyStage stage,
+        int stopAfterTocCopies, bool noSetmarksAhead, IProgress<TapeScanProgress>? progress, out bool blank)
     {
         var scanner = new TapeScanner(Drive)
         {
-            Options = new ScanMediaOptions { HarvestTocCopies = false, StopAfterTocCopies = c_walkTocCopies },
+            Options = new ScanMediaOptions
+            {
+                HarvestTocCopies = false,
+                StopAfterTocCopies = stopAfterTocCopies,
+                NoSetmarksAhead = noSetmarksAhead,
+                SetmarkFallbackToFilemark = true,
+                AbortPoll = () => IsAbortRequested,
+            },
         };
-        IReadOnlyList<TapeMediaFragment>? fragments = scanner.WalkFrom(partition, block);
-        ResetError();       // the walk's diagnosis is not this operation's error
+        IReadOnlyList<TapeMediaFragment>? fragments = scanner.WalkFrom(partition, block, progress);
+        if (scanner.IsAbortRequested)
+            IsAbortRequested = true;    // requested through the progress sink
+        ResetError();                   // the walk's diagnosis is not this operation's error
         blank = fragments is { Count: 0 };
 
         var found = new List<TocCandidate>();
         foreach (TapeMediaFragment f in fragments ?? [])
             if (f.Kind == FragmentKind.TOC && f.TocPeek is { } peek)
-                found.Add(new TocCandidate(f.Partition, f.StartBlock, peek, TapeTocAnomalyStage.AnchorWalk));
+                found.Add(new TocCandidate(f.Partition, f.StartBlock, peek, stage));
         return found;
     }
 
@@ -392,16 +523,17 @@ Neither affects correctness, so fold them into Phase 5's walker work.
     /// <list type="bullet">
     ///  <item><b>Partitions:</b> block 0 of the initiator partition — the whole TOC partition, small.</item>
     ///  <item><b>Series:</b> the start of this volume's last set (the previous set's <c>FirstBlockAfterSet</c>).</item>
-    ///  <item><b>Setmarks:</b> just after the last setmark — the TOC copies follow it.</item>
+    ///  <item><b>Setmarks:</b> just after the last setmark — the TOC copies follow it, and no setmark can: the walk closes
+    ///   every fragment by a filemark there (<see cref="ScanMediaOptions.NoSetmarksAhead"/>).</item>
     ///  <item><b>Filemark layouts</b> (with or without TOC mark): up to five filemarks back from end-of-data, the deepest
     ///   reachable — covers the TOC area and debris after it. Not the TOC-mark search: S0 ran it and it failed.</item>
     /// </list>
     /// </remarks>
-    private IEnumerable<(MediaPartition Partition, long Block)> Anchors(int? expectedVolume, TapeTOC? seriesToc)
+    private IEnumerable<TocAnchor> Anchors(int? expectedVolume, TapeTOC? seriesToc)
     {
         if (Navigator is TapeNavigatorTOCInPartition)
         {
-            yield return (MediaPartition.Initiator, 0L);
+            yield return new TocAnchor(MediaPartition.Initiator, 0L, NoSetmarksAhead: false);
             yield break;
         }
 
@@ -409,7 +541,7 @@ Neither affects correctness, so fold them into Phase 5's walker work.
         {
             long lastSetStart = SecondLastSetEnd(seriesToc, volume);
             if (lastSetStart >= 0)
-                yield return (MediaPartition.Content, lastSetStart);
+                yield return new TocAnchor(MediaPartition.Content, lastSetStart, NoSetmarksAhead: false);
         }
 
         if (Navigator is TapeNavigatorTOCInSetWithSmks)
@@ -417,7 +549,7 @@ Neither affects correctness, so fold them into Phase 5's walker work.
             ResetError();
             if (Drive.FastforwardToEnd(MediaPartition.Content)
                 && Drive.MoveToNextSetmark(-1) && Drive.MoveToNextSetmark(1))
-                yield return (MediaPartition.Content, Drive.CurrentBlock);
+                yield return new TocAnchor(MediaPartition.Content, Drive.CurrentBlock, NoSetmarksAhead: true);
             ResetError();
             yield break;
         }
@@ -437,7 +569,7 @@ Neither affects correctness, so fold them into Phase 5's walker work.
             {
                 long anchor = Drive.CurrentBlock;
                 ResetError();
-                yield return (MediaPartition.Content, anchor);
+                yield return new TocAnchor(MediaPartition.Content, anchor, NoSetmarksAhead: false);
                 yield break;
             }
         }

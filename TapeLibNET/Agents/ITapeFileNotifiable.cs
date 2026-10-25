@@ -1,3 +1,4 @@
+using TapeLibNET.Scan;
 using TapeLibNET.Toc;
 
 namespace TapeLibNET.Agents;
@@ -53,6 +54,12 @@ public interface ITapeTocNotifiable
     ///  walk only reads, and an unattended run must not stall.
     /// </summary>
     bool OnTocFullWalkConfirm(int volume) => true;
+
+    /// <summary>
+    /// Progress of the full-media walk (S4), once it was confirmed: a sample at its start, then one per fragment met.
+    ///  May throw <see cref="TapeAbortRequestedException"/> to stop the walk at the next block.
+    /// </summary>
+    void OnTocSearchProgress(in TapeScanProgress progress) { }
 }
 
 /// <summary>
