@@ -10,8 +10,8 @@ namespace TapeLibNET.Tests.Toc;
 
 
 /// <summary>
-/// Design-TocLocation Phase 5: S4 — the full-media walk, asked first, cancellable, never on a resume — on tapes damaged
-///  beyond what the anchors reach.
+/// Design-TocLocation Phase 5: S4 — the full-media walk, asked first, cancellable, on a resume only as the last resort
+///  — on tapes damaged beyond what the anchors reach.
 /// </summary>
 public class TocFullWalkTests
 {
@@ -208,14 +208,15 @@ public class TocFullWalkTests
     #endregion
 
 #if TEST_HOOKS
-    #region *** Never on a resume ***
+    #region *** Not in a resume's ladder ***
 
     /// <summary>
-    /// With a series TOC at hand — a multi-volume resume — the search stops after S2: the series TOC addresses every
-    ///  file, and reading a whole earlier volume to identify it would be pointless. Nothing is asked.
+    /// With a series TOC at hand — a multi-volume resume — the ladder stops after S2 and asks nothing: the resume asks for
+    ///  S4 itself, as its last resort, only when neither the media header nor the set's first block identifies the volume
+    ///  (Design-TocLocation §7, step 4). Hence the detection says a further stage remains.
     /// </summary>
     [Fact]
-    public void SeriesToc_NoFullWalk_NothingAsked()
+    public void SeriesToc_NoFullWalkInTheLadder_NothingAsked_RecoveryRemains()
     {
         using var tree = Tree("series");
         using var fixture = DebrisTape(tree, headed: true);
@@ -224,7 +225,9 @@ public class TocFullWalkTests
         var notify = new TestNotifiable();
         Assert.False(reader.RestoreTOCFromMedia(fixture.TOC.Volume, notify, seriesToc: fixture.TOC));
         Assert.Empty(notify.TocFullWalkConfirms);
-        Assert.False(Assert.Single(reader.TocAnomalies).CanAttemptRecovery);
+        Assert.Empty(notify.TocSearchProgress);
+        Assert.True(Assert.Single(reader.TocAnomalies).CanAttemptRecovery,
+            "the resume's step 4 (S4) remains — reported as a Warning, not a failure");
     }
 
     #endregion
