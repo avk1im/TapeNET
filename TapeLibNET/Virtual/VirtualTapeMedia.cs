@@ -149,12 +149,17 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
     private readonly uint m_minBlockSize;
     private readonly uint m_maxBlockSize;
     private readonly uint m_defaultBlockSize;
+
+#if TEST_HOOKS
+    private long m_capacity; // needs to be adjustable for surgeries, s. VirtualTapeMedia.Surgery.cs
+#else
     private readonly long m_capacity;
+#endif
     private long m_bytesWritten = 0;
     private readonly string m_name;
     private bool m_stateDirty = false;
 
-    #endregion
+#endregion
 
     #region *** Constructors ***
 

@@ -30,6 +30,17 @@ public partial class VirtualTapeMedia
     }
 
     /// <summary>
+    /// Adds <paramref name="bytes"/> of capacity — room for test debris behind a volume that was written to the brim
+    ///  (a full volume of a series). Changes nothing already on the medium.
+    /// </summary>
+    internal void ExtendCapacity(long bytes)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(bytes);
+        m_capacity += bytes;
+        m_stateDirty = true;
+    }
+
+    /// <summary>
     /// Removes the mark at <paramref name="block"/>; everything after it moves one block earlier. The data stays where it
     ///  was in the backing stream, so data blocks keep their contents.
     /// </summary>

@@ -53,7 +53,16 @@ internal static class FullWalkDamage
         VirtualTapeMedia content = backend.ContentMedia!;
         var layout = content.Layout.ToList();
         var marks = layout.Where(b => b.IsMark).ToList();
-        Assert.True(marks.Count >= 3, content.DescribeLayout());
+        // In-set layouts: the damage counts marks back from the TOC at the end ([..][FM][toc1][FM][toc2][FM], or the
+        //  TOC mark before them). Partitions: the content partition holds only the header's filemark and the sets' marks.
+        int marksNeeded = profile == DriveProfile.Partitions ? 1 : 3;
+        Assert.True(marks.Count >= marksNeeded, content.DescribeLayout());
+
+        // A full volume's tail lacks its closing filemark: [..][FM][toc1][FM][toc2] (end-of-media, TL-W1). Count marks
+        //  from the end as the layout wrote them — one fewer when the last thing on tape is copy 2 itself.
+        int missing = layout[^1].IsMark ? 0 : 1;
+        if (profile is DriveProfile.FilemarksOnly or DriveProfile.SeqFilemarks)
+            content.ExtendCapacity(64 * 1024);      // room for the debris behind a volume written to the brim
 
         if (damageHeaders)
         {
@@ -70,18 +79,33 @@ internal static class FullWalkDamage
                 break;
 
             case DriveProfile.FilemarksOnly:
-                // [..set][FM][toc1][FM][toc2][FM]: the set's closing filemark is the third from the end
-                content.RemoveMarkAt(marks[^3].BeginAtBlock);
+                // [..set][FM][toc1][FM][toc2]([FM]): the set's closing filemark is the 3rd (2nd) mark from the end
+                content.RemoveMarkAt(marks[^(3 - missing)].BeginAtBlock);
                 AppendDebris(content);
                 break;
 
             case DriveProfile.SeqFilemarks:
-                // [..set][FM][gap][FM][FM][FM][toc1][FM][toc2][FM]: copy 2 first (blocks shift after a removal)
-                var toc2 = layout[layout.IndexOf(marks[^1]) - 1];
-                content.CorruptBlockAt(toc2.BeginAtBlock, offset: 0);
-                content.RemoveMarkAt(marks[^3].BeginAtBlock);                       // the TOC mark's last filemark
-                AppendDebris(content);
-                break;
+                {
+                    // [..set][FM][gap][FM][FM][FM][toc1][FM][toc2][FM] — on a full volume copy 2 may be missing entirely, or
+                    //  lack its closing filemark. Locate the copies from the TOC mark (the last run of three filemarks), never
+                    //  by counting from the end.
+                    int mark = -1;
+                    for (int i = layout.Count - 3; i >= 0 && mark < 0; i--)
+                        if (layout[i].IsMark && layout[i + 1].IsMark && layout[i + 2].IsMark)
+                            mark = i;
+                    Assert.True(mark >= 0, $"no TOC mark:\n{content.DescribeLayout()}");
+                    var copies = layout.Skip(mark + 3).Where(b => !b.IsMark).ToList();
+                    Assert.NotEmpty(copies);
+
+                    // S3 lands past the damaged mark on copy 2 (3 filemarks from the gap: 2 of the mark, then copy 1's own).
+                    //  Corrupt it — but only if it exists: a lone copy 1 is what S4 must still find. Before the removal, as
+                    //  that shifts every later block one earlier.
+                    if (copies.Count >= 2)
+                        content.CorruptBlockAt(copies[1].BeginAtBlock, offset: 0);
+                    content.RemoveMarkAt(layout[mark + 2].BeginAtBlock);         // the TOC mark's last filemark
+                    AppendDebris(content);
+                    break;
+                }
 
             case DriveProfile.Partitions:
                 backend.InitiatorMedia!.TruncateAt(0);
