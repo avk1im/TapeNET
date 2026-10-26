@@ -86,7 +86,7 @@ public class ServiceTocLocationTests : ServiceTestBase
     }
 
     /// <summary>The first block of TOC copy 1, corrupted — wherever the layout keeps it.</summary>
-    private static void CorruptFirstTocCopy(VirtualTapeDriveBackend backend, DriveProfile profile)
+    private static void CorruptFirstTocCopy(VirtualTapeDriveBackend backend, DriveProfile _ /*profile*/)
     {
         if (backend.InitiatorMedia is { } toc)
         {
