@@ -208,6 +208,7 @@ public class TocFullWalkTests
     #endregion
 
 #if TEST_HOOKS
+
     #region *** Not in a resume's ladder ***
 
     /// <summary>
@@ -231,5 +232,56 @@ public class TocFullWalkTests
     }
 
     #endregion
+
+    #region *** Full walk — All profiles ***
+
+    public static TheoryData<DriveProfile> AllProfiles =>
+    [DriveProfile.Setmarks, DriveProfile.Partitions, DriveProfile.SeqFilemarks, DriveProfile.FilemarksOnly];
+
+    /// <summary>
+    /// Every layout, damaged so only S4 can find a copy (<see cref="FullWalkDamage"/>): asked once, walks the content
+    ///  partition with progress, recovers by <see cref="TapeTocAnomalyStage.FullWalk"/>. On Partitions the copies stand in
+    ///  the content partition (a mixed-up cartridge) and the TOC partition is blank.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Load_DamagedBeyondS3_RecoveredByFullWalk(DriveProfile profile)
+    {
+        using var tree = Tree("profiles");
+        using var fixture = new VirtualTapeFixture(profile, withMediaHeader: true, withSetHeaders: true);
+        fixture.BackupFiles(tree.Files, description: "All profiles");
+        FullWalkDamage.Apply(profile, fixture.Drive, fixture.Backend, damageHeaders: false);
+
+        using var reader = new TapeAgentBase(fixture.Drive, new TapeTOC());
+        var notify = new TestNotifiable();
+        Assert.True(reader.RestoreTOC(notify), $"{reader.LastErrorMessage}\n{fixture.Backend.ContentMedia!.DescribeLayout()}");
+        Assert.Equal(1, reader.TOC.Count);
+        Assert.Equal([0], notify.TocFullWalkConfirms);
+        Assert.NotEmpty(notify.TocSearchProgress);
+        var recovered = Assert.Single(reader.TocAnomalies, a => a.IsRecovery);
+        Assert.Equal((TapeTocAnomalyStage.FullWalk, MediaPartition.Content), (recovered.Stage, recovered.Partition));
+    }
+
+    /// <summary>Partitions, TOC partition blank and nothing in the content partition: asked, searched, the failure names both.</summary>
+    [Fact]
+    public void Partitions_BlankTocPartition_FullWalkFindsNothing_FailureSaysSo()
+    {
+        using var tree = Tree("blank");
+        using var fixture = new VirtualTapeFixture(DriveProfile.Partitions, withMediaHeader: true, withSetHeaders: true);
+        fixture.BackupFiles(tree.Files, description: "Blank");
+        FullWalkDamage.Apply(DriveProfile.Partitions, fixture.Drive, fixture.Backend, damageHeaders: false,
+            copiesInContent: false);
+
+        using var reader = new TapeAgentBase(fixture.Drive, new TapeTOC());
+        var notify = new TestNotifiable();
+        TapeResult result = reader.RestoreTOC(notify);
+        Assert.False(result);
+        Assert.Contains("TOC partition is blank", result.ErrorMessage);
+        Assert.Contains("not even by searching the whole medium", result.ErrorMessage);
+        Assert.Single(notify.TocFullWalkConfirms);
+    }
+
+    #endregion
+
 #endif // TEST_HOOKS
 }

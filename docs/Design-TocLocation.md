@@ -839,3 +839,17 @@ Each phase's instructions end with a precise list of what the next phase needs. 
   checked like step 2. Covers headed volumes whose header and set header are damaged, encrypted ones included (the TOC
   stub is plain text).
 - **Append without a loaded TOC is refused** — it used to fall back to an overwrite, a clear functionality gap.
+
+#### 12.5.2 Deviations from Phase 5c
+
+- **Known limit — the walk meets copy 2 only, when the set before the TOC lost its closing mark.** The set fragment then
+  ends at the next filemark, copy 1's own; copy 1 is read as the set's tail. Copy 2 of the same save is found — if it is
+  damaged too, the walk fails although copy 1 is intact. A bounded backward probe for the TOC magic before that filemark
+  would close it; not done.
+- **A volume identified by S4 is read without set-header verification** when its media header did not read: presence is
+  then unknown, so set headers are not expected. Files stay guarded by their own headers and CRCs.
+- **Partitions:** the ladder is S0, S1, S2 (the whole TOC partition), S4 (the content partition). S3 does not apply to the
+  TOC there. S4 recovers only on a mixed-up cartridge — on a healthy series it reports, asked first, that nothing was
+  found, next to "the TOC partition is blank".
+- **A recoverable detection is reported at Warning** (`CanAttemptRecovery`), e.g. step 2's on a resume, where step 4 may
+  still follow — no "Failed" line before a recovery.

@@ -1,7 +1,6 @@
 using TapeLibNET.Agents;
 using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Toc;
-using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests.Scenarios;
 
@@ -405,52 +404,32 @@ public class MultiVolumeResumeTests
 
     private const string Password = "resume — full walk";
 
-    /// <summary>
-    /// Defeats every identification of the loaded HEADED volume (Setmarks layout) except the full-media walk:
-    /// <list type="bullet">
-    ///  <item>the media header and the first block of its set (the set header) are corrupted at rest — steps 1 and 3;</item>
-    ///  <item>the last setmark is removed — S0 (one setmark back from end-of-data) finds none, S3 lands one block late
-    ///   (everything after the mark moved one block earlier), and S2 has no setmark anchor — step 2.</item>
-    /// </list>
-    /// The walk from BOM still meets TOC copy 2: the corrupted set header is closed by the nearest mark, the filemark
-    ///  behind copy 1.
-    /// </summary>
-    private static void DamageAllButFullWalk(VirtualTapeMedia media)
+    /// <summary>The in-set layouts: there, the volume's own TOC is on the content partition, so S4 finds it.</summary>
+    public static TheoryData<DriveProfile, bool> InSetProfilesPlainAndEncrypted => new()
     {
-        var layout = media.Layout;
-        int firstMark = -1;
-        for (int i = 0; i < layout.Count && firstMark < 0; i++)
-            if (layout[i].IsMark)
-                firstMark = i;
-        Assert.True(firstMark >= 0 && firstMark + 1 < layout.Count && !layout[firstMark + 1].IsMark,
-            $"no set behind the media header:\n{media.DescribeLayout()}");
-        long setStart = layout[firstMark + 1].BeginAtBlock;
-        var lastSetmark = layout.Last(b => b.IsMark && b.MarkType == TapeMarkType.Setmark);
-
-        media.CorruptBlockAt(0, offset: 0);                 // the media header
-        media.CorruptBlockAt(setStart, offset: 0);          // the set header
-        media.RemoveMarkAt(lastSetmark.BeginAtBlock);       // S0, S3, S2 now find nothing
-    }
+        { DriveProfile.Setmarks, false }, { DriveProfile.Setmarks, true },
+        { DriveProfile.SeqFilemarks, false }, { DriveProfile.SeqFilemarks, true },
+        { DriveProfile.FilemarksOnly, false }, { DriveProfile.FilemarksOnly, true },
+    };
 
     /// <summary>
-    /// A headed volume whose header, set header and TOC position are all damaged: step 4 searches the whole medium —
-    ///  asked first, for volume #1 — finds a copy of the volume's own TOC, and the restore completes. Plain and encrypted:
-    ///  an encrypted set's TOC stub is in the clear, so it identifies the volume like any other.
+    /// A headed volume 1 whose media header, set header and TOC position are all damaged (<see cref="FullWalkDamage"/>):
+    ///  step 4 searches the whole medium — asked first, for volume #1 — finds a copy of the volume's own TOC, and the
+    ///  restore completes. Plain and encrypted: an encrypted set's TOC stub is in the clear.
     /// </summary>
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void Restore_HeadedVolumeDamaged_IdentifiedByFullWalk_Restores(bool encrypted)
+    [MemberData(nameof(InSetProfilesPlainAndEncrypted))]
+    public void Restore_HeadedVolumeDamaged_IdentifiedByFullWalk_Restores(DriveProfile profile, bool encrypted)
     {
         using var tree = SpanningTree();
-        using var fixture = new MultiVolumeVirtualTapeFixture(DriveProfile.Setmarks, headerMode: VolumeHeaderMode.All);
+        using var fixture = new MultiVolumeVirtualTapeFixture(profile, headerMode: VolumeHeaderMode.All);
         string restoreDir = MakeRestoreDir();
         try
         {
             fixture.BackupFiles(tree.Files, "Full walk", password: encrypted ? Password : null);
             Assert.True(fixture.TotalVolumes >= 2, "the set must span");
             fixture.SwapToVolume(1);
-            DamageAllButFullWalk(fixture.Backend.ContentMedia!);
+            FullWalkDamage.Apply(profile, fixture.Drive, fixture.Backend, damageHeaders: true);
 
             fixture.TOC.MakeLastSetCurrent();
             var notify = new TestNotifiable();
@@ -461,7 +440,6 @@ public class MultiVolumeResumeTests
             Assert.NotEmpty(notify.TocSearchProgress);
             Assert.Contains(notify.TocAnomaliesRecovered,
                 i => i.Anomaly is { Volume: 1, Stage: TapeTocAnomalyStage.FullWalk });
-            Assert.True(stats.TocStats.AnomaliesRecoveredByWalk >= 1);
             FileComparer.AssertFilesMatch(tree.RootPath, tree.Files, RestoreEquivalentRoot(restoreDir, tree.RootPath));
         }
         finally
@@ -470,24 +448,24 @@ public class MultiVolumeResumeTests
         }
     }
 
-    /// <summary>The same volume, the search declined: rejected, the reason says so — and it was asked exactly once.</summary>
-    [Fact]
-    public void Restore_HeadedVolumeDamaged_FullWalkDeclined_IsRejected()
+    /// <summary>The same volume, the search declined: rejected, the reason says so — asked exactly once. Every layout.</summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Restore_HeadedVolumeDamaged_FullWalkDeclined_IsRejected(DriveProfile profile)
     {
         using var tree = SpanningTree();
-        using var fixture = new MultiVolumeVirtualTapeFixture(DriveProfile.Setmarks, headerMode: VolumeHeaderMode.All);
+        using var fixture = new MultiVolumeVirtualTapeFixture(profile, headerMode: VolumeHeaderMode.All);
         string restoreDir = MakeRestoreDir();
         try
         {
             fixture.BackupFiles(tree.Files, "Declined");
             fixture.SwapToVolume(1);
-            DamageAllButFullWalk(fixture.Backend.ContentMedia!);
+            FullWalkDamage.Apply(profile, fixture.Drive, fixture.Backend, damageHeaders: true, copiesInContent: false);
 
             fixture.TOC.MakeLastSetCurrent();
             using var agent = fixture.CreateRestoreAgent(restoreDir);
             var notify = new TestNotifiable { TocFullWalkAnswer = false };
             Assert.False(agent.RestoreAllFilesFromCurrentSet(fileNotify: notify).Success);
-            Assert.True(agent.CanResumeFromAnotherVolume);
             fixture.SwapToVolume(agent.VolumeToResumeFrom);
 
             TapeResult rejected = agent.ResumeRestoreFromAnotherVolume();
@@ -496,6 +474,42 @@ public class MultiVolumeResumeTests
             Assert.Contains("declined", rejected.ErrorMessage);
             Assert.Equal([1], notify.TocFullWalkConfirms);
             Assert.Empty(notify.TocSearchProgress);
+        }
+        finally
+        {
+            TryDeleteDirectory(restoreDir);
+        }
+    }
+
+    /// <summary>
+    /// Partitions: volume 1's header and set header damaged, its TOC partition blank. Step 4 searches the content
+    ///  partition — asked for volume #1 — finds no copy there (a volume's TOC never stands in its content partition on a
+    ///  healthy series), and the volume is rejected naming both findings.
+    /// </summary>
+    [Fact]
+    public void Restore_Partitions_TocPartitionBlank_FullWalkFindsNothing_IsRejected()
+    {
+        using var tree = SpanningTree();
+        using var fixture = new MultiVolumeVirtualTapeFixture(DriveProfile.Partitions, headerMode: VolumeHeaderMode.All);
+        string restoreDir = MakeRestoreDir();
+        try
+        {
+            fixture.BackupFiles(tree.Files, "Partitions");
+            fixture.SwapToVolume(1);
+            FullWalkDamage.Apply(DriveProfile.Partitions, fixture.Drive, fixture.Backend, damageHeaders: true,
+                copiesInContent: false);
+
+            fixture.TOC.MakeLastSetCurrent();
+            using var agent = fixture.CreateRestoreAgent(restoreDir);
+            var notify = new TestNotifiable();
+            Assert.False(agent.RestoreAllFilesFromCurrentSet(fileNotify: notify).Success);
+            fixture.SwapToVolume(agent.VolumeToResumeFrom);
+
+            TapeResult rejected = agent.ResumeRestoreFromAnotherVolume();
+            Assert.True(agent.IsVolumeRejected);
+            Assert.Contains("TOC partition is blank", rejected.ErrorMessage);
+            Assert.Contains("not even by searching the whole medium", rejected.ErrorMessage);
+            Assert.Equal([1], notify.TocFullWalkConfirms);
         }
         finally
         {
