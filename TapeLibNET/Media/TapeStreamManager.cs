@@ -159,7 +159,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         }
 
         // Preserve application-level configuration from the old navigator
-        navigator.TOCCapacity = Navigator.TOCCapacity;
+        navigator.TocReserveOverride = Navigator.TocReserveOverride;   // the override only: a computed reserve follows the TOC
 
         Navigator = navigator;
 
