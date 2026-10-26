@@ -853,3 +853,10 @@ Each phase's instructions end with a precise list of what the next phase needs. 
   found, next to "the TOC partition is blank".
 - **A recoverable detection is reported at Warning** (`CanAttemptRecovery`), e.g. step 2's on a resume, where step 4 may
   still follow — no "Failed" line before a recovery.
+
+#### 12.5.3 Deviations from Phase 5d
+
+- **Test parity (5d):** the multi-volume fixture arms a layout-aware TOC reserve — the navigator's footprint for two
+  copies plus room for the closing marks — so every layout keeps both copies, closed, on a full volume. A guard test
+  checks it on every volume of every profile and header mode. Single-copy and open-tail volumes are tested only where a
+  test asks for them (`SingleCopyTOCCapacity`).

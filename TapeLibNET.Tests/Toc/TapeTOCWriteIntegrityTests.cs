@@ -176,4 +176,50 @@ public class TapeTOCWriteIntegrityTests
     }
 
     #endregion
+
+    #region *** Single TOC copy on a full volume ***
+
+    /// <summary>
+    /// A small TOC reserve on purpose (<see cref="MultiVolumeVirtualTapeFixture.SingleCopyTOCCapacity"/>): a full volume
+    ///  keeps one TOC copy (TOC-mark layout) or loses copy 2's closing filemark (the others). Its TOC still loads, the
+    ///  backup reported the shortfall, and the whole series restores.
+    /// </summary>
+    [Theory]
+    [InlineData(DriveProfile.Setmarks)]
+    [InlineData(DriveProfile.SeqFilemarks)]
+    [InlineData(DriveProfile.FilemarksOnly)]
+    public void SingleCopyReserve_FullVolume_TocStillLoads_SeriesRestores(DriveProfile profile)
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("single", count: 16, minSize: 16 * 1024, maxSize: 32 * 1024);
+        using var fixture = new MultiVolumeVirtualTapeFixture(profile, headerMode: VolumeHeaderMode.All)
+        {
+            TOCCapacityOverride = MultiVolumeVirtualTapeFixture.SingleCopyTOCCapacity,
+        };
+        var notify = new TestNotifiable();
+        fixture.BackupFiles(tree.Files, "Single copy", notifiable: notify);
+        Assert.True(fixture.TotalVolumes >= 2, "the series must span");
+        if (profile == DriveProfile.SeqFilemarks)
+            Assert.Contains(notify.TocAnomalies, i => i.Anomaly is { Kind: TapeTocAnomalyKind.CopyWriteFailed, Volume: 1 });
+
+        fixture.SwapToVolume(1);
+        fixture.LoadTOC();
+        Assert.Equal(1, fixture.TOC.Volume);
+
+        string restoreDir = Path.Combine(Path.GetTempPath(), $"TapeNET_SingleCopy_{Guid.NewGuid():N}");
+        try
+        {
+            fixture.SwapToVolume(fixture.TotalVolumes);
+            fixture.LoadTOC();
+            fixture.TOC.MakeLastSetCurrent();
+            Assert.Equal(16, fixture.RestoreAllFilesFromCurrentSet(restoreDir).FilesSucceeded);
+        }
+        finally
+        {
+            try { Directory.Delete(restoreDir, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    #endregion
+
 }

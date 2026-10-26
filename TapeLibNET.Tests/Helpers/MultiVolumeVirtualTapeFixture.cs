@@ -72,17 +72,17 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// <summary>Default initiator partition capacity for Partitions profile.</summary>
     public const long DefaultInitiatorCapacity = 64L * 1024;
 
-    /// <summary>
-    /// Default TOC capacity override for tests — small enough to keep
-    ///  <c>CapacityForCurrentSet</c> positive on small volumes so the library's
-    ///  software capacity check triggers volume transitions before the tape physically
-    ///  fills.
-    /// <para>
-    ///  32 KB ≈ 2 blocks at 16 KB block size, plenty for the test TOC.
-    /// </para>
-    /// </summary>
-    public const long DefaultTOCCapacity = 32L * 1024;
+    /// <summary>The size of one TOC copy in these tests: one header block — the test TOCs stay well below 16 KiB.</summary>
+    private const long TestTocCopyBytes = 16L * 1024;
 
+    /// <summary>Room for the marks that close the TOC area, so a full volume keeps BOTH copies, closing marks included.</summary>
+    private const long TocMarkAllowance = 16L * 1024;
+
+    /// <summary>
+    /// The reserve of the earlier fixture: exactly two one-block copies, no room for the TOC mark's gap file nor for copy
+    ///  2's closing filemark. For tests that WANT a full volume to keep one copy only, or no closing mark.
+    /// </summary>
+    public const long SingleCopyTOCCapacity = 32L * 1024;
     #endregion
 
     #region *** Properties ***
@@ -112,11 +112,29 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     public long ContentCapacity { get; }
 
     /// <summary>
-    /// TOC capacity override applied to each agent's navigator.
-    /// Defaults to <see cref="DefaultTOCCapacity"/> (32 KB) so the library's
-    /// software capacity check works correctly on small test volumes.
+    /// TOC capacity override applied to each agent's navigator; <see langword="null"/> (default) =
+    ///  what this layout needs to write two one-block copies in full: the navigator's own footprint
+    ///  (copies, plus the TOC mark's gap file where the layout has one) and an allowance for
+    ///  the closing marks.
     /// </summary>
-    public long TOCCapacityOverride { get; set; } = DefaultTOCCapacity;
+    /// <remarks>
+    /// Layout-aware, so every profile is tested under the same condition: a full volume holds both
+    ///  TOC copies, each closed by its filemark (guarded by <c>Fixture_EveryVolumeHoldsBothTocCopies</c>).
+    ///  Set it — e.g. to <see cref="SingleCopyTOCCapacity"/> — to test a reserve that is too small on purpose.
+    /// </remarks>
+    public long? TOCCapacityOverride { get; set; }
+
+    /// <summary>
+    /// The TOC reserve the fixture's agents run with on the loaded medium — for diagnostics and assertion messages.
+    /// </summary>
+    public long EffectiveTOCCapacity
+    {
+        get
+        {
+            using var probe = new TapeAgentBase(Drive, TOC);
+            return TocReserveFor(probe.Navigator);
+        }
+    }
 
     #endregion
 
@@ -282,7 +300,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// <param name="headerMode">How the volumes of the series receive media and set headers.</param>
     /// <param name="sealPadding">
     /// Whether encrypted sets are sealed with production padding (64 KiB units, Design-Encryption §5.4). Off by default:
-    ///  the small volumes here could not hold a padded TOC within <see cref="DefaultTOCCapacity"/>.
+    ///  the small volumes here could not hold a padded TOC within the TOC reserve.
     /// </param>
     public MultiVolumeVirtualTapeFixture(
         DriveProfile profile = DriveProfile.Setmarks,
@@ -334,7 +352,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     {
         var agent = new TapeFileBackupAgent(Drive, TOC);
         ApplyHeaderFlagsForVolume(agent, TOC.Volume);
-        agent.Navigator.TOCCapacity = TOCCapacityOverride;
+        ApplyTocCapacity(agent.Navigator);
         return agent;
     }
 
@@ -345,7 +363,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
         TapeHowToHandleExisting handleExisting = TapeHowToHandleExisting.Overwrite)
     {
         var agent = new TapeFileRestoreAgentEx(Drive, targetDir, recurseSubdirs, handleExisting, TOC);
-        agent.Navigator.TOCCapacity = TOCCapacityOverride;
+        ApplyTocCapacity(agent.Navigator);
         return agent;
     }
 
@@ -354,13 +372,23 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     #region *** TOC Helpers ***
 
     /// <summary>
+    /// The TOC reserve this fixture arms on <paramref name="navigator"/>: the override, or the layout-aware default — two
+    ///  one-block copies (plus the TOC mark's gap file where the layout has one) and room for the closing marks.
+    /// </summary>
+    private long TocReserveFor(TapeNavigator navigator)
+        => TOCCapacityOverride ?? navigator.TOCFootprint(TestTocCopyBytes) + TocMarkAllowance;
+
+    /// <summary>Applies <see cref="TocReserveFor"/> to <paramref name="navigator"/>.</summary>
+    private void ApplyTocCapacity(TapeNavigator navigator) => navigator.TOCCapacity = TocReserveFor(navigator);
+
+    /// <summary>
     /// Writes the TOC to tape (via agent) and asserts success.
     /// </summary>
     public void SaveTOC()
     {
         using var agent = new TapeAgentBase(Drive, TOC)
             { RecordEmitter = EmitterFor(_loadedVolume) };
-        agent.Navigator.TOCCapacity = TOCCapacityOverride;
+        ApplyTocCapacity(agent.Navigator);
         if (!agent.BackupTOC())
             Assert.True(agent.BackupTOC(enforce: true), "Failed to save TOC to tape (even with enforce)");
     }
@@ -371,7 +399,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     public void LoadTOC()
     {
         using var agent = new TapeAgentBase(Drive, TOC);
-        agent.Navigator.TOCCapacity = TOCCapacityOverride;
+        ApplyTocCapacity(agent.Navigator);
         Assert.True(agent.RestoreTOC(), "Failed to restore TOC from tape");
         TOC = agent.TOC;
     }

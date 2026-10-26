@@ -1,8 +1,9 @@
-﻿using TapeLibNET.Headers;
-using TapeLibNET.Toc;
-using TapeLibNET.Agents;
-
+﻿using TapeLibNET.Agents;
+using TapeLibNET.Drive;
+using TapeLibNET.Headers;
 using TapeLibNET.Tests.Helpers;
+using TapeLibNET.Toc;
+using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests.Scenarios;
 
@@ -49,6 +50,7 @@ public abstract class MultiVolumeBackupRestoreTestsBase
         => new(profile, contentCapacity, headerMode: HeaderMode);
 
     #endregion // Media Header Mode
+
 
     #region *** Test Data ***
 
@@ -170,6 +172,58 @@ public abstract class MultiVolumeBackupRestoreTestsBase
         }
     }
 
+    /// <summary>
+    /// Parity: on EVERY layout, EVERY volume of a spanning series holds both TOC copies, each closed by its filemark — the
+    ///  same condition for every profile (Design-TocLocation §12.5). Read where the layout keeps the TOC: the tail of the
+    ///  content partition, or the TOC partition.
+    /// </summary>
+    /// <remarks>
+    /// Guards the fixture's TOC reserve: too small, and a full volume silently keeps one copy (the TOC-mark layout) or
+    ///  loses copy 2's closing filemark (the other in-set layouts) — conditions some tests would then meet by accident.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void Fixture_EveryVolumeHoldsBothTocCopies(DriveProfile profile)
+    {
+        using var tree = new TempFileTree();
+        tree.AddFiles("parity", count: FileCount, minSize: MinFileSize, maxSize: MaxFileSize);
+        using var fixture = CreateFixture(profile);
+        fixture.BackupFiles(tree.Files, "TOC parity");
+        Assert.True(fixture.TotalVolumes >= 2, $"the series must span (got {fixture.TotalVolumes})");
+
+        for (int volume = 1; volume <= fixture.TotalVolumes; volume++)
+        {
+            fixture.SwapToVolume(volume);
+            AssertBothTocCopiesComplete(fixture, volume);
+        }
+    }
+
+    /// <summary>The TOC area ends <c>[toc1][FM][toc2][FM]</c>, and both data runs identify as TOC copies 1 and 2.</summary>
+    private static void AssertBothTocCopiesComplete(MultiVolumeVirtualTapeFixture fixture, int volume)
+    {
+        bool partitioned = fixture.Backend.InitiatorMedia is not null;
+        VirtualTapeMedia media = partitioned ? fixture.Backend.InitiatorMedia! : fixture.Backend.ContentMedia!;
+        MediaPartition partition = partitioned ? MediaPartition.Initiator : MediaPartition.Content;
+        var layout = media.Layout;
+        string where = $"volume #{volume}:\n{media.DescribeLayout()}";
+
+        Assert.True(layout.Count >= 4, $"no room for two TOC copies on {where}");
+        Assert.True(layout[^1] is { IsMark: true, MarkType: TapeMarkType.Filemark }, $"copy 2 lacks its closing filemark on {where}");
+        Assert.False(layout[^2].IsMark, $"no copy 2 on {where}");
+        Assert.True(layout[^3] is { IsMark: true, MarkType: TapeMarkType.Filemark }, $"copy 1 lacks its closing filemark on {where}");
+        Assert.False(layout[^4].IsMark, $"no copy 1 on {where}");
+
+        foreach (var (copy, index) in new[] { (layout[^4], (byte)1), (layout[^2], (byte)2) })
+        {
+            Assert.True(fixture.Drive.MoveToBlock(partition, copy.BeginAtBlock), fixture.Drive.LastErrorMessage);
+            IdentifiedBlock id = TapeHeaderBlock.ReadAndIdentify(fixture.Drive, out _, out _, out _, out _);
+            Assert.True(id.TryGetToc(out TapeTocPeek peek), $"block {copy.BeginAtBlock} is no TOC copy on {where}");
+            Assert.Equal((byte?)index, peek.CopyIndex);
+            Assert.Equal((int?)volume, peek.Volume);
+        }
+        Assert.True(fixture.Drive.MoveToPartition(MediaPartition.Content, 0));
+    }
+
     #endregion
 
 
@@ -186,7 +240,7 @@ public abstract class MultiVolumeBackupRestoreTestsBase
 
         // Verify capacity
         long contentCap = fixture.Drive.ContentCapacity;
-        long tocCap = MultiVolumeVirtualTapeFixture.DefaultTOCCapacity;
+        long tocCap = fixture.EffectiveTOCCapacity;
         bool hasInit = fixture.Drive.HasInitiatorPartition;
         uint blockSize = fixture.Drive.BlockSize;
 
