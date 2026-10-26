@@ -1,7 +1,8 @@
+using Windows.Win32.Foundation;
+
 using TapeLibNET.Agents;
 using TapeLibNET.Media;
 using TapeLibNET.Tests.Helpers;
-using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Tests.Media;
 
@@ -104,4 +105,24 @@ public class TapeNavigatorEndOfContentTests
         Assert.True(agent.Navigator.MoveToEndOfContent(), agent.Navigator.LastErrorMessage);
         Assert.Equal(fixture.FirstContentBlock, fixture.Drive.CurrentBlock);
     }
+
+    /// <summary>
+    /// TOC-mark layout: the initial TOC right after the media header (as Format writes it) — the navigator stands in set 0,
+    ///  no mark exists yet. It settles at begin-of-content and writes the mark; the TOC reloads.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SeqFilemarks_InitialTocAfterMediaHeader_Writes(bool headed)
+    {
+        using var fixture = new VirtualTapeFixture(DriveProfile.SeqFilemarks, withMediaHeader: false);
+        using (var agent = new TapeAgentBase(fixture.Drive, fixture.TOC))
+        {
+            if (headed)
+                Assert.True(agent.WriteMediaHeader(), agent.LastErrorMessage);   // leaves CurrentContentSet = 0
+            Assert.True(agent.BackupTOC(), agent.LastErrorMessage);
+        }
+        Assert.Equal(0, fixture.TOC.Count);
+    }
+
 }

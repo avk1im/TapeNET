@@ -1828,21 +1828,28 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
                             //  since the header bears no multiple filemarks
             if (WentOK)
                 SeekForwardPastTOCMark();
-
-            // No TOC mark anywhere: legitimate ONLY on an empty content area (never-written, or header-only media).
-            //  Settle there on positive evidence (R2); OnBeginWriteTOC then writes the mark. Damaged content without
-            //  a mark is refused by the helper.
-            if (WentBad && Drive.RanToEOMorEOD && SettleAtBeginOfContentIfBlank())
-                m_tocMarkInvalidated = true;
+            SettleIfNoTocMarkAhead();
         }
-        else // we're somewhere in the content
+        else // we're somewhere in the content — e.g. at begin-of-content right after writing the media header
         {
             SeekForwardPastTOCMark();
+            SettleIfNoTocMarkAhead();
         }
 
         return WentOK;
     }
 
+    /// <summary>
+    /// After a forward search for the TOC mark ran into end-of-data: no TOC mark anywhere ahead. Legitimate ONLY on an
+    ///  empty content area — never-written, or header-only media (e.g. right after formatting). Settle there on positive
+    ///  evidence (R2); <see cref="OnBeginWriteTOC"/> then writes the mark. Damaged content without a mark is refused by the
+    ///  helper. No-op unless the search failed positionally.
+    /// </summary>
+    private void SettleIfNoTocMarkAhead()
+    {
+        if (WentBad && Drive.RanToEOMorEOD && SettleAtBeginOfContentIfBlank())
+            m_tocMarkInvalidated = true;
+    }
 
     #endregion // TOC positioning
 
