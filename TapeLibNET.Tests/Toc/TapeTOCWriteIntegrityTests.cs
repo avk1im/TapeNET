@@ -180,10 +180,14 @@ public class TapeTOCWriteIntegrityTests
     #region *** Single TOC copy on a full volume ***
 
     /// <summary>
-    /// A small TOC reserve on purpose (<see cref="MultiVolumeVirtualTapeFixture.SingleCopyTOCCapacity"/>): a full volume
-    ///  keeps one TOC copy (TOC-mark layout) or loses copy 2's closing filemark (the others). Its TOC still loads, the
-    ///  backup reported the shortfall, and the whole series restores.
+    /// A small TOC reserve on purpose (<see cref="MultiVolumeVirtualTapeFixture.SingleCopyTOCCapacity"/>): the full volume 1
+    ///  keeps one TOC copy (TOC-mark layout) or loses copy 2's closing filemark (the others). Either way copy 2 is not
+    ///  written in full — reported as <see cref="TapeTocAnomalyKind.CopyWriteFailed"/> with end-of-media, on every layout.
+    ///  The tape shows each shape; the TOC still loads, and the whole series restores.
     /// </summary>
+    /// <remarks>
+    /// Only volume 1 fills up: the fixture inserts every further volume with room for a production TOC reserve.
+    /// </remarks>
     [Theory]
     [InlineData(DriveProfile.Setmarks)]
     [InlineData(DriveProfile.SeqFilemarks)]
@@ -197,12 +201,29 @@ public class TapeTOCWriteIntegrityTests
             TOCCapacityOverride = MultiVolumeVirtualTapeFixture.SingleCopyTOCCapacity,
         };
         var notify = new TestNotifiable();
-        fixture.BackupFiles(tree.Files, "Single copy", notifiable: notify);
+        var stats = fixture.BackupFiles(tree.Files, "Single copy", notifiable: notify);
         Assert.True(fixture.TotalVolumes >= 2, "the series must span");
-        if (profile == DriveProfile.SeqFilemarks)
-            Assert.Contains(notify.TocAnomalies, i => i.Anomaly is { Kind: TapeTocAnomalyKind.CopyWriteFailed, Volume: 1 });
 
+        // Reported, on every layout: copy 2 of volume 1 is incomplete, for lack of room
+        var anomaly = Assert.Single(notify.TocAnomalies,
+            i => i.Anomaly is { Kind: TapeTocAnomalyKind.CopyWriteFailed, Volume: 1 }).Anomaly;
+        Assert.Equal((byte)2, anomaly.CopyIndex);
+        Assert.Equal((uint)WIN32_ERROR.ERROR_END_OF_MEDIA, anomaly.Diagnosis.ErrorCode);
+        Assert.True(stats.TocStats.CopyWriteFailures >= 1);
+
+        // The shape of volume 1's TOC area — per layout
         fixture.SwapToVolume(1);
+        var media = fixture.Backend.ContentMedia!;
+        var layout = media.Layout;
+        string shape = media.DescribeLayout();
+        if (profile == DriveProfile.SeqFilemarks)
+            // [gap][FM][FM][FM][toc1][FM] — copy 2 did not fit at all
+            Assert.True(layout[^1].IsMark && !layout[^2].IsMark && layout[^3].IsMark && layout[^4].IsMark, shape);
+        else
+            // [toc1][FM][toc2] — copy 2 complete, its closing filemark missing
+            Assert.True(!layout[^1].IsMark && layout[^2].IsMark && !layout[^3].IsMark, shape);
+
+        // The TOC of the full volume still loads — from copy 1, or (open tail) by identification
         fixture.LoadTOC();
         Assert.Equal(1, fixture.TOC.Volume);
 

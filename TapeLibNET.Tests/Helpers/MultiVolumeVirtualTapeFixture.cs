@@ -428,7 +428,10 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// <param name="incremental">Whether the set is incremental.</param>
     /// <param name="hashAlgorithm">Hash algorithm for integrity checking.</param>
     /// <param name="blockSize">Block size (0 = drive default).</param>
-    /// <param name="notifiable">Optional callback handler.</param>
+    /// <param name="notifiable">
+    /// Optional callback handler — for the files, AND for the TOC saves on every volume
+    ///  (to register TOC anomalies).
+    /// </param>
     /// <param name="password">
     /// Encrypts the set (Design-Encryption §15.7): a new chain — or, for an incremental on
     ///  an encrypted previous set, that chain's key. <see langword="null"/> = a plain set.
@@ -457,6 +460,16 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
             EncryptCurrentSet(password, encryption);
 
         using var agent = CreateBackupAgent();
+
+        // Saves the TOC on the current volume: normal first, then enforced (mirrors the console app flow). The
+        //  notifiable sees the TOC anomalies — the same channel the service uses.
+        void SaveToc(string when)
+        {
+            if (!agent.BackupTOC(tocNotify: notifiable))
+                Assert.True(agent.BackupTOC(enforce: true, tocNotify: notifiable),
+                    $"Failed to save TOC {when} (even with enforce)");
+        }
+
         TapeResult result = agent.BackupFileListToCurrentSet(
             newSet: true,
             fileList,
@@ -471,11 +484,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
             if (TOC.CurrentSetTOC.Count == 0)
                 TOC.RemoveLastEmptySet();
 
-            // Save TOC on the current volume before swapping.
-            //  Try normal first, then enforce (mirrors console app flow).
-            if (!agent.BackupTOC())
-                Assert.True(agent.BackupTOC(enforce: true),
-                    "Failed to save TOC before volume swap (even with enforce)");
+            SaveToc("before volume swap");
 
             // Swap to a fresh volume, then re-stamp the header flags for it — see
             //  ApplyHeaderFlagsForVolume() for why one agent cannot carry them across volumes.
@@ -490,11 +499,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
             (agent.IsVolumeRejected
                 ? $" (continuation volume #{TOC.Volume + 1} rejected)" : string.Empty));
 
-        // Save TOC on the final volume
-        if (!agent.BackupTOC())
-            Assert.True(agent.BackupTOC(enforce: true),
-                "Failed to save TOC after backup (even with enforce)");
-
+        SaveToc("after backup");
         return agent.Statistics;
     }
 
