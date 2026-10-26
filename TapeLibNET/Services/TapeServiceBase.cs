@@ -1476,28 +1476,34 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         if (benign)
             return MediaMismatchChoice.Proceed;
 
+        bool tocQuestion = context is MediaPromptContext.SearchForTOC or MediaPromptContext.FullWalkForTOC;
         string text = _loadedHeader?.ToString() ?? "Unidentified media";
+        string what = tocQuestion
+            ? context == MediaPromptContext.FullWalkForTOC
+                ? "TOC search: search the whole medium?"
+                : "TOC search: the media is not identified — search for a TOC?"
+            : $"Media check ({VerdictToString(verdict)} / {context})";
 
         if (suppress)
         {
-            LogWarn($"Media check ({VerdictToString(verdict)} / {context}) suppressed — proceeding: {text}");
+            LogWarn($"{what} — {(tocQuestion ? "searching" : "proceeding")} (prompts suppressed): {text}");
             return MediaMismatchChoice.Proceed;
         }
 
-        LogWarn($"Media check ({VerdictToString(verdict)} / {context}): {text}");
+        LogWarn($"{what} {text}");
         return _host.OnMediaMismatchConfirm(text, verdict, context, allowRetry, allowProceedAlways);
     }
 
     #endregion
 
-    /// <summary>
-    /// Formats the media
-    /// Reloads media after format to refresh parameters.
-    /// </summary>
-    /// <param name="initiatorPartitionSize">
-    /// Use <see cref="DefaultTOCCapacity"/> for an initiator partition,
-    ///  or <c>-1</c> for single-partition (TOC in set) mode.
-    /// </param>
+        /// <summary>
+        /// Formats the media
+        /// Reloads media after format to refresh parameters.
+        /// </summary>
+        /// <param name="initiatorPartitionSize">
+        /// Use <see cref="DefaultTOCCapacity"/> for an initiator partition,
+        ///  or <c>-1</c> for single-partition (TOC in set) mode.
+        /// </param>
     public Task<bool> FormatMediaAsync(long initiatorPartitionSize, string? mediaName)
     {
         _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);

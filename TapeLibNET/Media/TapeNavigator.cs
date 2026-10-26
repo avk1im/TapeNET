@@ -1362,33 +1362,32 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
     /// The TOC check reads one block at begin-of-content and returns there. Phase 1 replaces the direct
     ///  <see cref="TapeTOC.TryPeek"/> with the shared classifier.
     /// </remarks>
-    private protected bool SettleAtBeginOfContentIfBlank()
+    /// <param name="knownEod">End-of-data as the caller just measured it; <c>-1</c> = measure here.</param>
+    private protected bool SettleAtBeginOfContentIfBlank(long knownEod = -1)
     {
-        // Capture error that made the mark-based locate fail. When it is POSITIONAL (BOM, EOD, EOM), a refusal
-        //  reports it instead of ERROR_INVALID_DATA: end-of-content was not found by counting, which is
-        //  precisely what the agent's forward retry from begin-of-content (SH-20) exists for.
-        //  The navigator still settles nowhere.
         WIN32_ERROR locateError = LastErrorWin32;
-
         ResetError();
 
         long eodBlock;
-        if (Drive.FastforwardToEnd(partition: MediaPartition.Content))
+        if (knownEod >= 0)
+            eodBlock = knownEod;
+        else if (Drive.FastforwardToEnd(partition: MediaPartition.Content))
             eodBlock = Drive.CurrentBlock;
         else if (Drive.RanToEOMorEOD)
-            eodBlock = -1;          // the drive says the medium holds no data: blank by the drive's own account
+            eodBlock = -1;
         else
-            return false;           // transport error: no evidence either way — the drive's error stands
+            return false;
 
         ResetError();
         if (!Drive.Rewind())
             return false;
 
-        // Begin-of-content by EVIDENCE, not by cached presence: a media header at BOM is skipped with its mark.
+        // Begin-of-content by EVIDENCE. The read leaves the head past a header block — in front of its filemark — so a
+        //  headed tape needs one forward space, no second rewind; only a header-less one goes back to BOM.
         bool headed = TapeHeaderBlock.ReadAndIdentify(Drive, out _, out _, out _, out _)
             .TryGetHeader<TapeMediaHeader>(out _);
         ResetError();
-        if (!Drive.Rewind() || (headed && !Drive.MoveToNextFilemark(1)))
+        if (headed ? !Drive.MoveToNextFilemark(1) : !Drive.Rewind())
             return false;
         long bocBlock = Drive.CurrentBlock;
 
@@ -1544,13 +1543,15 @@ public class TapeNavigatorTOCInSetWithSmks : TapeNavigatorTOCInSet
     {
         // First move to the end of the data in the partition. Notice this will fail if TOC hasn't been written yet
         Drive.FastforwardToEnd(partition: MediaPartition.Content); // CommonPartition
+        long eodBlock = WentOK ? Drive.CurrentBlock : -1;
+
         // The TOC is in the last set of the only partion [content][SM][toc1][FM][toc2][FM] -> next move to before the last setmark (indicating end of content)
         if (WentOK)
             MoveToNextContentSetmark(-1); // this will bring us to right before the last setmark
         if (WentOK)
             MoveToNextContentSetmark(1); // Finally go 1 setmark forward to after the setmark -- the beginning of TOC data == of the to-be-written content data
         else
-            SettleAtBeginOfContentIfBlank();    // R2: blank only on positive evidence
+            SettleAtBeginOfContentIfBlank(knownEod: eodBlock);    // R2: blank only on positive evidence; pass the known EOD block
     }
 
     /// <inheritdoc/>
@@ -1678,7 +1679,7 @@ public class TapeNavigatorTOCInSetWithFmks : TapeNavigatorTOCInSet
         if (WentOK)
             Drive.MoveToNextFilemark(1);
         else if (eodBlock < 0 || !LocateTOCByIdentification(eodBlock))
-            SettleAtBeginOfContentIfBlank();    // R2: blank only on positive evidence
+            SettleAtBeginOfContentIfBlank(knownEod: eodBlock);    // R2: blank only on positive evidence
     }
 
     /// <summary>
@@ -1907,7 +1908,7 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
 
         if (!Drive.FastforwardToEnd(partition: MediaPartition.Content))
         {
-            SettleAtBeginOfContentIfBlank();   // blank media, or a transport error the helper reports
+            SettleAtBeginOfContentIfBlank(knownEod: -1);   // blank media, or a transport error the helper reports
             return;
         }
 
@@ -1926,7 +1927,7 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
         }
 
         // No mark at all (BOM hit), or data after the last one: only an empty content area is acceptable.
-        SettleAtBeginOfContentIfBlank();
+        SettleAtBeginOfContentIfBlank(knownEod: eodBlock);
     }
 
     /// <inheritdoc/>

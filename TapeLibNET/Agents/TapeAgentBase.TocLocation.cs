@@ -186,8 +186,14 @@ public partial class TapeAgentBase
             ? nativeFailure
             : TapeResult.Fail(nativeFailure.ErrorCode, $"{nativeFailure.ErrorMessage} ({string.Join("; ", notes)})");
 
-        NotifyTocAnomaly(tocNotify, BuildTocAnomaly(kind, unknownVolume, 0, failure)
-            with { Block = nativeBlock, CanAttemptRecovery = fullWalk == FullWalkOutcome.Declined });
+        NotifyTocAnomaly(tocNotify,
+            BuildTocAnomaly(kind, unknownVolume, 0, failure)
+                with
+                {
+                    Block = nativeBlock,
+                    // S4 remains: declined here, or — on a resume — still to come as its last resort
+                    CanAttemptRecovery = fullWalk == FullWalkOutcome.Declined || seriesToc is not null
+                });
         ReportSkippedCopies(tocNotify, skipped, unknownVolume);
 
         // The search's verdict supersedes the native one — it carries the native message PLUS what the search found.

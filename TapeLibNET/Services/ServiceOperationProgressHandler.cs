@@ -366,10 +366,13 @@ public abstract class ServiceOperationProgressHandler(
         Sync(stats);
         _tocAnomalies.Add(anomaly);
 
-        var level = anomaly.Kind is TapeTocAnomalyKind.NoCopyWritten or TapeTocAnomalyKind.NoReadableCopy
-            or TapeTocAnomalyKind.NotFoundNatively
-            ? ServiceReportLevel.Failed
-            : ServiceReportLevel.Warning;
+        var level = anomaly.CanAttemptRecovery
+            ? ServiceReportLevel.Warning
+            : anomaly.Kind is TapeTocAnomalyKind.NoCopyWritten or TapeTocAnomalyKind.NoReadableCopy
+                or TapeTocAnomalyKind.NotFoundNatively
+                    ? ServiceReportLevel.Failed
+                    : ServiceReportLevel.Warning;
+
         _host.Report(level, $"{DescribeTocVolume(anomaly.Volume)}: {anomaly.Summary}");
         if (!anomaly.Diagnosis.Success && !string.IsNullOrWhiteSpace(anomaly.Diagnosis.ErrorMessage))
             _host.Report(ServiceReportLevel.Warning, anomaly.Diagnosis.ErrorMessage, isSubEntry: true);
