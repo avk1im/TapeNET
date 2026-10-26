@@ -831,3 +831,11 @@ Each phase's instructions end with a precise list of what the next phase needs. 
 - **Setmark → filemark fallback in the TOC walks** (`SetmarkFallbackToFilemark`): a set whose closing setmark is lost no
   longer ends the walk before the TOC — the next filemark reaches the copy behind it. Scan Media keeps reporting such a set
   as never completed.
+
+#### 12.5.1 Deviations from Phase 5b
+
+- **S4 as the resume's last resort** (step 4 of §7): when neither the media header, nor S0–S3, nor the set's first block
+  identifies a requested volume, the whole medium is searched for its own TOC — asked first, filtered by the series TOC,
+  checked like step 2. Covers headed volumes whose header and set header are damaged, encrypted ones included (the TOC
+  stub is plain text).
+- **Append without a loaded TOC is refused** — it used to fall back to an overwrite, a clear functionality gap.

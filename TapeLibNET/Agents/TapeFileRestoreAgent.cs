@@ -649,19 +649,22 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
 
     /// <summary>
     /// Identifies the loaded cartridge as <paramref name="volume"/> of this series, holding the next set to restore.
-    ///  Leaves <see cref="TapeAgentBase.TOC"/> as it was.
+    ///  Leaves <see cref="TapeAgentBase.TOC"/> as it was. Identifies first by the cartridge's media header, its own TOC,
+    ///  its set's first block, or (after asking) a search of the whole medium.
     /// </summary>
     /// <remarks>
-    /// <para>Three steps, by the strength of their evidence (Design-TocLocation §7):</para>
+    /// <para>Four steps, by the strength — and the cost — of their evidence (Design-TocLocation §7):</para>
     /// <list type="number">
     ///  <item><b>The media header</b> at BOM: series and volume. A mismatch rejects the cartridge.</item>
-    ///  <item><b>Its own TOC</b>, through the ladder with the series TOC at hand (S3 for the identified volume). Read: the set
-    ///   it holds must be the one the series describes. Unreadable, but step 1 identified the cartridge: restore anyway — the
-    ///   series TOC addresses every file, and each file's header still guards it.</item>
+    ///  <item><b>Its own TOC</b>, through the ladder S0–S3 with the series TOC at hand. Read: the set it holds must be the one
+    ///   the series describes. Unreadable, but step 1 identified the cartridge: restore anyway — the series TOC addresses
+    ///   every file, and each file's header still guards it.</item>
     ///  <item><b>The set's first block</b>, when neither the header nor the TOC speaks: a set header or a 2.1 file header with
     ///   the expected SetId.</item>
+    ///  <item><b>The whole medium</b> (S4), asked first — the last resort before rejecting: header and set header damaged, the
+    ///   TOC beyond S0–S3. A copy found must pass step 2's checks.</item>
     /// </list>
-    /// <para>The TOC anomalies of the read belong to THIS restore, on THAT volume (§5.3).</para>
+    /// <para>The TOC anomalies of the reads belong to THIS restore, on THAT volume (§5.3).</para>
     /// </remarks>
     private TapeResult CheckVolumeToResumeFrom(int volume)
     {
@@ -676,6 +679,22 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         var orgTOC = new TapeTOC(TOC);
         ITapeTocNotifiable? notify = MultiVolumeContext!.Value.fileNotify;
         int setIdx = MultiVolumeContext!.Value.initialCurrSetIdx - MultiVolumeContext.Value.filesSelectedIdx;
+
+        // The cartridge's own TOC, just read into TOC: this series, the requested volume, the set as the series describes it.
+        TapeResult OwnTocMatches()
+        {
+            if (orgTOC.MediaId != Guid.Empty && TOC.MediaId != Guid.Empty && TOC.MediaId != orgTOC.MediaId)
+                return RejectVolume("The inserted cartridge belongs to another backup series", WIN32_ERROR.ERROR_WRONG_DISK);
+            if (TOC.Volume != volume)
+                return RejectVolume($"The inserted cartridge is volume #{TOC.Volume}, not volume #{volume}",
+                    WIN32_ERROR.ERROR_WRONG_DISK);
+            // The freshly loaded TOC has its encrypted sets LOCKED — compare what a stub can tell (Design-Encryption §9.5).
+            if (setIdx > TOC.Count || !SameSetOnTape(TOC[setIdx], orgTOC[setIdx]))
+                return RejectVolume($"Volume #{volume} does not hold set #{setIdx} as the table of contents describes it",
+                    WIN32_ERROR.ERROR_WRONG_DISK);
+            return TapeResult.OK;
+        }
+
         try
         {
             // ── 1. The media header ──
@@ -690,24 +709,13 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                         WIN32_ERROR.ERROR_WRONG_DISK);
             }
 
-            // ── 2. Its own TOC ──
+            // ── 2. Its own TOC, S0–S3 ──
             if (RestoreTOCFromMedia(expectedVolume: volume, notify, seriesToc: orgTOC))
-            {
-                if (orgTOC.MediaId != Guid.Empty && TOC.MediaId != Guid.Empty && TOC.MediaId != orgTOC.MediaId)
-                    return RejectVolume("The inserted cartridge belongs to another backup series", WIN32_ERROR.ERROR_WRONG_DISK);
-                if (TOC.Volume != volume)
-                    return RejectVolume($"The inserted cartridge is volume #{TOC.Volume}, not volume #{volume}",
-                        WIN32_ERROR.ERROR_WRONG_DISK);
-                // The freshly loaded TOC has its encrypted sets LOCKED — compare what a stub can tell (Design-Encryption §9.5).
-                if (setIdx > TOC.Count || !SameSetOnTape(TOC[setIdx], orgTOC[setIdx]))
-                    return RejectVolume($"Volume #{volume} does not hold set #{setIdx} as the table of contents describes it",
-                        WIN32_ERROR.ERROR_WRONG_DISK);
-                return TapeResult.OK;
-            }
+                return OwnTocMatches();
             if (IsAbortRequested)
                 return FailedOperationResult;
-            string tocError = LastErrorMessage;
 
+            string tocError = LastErrorMessage;
             if (media is not null)
             {
                 m_logger.LogWarning("Volume #{Volume}: its table of contents is unreadable ({Error}); identified by its " +
@@ -724,8 +732,19 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 ResetError();
                 return TapeResult.OK;
             }
-            return RejectVolume($"Volume #{volume}: its table of contents could not be read ({tocError}), and neither a " +
-                $"media header nor the first block of set #{setIdx} identifies it");
+
+            // ── 4. The whole medium, asked first — the last resort before rejecting ──
+            if (RestoreTOCFromMedia(expectedVolume: volume, notify, seriesToc: orgTOC, fullWalkOnly: true))
+            {
+                m_logger.LogWarning("Volume #{Volume}: identified by its table of contents, found by searching the whole medium",
+                    volume);
+                return OwnTocMatches();
+            }
+            if (IsAbortRequested)
+                return FailedOperationResult;
+
+            return RejectVolume($"Volume #{volume}: its table of contents could not be read ({tocError}), neither a " +
+                $"media header nor the first block of set #{setIdx} identifies it — and {LastErrorMessage}");
         }
         finally
         {

@@ -146,6 +146,12 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
     }
 
     /// <summary>
+    /// Restores the overlay's message after a TOC search inside an operation. Safe to call from any thread.
+    /// </summary>
+    public void EndTocSearchProgress(string message)
+        => _dispatcher.Invoke(() => _viewModel.BusyMessage = message);
+
+    /// <summary>
     /// Shared implementation for <see cref="UpdateBackupProgress"/> and
     ///  <see cref="UpdateRestoreProgress"/> — both operations report the same shape
     ///  of progress data, differing only in which view-model properties they update.

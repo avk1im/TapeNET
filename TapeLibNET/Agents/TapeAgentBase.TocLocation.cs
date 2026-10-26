@@ -26,9 +26,9 @@ namespace TapeLibNET.Agents;
 /// <para>
 /// <b>Bounded, unasked — except S4 (TL-4).</b> S3 is one locate; S2 starts at an anchor near the end of content and stops
 ///  after a few copies. S4 reads the medium from its beginning: it is asked first
-///  (<see cref="ITapeTocNotifiable.OnTocFullWalkConfirm"/>), reports progress, and stops at an abort. It is never run when a
-///  series TOC is at hand (a multi-volume resume): that TOC addresses every file, and the volume is identified otherwise.
-///  Nothing here writes.
+///  (<see cref="ITapeTocNotifiable.OnTocFullWalkConfirm"/>), reports progress, and stops at an abort. It never runs as part of
+///  a resume's ladder (a series TOC addresses every file); the resume asks for it alone, as its last resort before rejecting
+///  a cartridge (RestoreTOCByFullWalk). Nothing here writes.
 /// </para>
 /// <para>
 /// <b>One walker (TL-9).</b> S2 and S4 are both <see cref="TapeScanner.WalkFrom"/> — the same identification and mark handling
@@ -78,7 +78,10 @@ public partial class TapeAgentBase
     ///  <see cref="TapeTOC.MediaId"/> filters foreign copies — and it rules out S4. <see langword="null"/>: no expectation
     ///  beyond the volume.
     /// </param>
-    /// <remarks>
+    /// <param name="fullWalkOnly">
+    /// S4 alone, filtered by <paramref name="seriesToc"/> — the resume's last resort, after S0–S3 found nothing there
+    ///  (<see cref="RestoreTOCByFullWalk"/>).
+    /// </param>    /// <remarks>
     /// <para>
     /// <b>Anomalies</b>: a 1st copy that did not read while the 2nd did → <see cref="TapeTocAnomalyKind.CopyUnreadable"/>,
     ///  recovered by <see cref="TapeTocAnomalyStage.Sibling"/>. The layout's own position yielding no readable copy →
@@ -93,8 +96,13 @@ public partial class TapeAgentBase
     /// </para>
     /// <para>Resets the latched error on entry, like every TOC verb; never clears the anomaly records.</para>
     /// </remarks>
-    internal TapeResult RestoreTOCFromMedia(int? expectedVolume, ITapeTocNotifiable? tocNotify, TapeTOC? seriesToc = null)
+
+    internal TapeResult RestoreTOCFromMedia(int? expectedVolume, ITapeTocNotifiable? tocNotify, TapeTOC? seriesToc = null,
+        bool fullWalkOnly = false)
     {
+        if (fullWalkOnly)
+            return RestoreTOCByFullWalk(expectedVolume, tocNotify, seriesToc);
+
         ResetLatchedFailure();
 #if TEST_HOOKS
         _tocCopyCounter = 0;
@@ -316,19 +324,33 @@ public partial class TapeAgentBase
                 return found;
         }
 
-        // ── S4: the whole medium — never on a resume (the series TOC addresses every file), asked first ──
+        // ── S4: the whole medium — not in a resume's ladder (the series TOC addresses every file; the resume asks for S4
+        //  alone as its last resort), asked first ──
         if (seriesToc is not null || walkedFromContentStart || IsAbortRequested)
             return null;
+        return FullWalk(expectedVolume, seriesToc, tocNotify, skipped, tried, out fullWalk);
+    }
 
-        int asked = expectedVolume ?? 0;
-        if (!ConfirmFullWalk(tocNotify, asked))
+    /// <summary>
+    /// S4: asks, then walks the whole content partition with progress, and reads the best copy. Shared by the ladder and the
+    ///  resume's last resort.
+    /// </summary>
+    /// <param name="outcome">Whether S4 ran, was declined, or did not apply (an abort).</param>
+    private TocCandidate? FullWalk(int? expectedVolume, TapeTOC? seriesToc, ITapeTocNotifiable? tocNotify,
+        List<TocCandidate> skipped, HashSet<(MediaPartition, long)> tried, out FullWalkOutcome outcome)
+    {
+        outcome = FullWalkOutcome.NotApplicable;
+        if (IsAbortRequested)
+            return null;
+
+        if (!ConfirmFullWalk(tocNotify, expectedVolume ?? 0))
         {
             m_logger.LogWarning("TOC search S4 declined — the whole medium is not searched");
-            fullWalk = IsAbortRequested ? FullWalkOutcome.NotApplicable : FullWalkOutcome.Declined;
+            outcome = IsAbortRequested ? FullWalkOutcome.NotApplicable : FullWalkOutcome.Declined;
             return null;
         }
 
-        fullWalk = FullWalkOutcome.Ran;
+        outcome = FullWalkOutcome.Ran;
         m_logger.LogWarning("TOC search S4: walking the whole content partition");
         List<TocCandidate> all = WalkForTocCopies(MediaPartition.Content, 0, TapeTocAnomalyStage.FullWalk,
             stopAfterTocCopies: 0, noSetmarksAhead: false,
@@ -336,6 +358,47 @@ public partial class TapeAgentBase
         if (IsAbortRequested)
             return null;
         return TryCandidates(all, expectedVolume, seriesToc, skipped, tried);
+    }
+
+    /// <summary>
+    /// S4 alone — the last resort of a multi-volume resume (Design-TocLocation §7, step 4): neither the media header nor the
+    ///  set's first block identified the cartridge, and S0–S3 found no TOC (step 2 recorded that). Asked first; the series
+    ///  TOC filters foreign copies. A copy found settles step 2's detection by <see cref="TapeTocAnomalyStage.FullWalk"/>.
+    /// </summary>
+    private TapeResult RestoreTOCByFullWalk(int? expectedVolume, ITapeTocNotifiable? tocNotify, TapeTOC? seriesToc)
+    {
+        ResetLatchedFailure();
+#if TEST_HOOKS
+        _tocCopyCounter = 0;
+#endif
+        int volume = expectedVolume ?? 0;
+        var skipped = new List<TocCandidate>();
+        TocCandidate? winner = FullWalk(expectedVolume, seriesToc, tocNotify, skipped, [], out FullWalkOutcome outcome);
+
+        Manager.EndReadWrite();
+        Navigator.ResetContentSet();
+        if (IsAbortRequested)
+            return Cancelled();
+        ReportSkippedCopies(tocNotify, skipped, volume);
+
+        if (winner is { } found)
+        {
+            ResolveTocAnomalies(tocNotify, volume, TapeTocAnomalyStage.FullWalk,
+                TapeTocAnomalyKind.NotFoundNatively, TapeTocAnomalyKind.NoReadableCopy);
+            m_logger.LogWarning("TOC of volume #{Volume} recovered via FullWalk from block {Block} of the {Partition} " +
+                "partition", volume, found.Block, found.Partition);
+            ResetError();
+            ResetLatchedFailure();
+            return TapeResult.OK;
+        }
+
+        string why = outcome == FullWalkOutcome.Declined
+            ? "the search of the whole medium was declined"
+            : "not even by searching the whole medium";
+        ResetLatchedFailure();
+        SetError(WIN32_ERROR.ERROR_NOT_FOUND, $"no table of contents of volume #{volume} found ({why})");
+        LatchFailure();
+        return FailedOperationResult;
     }
 
     /// <summary>

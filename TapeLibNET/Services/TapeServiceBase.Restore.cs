@@ -248,6 +248,9 @@ public partial class TapeServiceBase
             // Create progress handler via the overridable factory
             progressHandler = CreateRestoreProgressHandler(
                 agent, totalFiles, request.Mode, request.SkipAllErrors);
+            // The one TOC question a restore can ask: the whole-medium search, as the last resort to identify
+            //  a requested volume. Unattended (ProceedOnMediaMismatch): searched without asking — it only reads.
+            progressHandler.FullWalkConfirm = volume => ConfirmFullWalk(volume, suppress);
 
             OnStatusUpdate($"{modeName} files...");
 

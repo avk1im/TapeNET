@@ -205,6 +205,7 @@ public class ServiceMultiVolumeErrorTests : ServiceTestBase
                 var prompt = TakeSingleVolumeErrorPrompt(host);
                 Assert.Equal(1, prompt.Volume);
                 Assert.True(prompt.AllowSkip, "a restore may skip a volume");
+
                 Assert.False(result.Success);
                 Assert.True(result.HasFailed, "an operation ended on an unusable volume has failed");
                 Assert.False(result.WasAborted);
@@ -214,6 +215,8 @@ public class ServiceMultiVolumeErrorTests : ServiceTestBase
 
                 Assert.DoesNotContain(result.TocAnomalies,
                     a => a.IsRecovery && a.Volume == 1); // volume rejection isn't reported as a recovered TOC anomaly
+
+                AssertMediaPrompts(host, (TapeMediaVerdict.Unidentified, MediaPromptContext.FullWalkForTOC));
             }
         }
     }
@@ -250,6 +253,7 @@ public class ServiceMultiVolumeErrorTests : ServiceTestBase
                 var prompt = TakeSingleVolumeErrorPrompt(host);
                 Assert.Equal(1, prompt.Volume);
                 Assert.True(prompt.AllowSkip, "a restore may skip a volume");
+                
                 Assert.True(result.Success, $"{result.Message}\n{host.DumpReports()}");
                 Assert.True(result.Diagnosis.Success, "the rejected attempt must not linger in the diagnosis");
                 Assert.Equal(FileCount, result.FilesSucceeded);
@@ -263,6 +267,8 @@ public class ServiceMultiVolumeErrorTests : ServiceTestBase
                 Assert.Equal(TapeTocAnomalyStage.Retried, settled.Stage);
                 var placement = withInitiator ? TapeTocPlacement.InPartition : TapeTocPlacement.InSet;
                 Assert.Equal(TocAnomalyAdvice.None, TapeServiceBase.AdviseOnTocAnomalies(result.TocAnomalies, placement).Advice);
+
+                AssertMediaPrompts(host, (TapeMediaVerdict.Unidentified, MediaPromptContext.FullWalkForTOC)); // the clean re-insertion is identified by its header, without asking
             }
         }
     }
@@ -314,6 +320,7 @@ public class ServiceMultiVolumeErrorTests : ServiceTestBase
                 Assert.DoesNotContain(result.TocAnomalies,
                     a => a.IsRecovery && a.Volume == 1); // volume rejection isn't reported as a recovered TOC anomaly
 
+                AssertMediaPrompts(host, (TapeMediaVerdict.Unidentified, MediaPromptContext.FullWalkForTOC));
             }
         }
     }

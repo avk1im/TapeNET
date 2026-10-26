@@ -135,7 +135,16 @@ public partial class TapeServiceBase
                 throw new InvalidOperationException($"Couldn't prepare media: {LastError}");
             }
 
-            bool append = request.AppendMode && _toc != null;
+            // An append needs the TOC that says where content ends. Without one, refuse — do not just overwrite!
+            if (request.AppendMode && _toc is null)
+            {
+                LastError = "Cannot append: no table of contents is loaded — load it (or recover it with Scan Media) first";
+                LogErr(LastError);
+                OnStatusUpdate("Backup refused");
+                return MakeResult(failed: true,
+                    diagnosis: TapeResult.Fail((uint)Windows.Win32.Foundation.WIN32_ERROR.ERROR_INVALID_STATE, LastError));
+            }
+            bool append = request.AppendMode;
 
             // --- TOC preparation ---
             // Three modes:
