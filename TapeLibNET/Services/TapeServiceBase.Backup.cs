@@ -395,6 +395,7 @@ public partial class TapeServiceBase
             // Outcomes declared outside of the loop so that the exits after the loop can read it
             bool wasAborted = false;
             bool endedOnRejectedVolume = false;
+            bool endedByUser = false;       // the user ended the series before every file was written
 
             // Timing — accumulate data and TOC times separately across multi-volume iterations;
             //  user interaction time between volumes is excluded
@@ -720,19 +721,24 @@ public partial class TapeServiceBase
 
                 // --- Handle media swap for multivolume continuation ---
 
+                // --- Handle media swap for multivolume continuation ---
                 // Step 1: Ask user if they want to continue on a new volume
                 if (!_host.OnVolumeFullConfirm(toc.Volume, toc.Volume + 1,
                         progressHandler.FilesProcessed, progressHandler.FilesTotal,
                         progressHandler.BytesProcessed, progressHandler.BytesTotal))
                 {
                     LogInfo("User chose to end multi-volume backup");
+                    endedByUser = true;
                     break;
                 }
 
                 // Steps 2–5: eject, insert, load, and verify the fresh volume's identity.
-                //  Abort / user-cancel exits the outer multi-volume loop.
+                //  A cancelled insertion or an Abort at the identity check ends the series here.
                 if (!SwapToFreshVolume())
+                {
+                    endedByUser = true;
                     break; // exit the outer multi-volume do-while
+                }
 
                 LogOk("Media loaded, continuing backup...");
 
@@ -746,15 +752,22 @@ public partial class TapeServiceBase
             if (volumes > 0)
                 LogInfoSub($"Across {volumes} volume(s)");
 
-            if (endedOnRejectedVolume)
+            if (endedOnRejectedVolume || endedByUser)
             {
-                // The backup ends on the last volume that took data; its TOC was saved before the volume change.
-                var ended = MakeResult(aborted: wasAborted, failed: !wasAborted);
+                // The backup ends on the last volume that took data; its TOC was saved before the volume change. The files
+                //  after it were never written: the operation did not do what was asked, whoever ended it.
+                int notBackedUp = Math.Max(0, progressHandler.FilesTotal - progressHandler.FilesProcessed);
+                string why = $"Backup ended after volume #{toc.Volume} — {notBackedUp:N0} file(s) not backed up";
+                var ended = MakeResult(aborted: wasAborted, failed: !wasAborted,
+                    // A rejected cartridge keeps the agent's diagnosis (it names the volume); a user's decision gets its own.
+                    diagnosis: endedByUser && !wasAborted
+                        ? TapeResult.Fail((uint)Windows.Win32.Foundation.WIN32_ERROR.ERROR_END_OF_MEDIA, why)
+                        : null);
                 ReportFileOperationOutcome(ended, "Backup");
                 ReportBackupStats(ended,
                     dataSecs: dataElapsedUs / 1e6, ioSecs: dataIoElapsedUs / 1e6, tocSecs: tocElapsedUs / 1e6);
                 ReportTocAnomalyOutcome(agent);
-                LogFail($"Backup ended — the files after volume #{toc.Volume} were not backed up");
+                LogFail(why);
                 OnStatusUpdate(wasAborted ? "Backup aborted" : "Backup ended");
                 return ended;
             }

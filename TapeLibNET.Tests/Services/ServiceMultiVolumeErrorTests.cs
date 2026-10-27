@@ -506,5 +506,38 @@ public class ServiceMultiVolumeErrorTests : ServiceTestBase
     }
 
     #endregion
+
+    #region *** Backup: user refuses continuation cartridge ***
+
+    /// <summary>
+    /// Only one cartridge on offer: the backup fills it, the next insertion is cancelled. Volume 1 and its TOC stand, and
+    ///  the result is a failure that says how many files were left out — never "completed successfully".
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Backup_SeriesEndedByUser_FailsNamingTheFilesLeftOut(bool withInitiator)
+    {
+        var (vol1, vol2) = MakeVolumes(withInitiator);
+        using (vol1) using (vol2)
+        {
+            using var tree = MakeTree();
+            var (svc, host) = await OpenAndFormatMultiVolumeAsync((IReadOnlyList<TempVirtualMedia>)[vol1]);
+            using (svc)
+            {
+                var result = await svc.ExecuteBackupAsync(MakeBackupRequest(svc, tree.RootPath, "MV-Ended"))
+                    .WaitAsync(NoHang);
+
+                Assert.False(result.Success);
+                Assert.True(result.HasFailed);
+                Assert.False(result.WasAborted);
+                Assert.InRange(result.FilesSucceeded, 1, FileCount - 1);
+                Assert.Contains($"{FileCount - result.FilesSucceeded} file(s) not backed up", result.Message ?? "");
+                Assert.False(host.ContainsMessage("Backup completed successfully"), host.DumpReports());
+            }
+        }
+    }
+
+    #endregion
 }
 #endif
