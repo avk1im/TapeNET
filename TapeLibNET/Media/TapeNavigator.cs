@@ -152,13 +152,13 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
         return TocReserveCore(drive, footprint);
     }
 
-    /// <summary>The floor (TR-6) — capped at a quarter of the medium, so tiny virtual media stay usable.</summary>
+    /// <summary>The floor (TR-6) — capped at 1/32 of the medium, so small (virtual) media lose little to it.</summary>
     private static long TocReserveCore(TapeDrive? drive, long footprint)
     {
         long floor = (drive?.LtoGeneration ?? -1) >= 1 ? TocReserveFloorLto : TocReserveFloor;
         long capacity = drive?.Capacity ?? 0L;
         if (capacity > 0L)
-            floor = Math.Min(floor, capacity / 4);
+            floor = Math.Min(floor, capacity / 32);
         return Math.Max(floor, footprint + TocMarkAllowance);
     }
 

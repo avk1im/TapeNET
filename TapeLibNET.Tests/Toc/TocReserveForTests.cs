@@ -78,11 +78,11 @@ public class TocReserveForTests
 
     [Theory]
     [MemberData(nameof(InSetProfiles))]
-    public void TinyMedium_FloorCappedAtAQuarter(DriveProfile profile)
+    public void TinyMedium_FloorCappedAtA32nd(DriveProfile profile)
     {
         var (fixture, agent) = Create(profile, capacity: 2 * MiB);
         using (fixture) using (agent)
-            Assert.Equal(Math.Max(MiB / 2, agent.Navigator.TOCFootprint(0) + TapeNavigator.TocMarkAllowance),
+            Assert.Equal(Math.Max(2 * MiB / 32, agent.Navigator.TOCFootprint(0) + TapeNavigator.TocMarkAllowance),
                 agent.Navigator.TocReserveFor(0));
     }
 

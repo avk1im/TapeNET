@@ -272,7 +272,7 @@ public class ServiceTocAnomalyTests : ServiceTestBase
 #if TEST_HOOKS
     private const int MvFileCount = 16;
     private const long MvFileSize = 350L * 1024;
-    private const long MvCapacity_Setmarks = 36L * 1024 * 1024;
+    private const long MvCapacity_Setmarks = 3L * 1024 * 1024; // TOC Reserve update. Was: 36L * 1024 * 1024;
     private const long MvCapacity_Initiator = 3L * 1024 * 1024;
 
     /// <summary>

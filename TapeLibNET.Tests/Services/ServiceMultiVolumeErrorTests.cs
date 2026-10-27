@@ -29,7 +29,7 @@ public class ServiceMultiVolumeErrorTests : ServiceTestBase
 
     private const int FileCount = 16;
     private const long FileSize = 350L * 1024;
-    private const long Capacity_Setmarks = 36L * 1024 * 1024;
+    private const long Capacity_Setmarks = 3L * 1024 * 1024; // TOC Reserve update. Was: 36L * 1024 * 1024;
     private const long Capacity_Initiator = 3L * 1024 * 1024;
 
     /// <summary>Generous upper bound for one operation — a loop regression must fail, not hang.</summary>

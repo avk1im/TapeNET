@@ -37,7 +37,7 @@ public class RemoteServiceMultiVolumeTests(LocalHostTapeServiceFixture fixture)
     /// Content-partition capacity for setmarks multi-volume test volumes (36 MiB).
     ///  TOC reserve is 32 MiB → 4 MiB usable; total content ~5.6 MiB overflows trivially.
     /// </summary>
-    private const long MultiVolumeCapacity_Setmarks = 36L * 1024 * 1024;
+    private const long MultiVolumeCapacity_Setmarks = 3L * 1024 * 1024; // TOC Reserve update. Was: 36L * 1024 * 1024;
 
     /// <summary>
     /// Content-partition capacity for initiator-partition multi-volume test volumes (3 MiB).
@@ -50,11 +50,11 @@ public class RemoteServiceMultiVolumeTests(LocalHostTapeServiceFixture fixture)
     private const int  MvIncFileCount            = 16;
     private const long MvIncFileSizeFull          = 350L * 1024;
     private const long MvIncFileSizeModified      = 700L * 1024;
-    private const long MvIncVol1Capacity_Setmarks = 41L * 1024 * 1024;
+    private const long MvIncVol1Capacity_Setmarks = 8L * 1024 * 1024; // TOC Reserve update. Was: 41L * 1024 * 1024;
         // Added 1 MiB so that at least one file from the follow-up set fits, therefore splitting
         //  the set across vol-1 and vol-2 -- as we check volume continuation in the test.
     private const long MvIncVol1Capacity_Initiator = 8L * 1024 * 1024;
-    private const long MvIncVol2Capacity_Setmarks = 46L * 1024 * 1024;
+    private const long MvIncVol2Capacity_Setmarks = 14L * 1024 * 1024; // TOC Reserve update. Was: 46L * 1024 * 1024;
     private const long MvIncVol2Capacity_Initiator = 14L * 1024 * 1024;
 
     // ── Content helper ────────────────────────────────────────────────────────
@@ -365,9 +365,10 @@ public class RemoteServiceMultiVolumeTests(LocalHostTapeServiceFixture fixture)
     /// Capacity used for the catalog-driven test volumes: matches <see cref="MultiVolumeCapacity_Setmarks"/>
     /// (36 MiB) so that the setmarks TOC overhead (32 MiB) leaves 4 MiB of usable data space, forcing
     /// at least one volume swap when writing 16 × 350 KiB files (~5.6 MiB total).
+    /// TOC Reserve update: TOC size on small test volumes is 1/32nd of the capacity → 3 MiB per volume is enough.
     /// No initiator partition — <c>CreateTempVirtual</c> does not support one.
     /// </summary>
-    private const long CatalogDrivenVolumeCapacity = 36L * 1024 * 1024;
+    private const long CatalogDrivenVolumeCapacity = 3L * 1024 * 1024; // TOC Reserve update. Was: 36L * 1024 * 1024;
 
     // ── 8.10: catalog-driven multi-volume backup + restore ────────────────────
 

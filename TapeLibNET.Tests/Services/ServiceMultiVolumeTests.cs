@@ -39,8 +39,9 @@ public class ServiceMultiVolumeTests : ServiceTestBase
     ///  Must be larger than <see cref="TapeNavigator.DefaultTOCCapacity"/> (32 MiB) because
     ///  the backup agent reserves that space for the in-tape TOC on setmarks drives.
     ///  36 MiB → 4 MiB usable per volume; 22 MiB total content overflows trivially.
+    /// <para><b>TOC Reseve update:</b> TOC reserves only 1/32nd of volume caoacity on small test volumes.</para>
     /// </summary>
-    private const long MultiVolumeCapacity_Setmarks = 36L * 1024 * 1024;
+    private const long MultiVolumeCapacity_Setmarks = 3L * 1024 * 1024; // TOC Reserve update. Was: 36L * 1024 * 1024;
 
     /// <summary>
     /// Content-partition capacity for initiator-partition multi-volume test volumes.
@@ -75,10 +76,11 @@ public class ServiceMultiVolumeTests : ServiceTestBase
     ///  With file-header overhead this slightly exceeds a 6 MiB usable window, so
     ///  vol-1 is sized at 40 MiB (usable = 40 − 32 MiB TOC reserve = 8 MiB):
     ///  8 MiB &gt; ~6.1 MiB (full backup, block-padded) ✓  and  8 MiB &lt; ~11.2 MiB (incremental) ✓.
-    ///  <para>Added 1 MiB so that at least one file from the follow-up set fits, therefore splitting
+    /// <para>Added 1 MiB so that at least one file from the follow-up set fits, therefore splitting
     ///  the set across vol-1 and vol-2 -- as we check volume continuation in the test.</para>
+    /// <para><b>TOC Reseve update:</b> TOC reserves only 1/32nd of volume caoacity on small test volumes.</para>
     /// </summary>
-    private const long MvIncVol1Capacity_Setmarks = 41L * 1024 * 1024;
+    private const long MvIncVol1Capacity_Setmarks = 8L * 1024 * 1024; // TOC Reserve update. Was: 41L * 1024 * 1024;
 
     /// <summary>
     /// Vol-1 capacity for initiator-partition drives in A-6.
@@ -91,8 +93,9 @@ public class ServiceMultiVolumeTests : ServiceTestBase
     /// Vol-2 capacity for setmarks drives in A-6.
     ///  Must hold the full incremental overflow: 16 × 700 KiB = 11.2 MiB data
     ///  plus 32 MiB TOC reserve = 43.2 MiB → 46 MiB with headroom.
+    /// <para><b>TOC Reseve update:</b> TOC reserves only 1/32nd of volume caoacity on small test volumes.</para>
     /// </summary>
-    private const long MvIncVol2Capacity_Setmarks = 46L * 1024 * 1024;
+    private const long MvIncVol2Capacity_Setmarks = 14L * 1024 * 1024; // TOC Reserve update. Was: 46L * 1024 * 1024;
 
     /// <summary>
     /// Vol-2 capacity for initiator-partition drives in A-6.
