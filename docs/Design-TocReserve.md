@@ -93,6 +93,8 @@ stub) / 4 MiB (virtual); ¼-capacity cap; override wins.
 
 ## 3. Step 3 — The drive accepts a growing reserve mid-set  *(the load-bearing step)*
 
+> **Implementation update Step 3:** The design shifted the cached headroom by the raise's delta. That is not safe: the cache is up to one poll interval stale (the clamp's skip test relies on "actual ≥ ¾ of cached"), and subtracting a large delta from a stale value can still leave the clamp skipped for a write that crosses the new reserve. Instead a raise invalidates the cache (long.MaxValue = "not polled"): the clamp then takes one fresh estimate on the very next write, whatever the delta. Cost: one ReportedRemaining query per raise. Update the design's §3 snippet accordingly.
+
 New member next to `SetEarlyWarning`; **nothing else in the EW machinery changes**:
 
 ```csharp
