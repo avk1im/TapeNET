@@ -222,6 +222,9 @@ public partial class TapeServiceBase
         props.Add(new("Remaining Reported / Estimated", pair(ReportedContentRemaining, EstimatedContentRemaining)));
         props.Add(new("Writable", Helpers.BytesToStringLong(WritableRemaining),
             Ratio: estimatedCapacity > 0 ? (double)WritableRemaining / estimatedCapacity : null));
+        if (!HasInitiatorPartition)
+            props.Add(new("TOC Reserve",
+                $"{Helpers.BytesToStringLong(TocReserve)} (TOC ~{Helpers.BytesToString(TocSizeEstimate)})"));
         props.Add(new("Estimation By", RemainingEstimationSource,
             IsEarlyWarning ? ServiceReportLevel.Warning : ServiceReportLevel.None));
     }

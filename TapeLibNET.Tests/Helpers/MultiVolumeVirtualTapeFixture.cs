@@ -125,14 +125,24 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     public long? TOCCapacityOverride { get; set; }
 
     /// <summary>
+    /// When <see langword="true"/> and <see cref="TOCCapacityOverride"/> is not set, the agents run with the LIVE TOC
+    ///  reserve (Design-TocReserve): sized from the TOC and raised as the set grows, never below the floor (capped at
+    ///  1/32nd of the volume). Default <see langword="false"/>: the fixed 5d parity reserve.
+    /// </summary>
+    public bool UseLiveTocReserve { get; init; }
+
+    /// <summary>
     /// The TOC reserve the fixture's agents run with on the loaded medium — for diagnostics and assertion messages.
+    ///  Live:the reserve a set starting now would arm.
     /// </summary>
     public long EffectiveTOCCapacity
     {
         get
         {
             using var probe = new TapeAgentBase(Drive, TOC);
-            return TocReserveFor(probe.Navigator);
+            return UseLiveTocReserve && TOCCapacityOverride is null
+                ? probe.Navigator.TocReserveFor(TOC.EstimateSerializedSize())
+                : TocReserveFor(probe.Navigator);
         }
     }
 
@@ -378,8 +388,13 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     private long TocReserveFor(TapeNavigator navigator)
         => TOCCapacityOverride ?? navigator.TOCFootprint(TestTocCopyBytes) + TocMarkAllowance;
 
-    /// <summary>Applies <see cref="TocReserveFor"/> to <paramref name="navigator"/>.</summary>
-    private void ApplyTocCapacity(TapeNavigator navigator) => navigator.TOCCapacity = TocReserveFor(navigator);
+    /// <summary>
+    /// Applies the TOC reserve to <paramref name="navigator"/> — the override, the default, or none (live).
+    /// </summary>
+    private void ApplyTocCapacity(TapeNavigator navigator)
+        => navigator.TocReserveOverride = UseLiveTocReserve && TOCCapacityOverride is null
+            ? null
+            : TocReserveFor(navigator);
 
     /// <summary>
     /// Writes the TOC to tape (via agent) and asserts success.

@@ -229,3 +229,20 @@ on Partitions; the media-usage bar's what-if equals the live figure.
 | Tests | `TocSizeEstimateTests`, `TocReserveForTests`, `LogicalEwReserveRaiseTests`, `TocReserveAgentTests`; multi-volume fixture → `TocReserveOverride` |
 
 **Sequence:** 1 → 2 → 3 (land with its regression gate green before 4) → 4 → 5.
+
+## 8. Changes during implementation
+
+**The slack** is 16 KiB (not 64 KiB) and **the mark allowance** one block (Group A) — on a
+256 KiB test volume 64 KiB of slack plus 96 KiB of marks would have reserved most of it. The slack only has to cover the
+entries handed off since the last raise: the raise collapses into the next write, and that write can only commit files
+handed off before it.
+
+**No WPF or CLI change.** Both render `DescribeDrive` / `DescribeMedia` row by row (`ShowProperties`, `LogProperties`), so the
+new row appears in the property pane, `tapecon info` and `tapecon list` by itself; the status bar and the usage bar pick
+up the new `WritableRemaining` / `ComputeWritableRemaining` likewise.
+
+**Updated raise handling.** The design shifted the cached headroom by the raise's delta. That is not safe: the cache is up to one poll interval stale (the clamp's skip test relies on "actual ≥ ¾ of cached"), and subtracting a large delta from a stale value can still leave the clamp skipped for a write that crosses the new reserve. Instead a raise invalidates the cache (long.MaxValue = "not polled"): the clamp then takes one fresh estimate on the very next write, whatever the delta. Cost: one ReportedRemaining query per raise. Update the design's §3 snippet accordingly.
+
+**Updated the TOC capacity reserve floor `TapeNavigator.TocReserveCore`** to 1/32nd of the cpacity vs. previously a quarter. This is only relevant for the small test virtual drives.
+A quarter of the medium proved far too big as a cap. On tiny test volumes it costs a quarter of the capacity for a TOC of a few KiB, which goes against the whole point of the live reserve.
+On a 3 MiB volume 1/32nd gives 96 KiB. That's still above the computed size (two one-block copies plus one block for marks is 48 KiB) and the slack. Real media aren't affected: from 128 MiB up, a 32nd is already more than the 4 MiB floor. The cap only matters on test-sized media.
