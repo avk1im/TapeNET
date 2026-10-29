@@ -18,18 +18,30 @@ public class TocReserveAgentTests
 
     #region *** Helpers ***
 
-    /// <summary>Small files with long, unshared names: a TOC that is large compared with the content.</summary>
-    private static TempFileTree LongNamedFiles(int count)
+    /// <summary>Files with long, unshared names (~95 chars) — a TOC that is large compared with the content.</summary>
+    private static TempFileTree LongNamedFiles(int count, int minSize = 1, int maxSize = 64)
     {
         var tree = new TempFileTree();
         for (int i = 0; i < count; i++)
         {
             var bytes = new byte[45];
             new Random(i).NextBytes(bytes);
-            tree.AddFile($"{i:D4}_{Convert.ToHexString(bytes)}.bin", 1 + i % 64);    // ~95-char names, no long prefix
+            tree.AddFile($"{i:D4}_{Convert.ToHexString(bytes)}.bin", minSize + i % (maxSize - minSize + 1));
         }
         return tree;
     }
+
+    /// <summary>The loaded volume holds both TOC copies, each closed by its filemark — wherever the layout keeps them.</summary>
+    private static void AssertBothTocCopies(MultiVolumeVirtualTapeFixture fixture, int volume)
+    {
+        var media = fixture.Backend.InitiatorMedia ?? fixture.Backend.ContentMedia!;
+        var layout = media.Layout;
+        Assert.True(layout.Count >= 4 && !layout[^4].IsMark && layout[^3].IsMark && !layout[^2].IsMark && layout[^1].IsMark,
+            $"volume #{volume}: both TOC copies, each closed by its filemark\n{media.DescribeLayout()}");
+    }
+
+    private static int FilesOnVolume(TapeTOC series, int volume)
+        => series.Where(s => s.Volume == volume).Sum(s => s.Count);
 
     private static long SavedSize(TapeTOC toc)
     {
@@ -49,46 +61,44 @@ public class TocReserveAgentTests
     #region *** Safe and live ***
 
     /// <summary>
-    /// ~800 long-named small files on 256 KiB volumes, live reserve. Safe: volume 1's TOC grows far beyond one block (the
-    ///  5d parity reserve would hold one copy at most), yet both copies fit everywhere and the series restores. Live:
-    ///  every volume takes files — the hand-off design of revision 1 left volume 1 empty here.
+    /// 800 long-named files of 1–2 KiB on equal 1 MiB volumes, live reserve. Safe: each volume's TOC outgrows a one-block
+    ///  copy (the most the 5d parity reserve held), yet both copies fit on every volume and the series restores. Live:
+    ///  every volume takes files — though the series TOC it must hold grows from volume to volume.
     /// </summary>
     [Theory]
     [MemberData(nameof(InSetProfiles))]
     public void LongNames_SafeAndLive_BothCopiesFit_EveryVolumeTakesFiles(DriveProfile profile)
     {
         const int files = 800;
-        using var tree = LongNamedFiles(files);
-        using var fixture = new MultiVolumeVirtualTapeFixture(profile, headerMode: VolumeHeaderMode.All)
-        {
-            UseLiveTocReserve = true,
-        };
+        const long volume = 1L * 1024 * 1024;
+        const long oneTocBlock = 16 * 1024;
+        using var tree = LongNamedFiles(files, minSize: 1024, maxSize: 2048);
+        using var fixture = new MultiVolumeVirtualTapeFixture(profile, contentCapacity: volume,
+            headerMode: VolumeHeaderMode.All)
+        { UseLiveTocReserve = true };
         var notify = new TestNotifiable();
         fixture.BackupFiles(tree.Files, "Long names", notifiable: notify);
         Assert.True(fixture.TotalVolumes >= 2, "the series must span");
         AssertNoCopyAnomaly(notify);
 
-        fixture.SwapToVolume(1);
-        fixture.LoadTOC();
-        Assert.Equal(1, fixture.TOC.Volume);
-        long tocBytes = SavedSize(fixture.TOC);
-        Assert.True(tocBytes > 2 * 16 * 1024, $"volume 1's TOC ({tocBytes} B) should outgrow a one-block reserve");
+        for (int v = 1; v <= fixture.TotalVolumes; v++)
+        {
+            fixture.SwapToVolume(v);
+            AssertBothTocCopies(fixture, v);
+            fixture.LoadTOC();
+            Assert.Equal(v, fixture.TOC.Volume);
+            long tocBytes = SavedSize(fixture.TOC);
+            Assert.True(tocBytes > oneTocBlock, $"volume #{v}'s TOC ({tocBytes} B) should outgrow a one-block reserve");
+        }
+
+        // The last volume's TOC describes the series: every volume holds files, and together all of them
+        for (int v = 1; v <= fixture.TotalVolumes; v++)
+            Assert.True(FilesOnVolume(fixture.TOC, v) > 0, $"volume #{v} took no file");
+        Assert.Equal(files, Enumerable.Range(1, fixture.TotalVolumes).Sum(v => FilesOnVolume(fixture.TOC, v)));
 
         string restoreDir = RestoreDir();
         try
         {
-            fixture.SwapToVolume(fixture.TotalVolumes);
-            fixture.LoadTOC();
-
-            // Live: every part of the set — one per volume — holds files, and together they hold all
-            int sum = 0;
-            for (int s = 1; s <= fixture.TOC.Count; s++)
-            {
-                Assert.True(fixture.TOC[s].Count > 0, $"volume #{fixture.TOC[s].Volume} took no file");
-                sum += fixture.TOC[s].Count;
-            }
-            Assert.Equal(files, sum);
-
             fixture.TOC.MakeLastSetCurrent();
             Assert.Equal(files, fixture.RestoreAllFilesFromCurrentSet(restoreDir).FilesSucceeded);
         }
@@ -103,8 +113,9 @@ public class TocReserveAgentTests
     [MemberData(nameof(InSetProfiles))]
     public void EncryptedSeries_BothCopiesFit(DriveProfile profile)
     {
-        using var tree = LongNamedFiles(400);
-        using var fixture = new MultiVolumeVirtualTapeFixture(profile, headerMode: VolumeHeaderMode.All)
+        using var tree = LongNamedFiles(400, minSize: 1024, maxSize: 2048);
+        using var fixture = new MultiVolumeVirtualTapeFixture(profile,
+            contentCapacity: 1L * 1024 * 1024, headerMode: VolumeHeaderMode.All)
         {
             UseLiveTocReserve = true,
         };
@@ -116,8 +127,78 @@ public class TocReserveAgentTests
         for (int v = 1; v <= fixture.TotalVolumes; v++)
         {
             fixture.SwapToVolume(v);
+            AssertBothTocCopies(fixture, v);
             fixture.LoadTOC();
             Assert.Equal(v, fixture.TOC.Volume);
+        }
+    }
+
+    #endregion
+
+    #region *** Volumes of different sizes ***
+
+    public static TheoryData<DriveProfile, bool> ProfilesAndOrder
+    {
+        get
+        {
+            TheoryData<DriveProfile, bool> data = [];
+            foreach (var p in new[] { DriveProfile.Setmarks, DriveProfile.Partitions, DriveProfile.SeqFilemarks, DriveProfile.FilemarksOnly })
+            {
+                data.Add(p, true);
+                data.Add(p, false);
+            }
+            return data;
+        }
+    }
+
+    /// <summary>
+    /// A series on two cartridge sizes, 2 MiB and 1 MiB, alternating — larger first, or smaller first. Every volume is
+    ///  written to ITS capacity: the drive reports it after the swap (nothing stale from the previous cartridge), a full
+    ///  large volume takes more files than the full small one after it (or fewer, smaller first), both TOC copies stand
+    ///  on every volume, and the series restores byte for byte.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ProfilesAndOrder))]
+    public void MixedVolumeSizes_EachVolumeUsesItsOwnCapacity_SeriesRestores(DriveProfile profile, bool largerFirst)
+    {
+        const long large = 2L * 1024 * 1024, small = 1L * 1024 * 1024;
+        long CapacityOf(int v) => (v % 2 == 1) == largerFirst ? large : small;
+
+        using var tree = new TempFileTree();
+        tree.AddFiles("mixed", count: 120, minSize: 16 * 1024, maxSize: 48 * 1024);     // ~3.8 MB: three volumes or more
+        using var fixture = new MultiVolumeVirtualTapeFixture(profile, contentCapacity: CapacityOf(1),
+            headerMode: VolumeHeaderMode.All, volumeCapacity: CapacityOf)
+        { UseLiveTocReserve = true };
+        var notify = new TestNotifiable();
+        fixture.BackupFiles(tree.Files, "Mixed sizes", notifiable: notify);
+        Assert.True(fixture.TotalVolumes >= 3, $"the series must span three volumes ({fixture.TotalVolumes})");
+        AssertNoCopyAnomaly(notify);
+
+        for (int v = 1; v <= fixture.TotalVolumes; v++)
+        {
+            fixture.SwapToVolume(v);
+            Assert.Equal(CapacityOf(v), fixture.Drive.ContentCapacity);      // nothing stale from the previous cartridge
+            AssertBothTocCopies(fixture, v);
+            fixture.LoadTOC();
+            Assert.Equal(v, fixture.TOC.Volume);
+        }
+
+        // Volumes 1 and 2 are both full: the larger one holds clearly more
+        int on1 = FilesOnVolume(fixture.TOC, 1), on2 = FilesOnVolume(fixture.TOC, 2);
+        Assert.True(largerFirst ? on1 > on2 : on1 < on2,
+            $"volume #1 ({CapacityOf(1)} B) holds {on1} files, volume #2 ({CapacityOf(2)} B) holds {on2}");
+
+        string restoreDir = RestoreDir();
+        try
+        {
+            fixture.TOC.MakeLastSetCurrent();
+            Assert.Equal(tree.Files.Count, fixture.RestoreAllFilesFromCurrentSet(restoreDir).FilesSucceeded);
+            FileComparer.AssertFilesMatch(tree.RootPath, tree.Files,
+                Path.Combine(restoreDir, Path.GetRelativePath(Path.GetPathRoot(tree.RootPath)!, tree.RootPath)));
+        }
+        finally
+        {
+            try { Directory.Delete(restoreDir, recursive: true); } catch { /* best effort */ }
         }
     }
 
@@ -128,6 +209,7 @@ public class TocReserveAgentTests
     /// <summary>
     /// A reserve larger than any volume: not a single file fits on the fresh continuation volume either. The backup ends
     ///  with the "not a single file" error (TR-7) instead of requesting volumes forever.
+    ///  Volume 1 takes nothing, the continuation takes nothing, and the error ends the backup at 2 volumes.
     /// </summary>
     [Fact]
     public void ReserveBeyondEveryVolume_EndsWithAnError_NoLoop()
@@ -135,7 +217,7 @@ public class TocReserveAgentTests
         using var tree = LongNamedFiles(20);
         using var fixture = new MultiVolumeVirtualTapeFixture(DriveProfile.Setmarks)
         {
-            TOCCapacityOverride = 1024L * 1024 * 1024,     // beyond volume 1, and beyond every later (32 MiB-padded) one
+            TOCCapacityOverride = 1024L * 1024 * 1024,     // beyond volume 1, and beyond every (equal, 256 KiB) volume
         };
 
         var ex = Assert.ThrowsAny<Exception>(() => fixture.BackupFiles(tree.Files, "Too big"));

@@ -1128,6 +1128,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         }
 
         InvalidateMediaParams(keepBlockSize: false);
+        InvalidateContentCache();   // another cartridge may be in the drive now: never carry its predecessor's figures
         EnsureOnContentPartition(); // CHECKME: do we indeed need to force to Content partition right away? or is it ok to fill the content param cache later?
 
         ReloadDriveCaps(); // refresh drive caps after media load, as some drives (e.g. virtual ones) change their capabilities depending on the media loaded

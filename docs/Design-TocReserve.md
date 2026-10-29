@@ -214,6 +214,9 @@ volume ends instead.
 | `TocReserveAgentTests` | **safety:** 800 long-named files on 256 KiB volumes, live reserve — every volume's TOC far beyond one block, both copies everywhere, no copy anomaly, the series restores byte for byte; **liveness:** every volume of that series takes files; **no loop:** a reserve larger than any volume ends the backup with the "not a single file" error; **encrypted series:** both copies everywhere; full set raises past the floor, unchanged incremental arms at the set-start value and does not grow; Partitions arms none |
 | Service | the reserve reported equals the floor rule; `WritableRemaining = estimated − reserve`; the property row |
 
+> The multi-volume fixture `MultiVolumeVirtualTapeFixture` gives every volume its own capacity (default: all equal);
+continuation volumes are no longer 32 MiB-padded.
+
 ## 5. Step 5 — Service reports the reserve it will use
 
 - `TocSizeEstimate` (cached per TOC state) and `TocReserve` = `PredictTocReserve(drive, TocSizeEstimate)` — the reserve

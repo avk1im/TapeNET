@@ -112,6 +112,19 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     public long ContentCapacity { get; }
 
     /// <summary>
+    /// The content capacity of each volume by number (1-based); <see langword="null"/> = every volume
+    ///  <see cref="ContentCapacity"/>.
+    /// </summary>
+    /// <remarks>
+    /// A real series mixes at most a couple of cartridge sizes (one drive, two generations);
+    ///  keep ratios realistic (≈2×).
+    /// </remarks>
+    public Func<int, long>? VolumeCapacity { get; }
+
+    /// <summary>The content capacity of <paramref name="volume"/>.</summary>
+    public long CapacityOfVolume(int volume) => VolumeCapacity?.Invoke(volume) ?? ContentCapacity;
+
+    /// <summary>
     /// TOC capacity override applied to each agent's navigator; <see langword="null"/> (default) =
     ///  what this layout needs to write two one-block copies in full: the navigator's own footprint
     ///  (copies, plus the TOC mark's gap file where the layout has one) and an allowance for
@@ -248,27 +261,22 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     }
 
     /// <summary>
-    /// Saves the current volume snapshot, ejects it, and inserts a fresh
-    /// blank volume with the next volume number. Prepares the drive for writing.
+    /// Saves the current volume snapshot, ejects it, and inserts a fresh blank volume with the next volume number —
+    ///  of the size the series defines for it (<see cref="CapacityOfVolume"/>). Prepares the drive for writing.
     /// </summary>
     /// <returns>The new volume number.</returns>
     public int SwapToNewVolume()
     {
         SaveCurrentVolumeSnapshot();
-
         int newVolume = _volumeSnapshots.Count + 1;
-
         long initCap = Capabilities.SupportsInitiatorPartition
             ? DefaultInitiatorCapacity : 0;
 
-        var capacity = ContentCapacity;
-        if (!Drive.HasInitiatorPartition)
-            capacity += TapeNavigator.DefaultTOCCapacity(Drive); // ensure enough space for TOC in set
-
-        Backend.InsertMemoryMedia(capacity, initCap);
+        // No padding: every volume has exactly its own capacity, as in a real series. The TOC reserve is the
+        //  backup's business (Design-TocReserve), not the fixture's.
+        Backend.InsertMemoryMedia(CapacityOfVolume(newVolume), initCap);
         Assert.True(Drive.ReloadMedia(), $"Failed to load new volume #{newVolume}");
         Assert.True(Drive.PrepareMedia(), $"Failed to prepare new volume #{newVolume}");
-
         _loadedVolume = newVolume; // important!
         return newVolume;
     }
@@ -305,6 +313,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// </summary>
     /// <param name="profile">Drive capability profile to emulate.</param>
     /// <param name="contentCapacity">Content partition capacity per volume.</param>
+    /// <param name="volumeCapacity">Optional function to define capacity by volume number.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     /// <param name="mediaDescription">Description for the initial TOC.</param>
     /// <param name="headerMode">How the volumes of the series receive media and set headers.</param>
@@ -315,12 +324,14 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     public MultiVolumeVirtualTapeFixture(
         DriveProfile profile = DriveProfile.Setmarks,
         long contentCapacity = DefaultContentCapacity,
+        Func<int, long>? volumeCapacity = null,
         ILoggerFactory? loggerFactory = null,
         string mediaDescription = "Multi-Volume Test Media",
         VolumeHeaderMode headerMode = VolumeHeaderMode.None,
         bool sealPadding = false)
     {
         ContentCapacity = contentCapacity;
+        VolumeCapacity = volumeCapacity;
         LoggerFactory = loggerFactory ?? TestLoggerFactory.Default;
         Capabilities = VirtualTapeFixture.ProfileToCapabilities(profile);
         HeaderMode = headerMode;
@@ -333,7 +344,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
         //    contentCapacity += TapeNavigator.DefaultTOCCapacity(null); // ensure enough space for TOC in set
 
         Backend = VirtualTapeDriveBackend.CreateMemoryBacked(
-            LoggerFactory, Capabilities, contentCapacity, initCap);
+            LoggerFactory, Capabilities, CapacityOfVolume(1), initCap);
 
         // Disable IO throttling for test speed
         Backend.IoRate = VirtualTapeDriveIoRate.Unlimited;

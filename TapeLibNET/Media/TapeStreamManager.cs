@@ -234,7 +234,8 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
 
         if (State != TapeState.MediaPrepared)
         {
-            m_logger.LogWarning("Drive #{Drive}: Media change in state {State} — reset to {Prepared}",
+            // State alone is no leak: a finished TOC write ends its session lazily. Only a stream or a packer would be.
+            m_logger.LogTrace("Drive #{Drive}: Media change in state {State} — reset to {Prepared}",
                 DriveNumber, (TapeState)State, TapeState.MediaPrepared);
             State.TransitionTo(TapeState.MediaPrepared);
         }
