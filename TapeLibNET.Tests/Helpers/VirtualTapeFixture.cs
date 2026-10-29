@@ -118,6 +118,12 @@ public sealed class VirtualTapeFixture : IDisposable
     public VirtualTapeDriveBackend Backend { get; }
 
     /// <summary>
+    /// Whether <c>BackupFiles</c> checks the TOC it just saved (<see cref="TocInvariants"/>).
+    ///  On by default; turn off in tests that write a malformed TOC on purpose.
+    /// </summary>
+    public bool ValidatesTocAfterBackup { get; set; } = true;
+
+    /// <summary>
     /// The record emitter the fixture's writing agents BORROW, or <see langword="null"/> = each agent's own V2.1 emitter.
     ///  Set it only to write another format than V2.1 (e.g. <c>LegacyRecordEmitter.Instance</c>).
     /// </summary>
@@ -383,7 +389,8 @@ public sealed class VirtualTapeFixture : IDisposable
 
         // Save TOC after successful backup
         Assert.True(agent.BackupTOC(), "Failed to save TOC after backup");
-
+        if (ValidatesTocAfterBackup)
+            TocInvariants.AssertWellFormed(TOC);
         return agent.Statistics;
     }
 

@@ -159,6 +159,12 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
         }
     }
 
+    /// <summary>
+    /// Whether <c>BackupFiles</c> checks the TOC it just saved (<see cref="TocInvariants"/>).
+    ///  On by default; turn off in tests that write a malformed TOC on purpose.
+    /// </summary>
+    public bool ValidatesTocAfterBackup { get; set; } = true;
+
     #endregion
 
     #region *** Media Header and Set Headers ***
@@ -526,6 +532,8 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
                 ? $" (continuation volume #{TOC.Volume + 1} rejected)" : string.Empty));
 
         SaveToc("after backup");
+        if (ValidatesTocAfterBackup)
+            TocInvariants.AssertWellFormed(TOC);
         return agent.Statistics;
     }
 
