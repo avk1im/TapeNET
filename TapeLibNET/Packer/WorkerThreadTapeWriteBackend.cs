@@ -23,7 +23,7 @@ namespace TapeLibNET.Packer;
 /// </summary>
 internal sealed class WorkerThreadTapeWriteBackend : ITapeWriteBackend
 {
-    private readonly TapeWriteSink _sink;
+    private readonly TapePlannedWriteSink _sink;
     private readonly ILogger _logger;
     private readonly Thread _worker;
 
@@ -37,6 +37,7 @@ internal sealed class WorkerThreadTapeWriteBackend : ITapeWriteBackend
     private readonly object _lock = new();
     private TapeWriteBuffer? _pendingBuffer;
     private int _pendingValidBytes;
+    private TocCommitPlan? _pendingPlan;
     private TapeWriteBuffer? _completedBuffer;
     private WriteResult _completedResult;
     private bool _hasCompletedResult;
@@ -46,6 +47,12 @@ internal sealed class WorkerThreadTapeWriteBackend : ITapeWriteBackend
     public uint BlockSize { get; }
 
     public WorkerThreadTapeWriteBackend(TapeWriteSink sink, uint blockSize, ILogger? logger = null)
+        : this(WrapSink(sink), blockSize, logger)
+    {
+    }
+
+    /// <summary>A backend whose sink also receives each buffer's <see cref="TocCommitPlan"/>.</summary>
+    public WorkerThreadTapeWriteBackend(TapePlannedWriteSink sink, uint blockSize, ILogger? logger = null)
     {
         ArgumentNullException.ThrowIfNull(sink);
         if (blockSize == 0)
@@ -54,6 +61,7 @@ internal sealed class WorkerThreadTapeWriteBackend : ITapeWriteBackend
         _sink = sink;
         BlockSize = blockSize;
         _logger = logger ?? NullLogger.Instance;
+
         _worker = new Thread(WorkerLoop)
         {
             IsBackground = true,
@@ -62,7 +70,13 @@ internal sealed class WorkerThreadTapeWriteBackend : ITapeWriteBackend
         _worker.Start();
     }
 
-    public void StartWriting(TapeWriteBuffer buffer, int validBytes)
+    private static TapePlannedWriteSink WrapSink(TapeWriteSink sink)
+    {
+        ArgumentNullException.ThrowIfNull(sink);
+        return (buffer, validBytes, _) => sink(buffer, validBytes);
+    }
+
+    public void StartWriting(TapeWriteBuffer buffer, int validBytes, TocCommitPlan? plan = null)
     {
         ArgumentNullException.ThrowIfNull(buffer);
         ArgumentOutOfRangeException.ThrowIfNegative(validBytes);
@@ -83,6 +97,7 @@ internal sealed class WorkerThreadTapeWriteBackend : ITapeWriteBackend
 
             _pendingBuffer = buffer;
             _pendingValidBytes = validBytes;
+            _pendingPlan = plan;
 
             // Reset complete-gate; worker will set it after this work item finishes.
             _workComplete.Reset();
@@ -133,6 +148,7 @@ internal sealed class WorkerThreadTapeWriteBackend : ITapeWriteBackend
 
                 TapeWriteBuffer buffer;
                 int validBytes;
+                TocCommitPlan? plan;
                 lock (_lock)
                 {
                     if (_shutdownRequested)
@@ -141,8 +157,10 @@ internal sealed class WorkerThreadTapeWriteBackend : ITapeWriteBackend
                     Debug.Assert(_pendingBuffer is not null);
                     buffer = _pendingBuffer!;
                     validBytes = _pendingValidBytes;
+                    plan = _pendingPlan;
                     _pendingBuffer = null;
                     _pendingValidBytes = 0;
+                    _pendingPlan = null;
                     _workAvailable.Reset();
                 }
 
@@ -152,7 +170,7 @@ internal sealed class WorkerThreadTapeWriteBackend : ITapeWriteBackend
                     // Round down to block boundary defensively; the sink also does this,
                     //  but enforcing it here keeps the contract local.
                     int aligned = (validBytes / (int)BlockSize) * (int)BlockSize;
-                    result = _sink(buffer, aligned);
+                    result = _sink(buffer, aligned, plan);
                 }
                 catch (Exception ex)
                 {

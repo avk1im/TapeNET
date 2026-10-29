@@ -36,17 +36,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     public long BytesBackedupInCurrentSet => BytesBackedup - BytesBackedupMarker;
 
     // ── TOC reserve tracking (Design-TocReserve §4) ──────────────────────────
-    // Upper bound of the TOC as it would be written now: the series TOC at set start plus every entry handed to the packer
-    //  since. Files rolled back at end-of-media stay counted — an overcount, the safe direction (TR-1).
-    private long m_tocBytes;
-    // m_tocBytes when the reserve was last armed or raised.
-    private long m_tocBytesArmed;
-    /// <summary>
-    /// The reserve always covers the TOC plus this much growth, and is raised once that much has been added — so the
-    ///  reserve a write applies covers every entry handed off before it (TR-1). One TOC block, ~100 entries: small enough
-    ///  for tiny volumes (both copies grow by it), and a raise below the floor is a no-op, so large media see few.
-    /// </summary>
-    private const long c_tocReserveSlack = 16L * 1024;
+    /// <summary>The largest hash any algorithm writes (XxHash128): a file's TOC entry is estimated before its hash exists.</summary>
+    private const int c_maxHashBytes = 16;
 
     // ── Software-compression session state ───────────────────────────────
     //  Allocated lazily on first use of the Software compression path and
@@ -135,11 +126,14 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     /// </summary>
     /// <returns>The remaining content capacity in bytes.</returns>
     /// <remarks>
-    /// The authoritative remaining-capacity figure is the drive's calibrated ESTIMATE
-    ///  (quantity (6)). The TOC reserve is NOT subtracted here: armed at set start and raised as the set grows
-    ///  (Design-TocReserve §4). Subtracting the TOC reserve again would reserve room for the TOC twice and
-    ///  prematurely cut the set short (see the multi-volume regression). Early warning is the real stop signal.
-    ///  <b>This value is advisory only</b> (see <seealso cref="TapeStreamManager.CapacityForCurrentSet"/>).
+    /// <b>This value is advisory only</b> (see <seealso cref="TapeStreamManager.CapacityForCurrentSet"/>).
+    ///  The authoritative remaining-capacity figure is the drive's calibrated ESTIMATE (quantity (6)).
+    /// <para>
+    /// The TOC reserve is NOT subtracted here: armed at set start and grown by each write for
+    ///  the files it starts (Design-TocReserve §4). Subtracting the TOC reserve again would reserve room for
+    ///  the TOC twice and prematurely cut the set short (see the multi-volume regression). Early warning is
+    ///  the real stop signal.
+    /// </para>
     /// </remarks>
     private long ComputeRemainingCapacity()
     {
@@ -278,9 +272,9 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             && CipherFor(TOC.CurrentSetTOC).AllowsHardwareCompression);
 
         // Arm the drive's logical early warning with the TOC reserve (TOC-in-set; the TOC-partition
-        //  navigator answers 0): sized from the TOC as it stands, raised below as files are handed off
-        //  (Design-TocReserve §4). The drive picks the best mechanism (calibration, physical EW,
-        //  a-priori), so WriteDirect stops content with room for both copies.
+        //  navigator answers 0): sized from the TOC as it stands, raised by each write for the files it starts
+        //  (Design-TocReserve §4). The drive picks the best mechanism (calibration, physical EW, a-priori),
+        //  so WriteDirect stops content with room for both copies.
         ArmTocReserve();
 
         // Overwriting existing content (not appending at EOD) leaves the drive reporting capacity−EOD,
@@ -403,35 +397,18 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     } // BeginWriteContentForCurrentSet()
 
     /// <summary>
-    /// Sizes the set's TOC reserve from the series TOC as it stands — every set of every volume, the current one included
-    ///  — and arms it (Design-TocReserve §4). With a TOC partition the navigator answers 0: nothing to estimate.
+    /// Arms the set's TOC reserve from the series TOC as it stands — every set of every volume, the current one included
+    ///  — and hands it to the manager, whose writes then plan against it (Design-TocReserve §4.2). With a TOC partition
+    ///  the reserve is 0 and nothing is planned.
     /// </summary>
     private void ArmTocReserve()
     {
-        m_tocBytes = Drive.HasInitiatorPartition ? 0L : TOC.EstimateSerializedSize();
-        m_tocBytesArmed = m_tocBytes;
-        long reserve = Navigator.TocReserveFor(m_tocBytes + c_tocReserveSlack);
+        long toc = Drive.HasInitiatorPartition ? 0L : TOC.EstimateSerializedSize();
+        long reserve = Navigator.TocReserveFor(toc);
         Drive.SetEarlyWarning(reserve);
+        Manager.TrackTocReserve(toc);
         if (reserve > 0)
-            m_logger.LogTrace("TOC reserve armed: {Reserve:N0} B for a TOC of ~{Toc:N0} B", reserve, m_tocBytes);
-    }
-
-    /// <summary>
-    /// Adds one handed-off entry to the TOC estimate and raises the drive's reserve once the slack is used up (TR-2: it
-    ///  only grows). The raise applies at the packer's next write, on its thread (TR-4).
-    /// </summary>
-    /// <param name="entryBytes">The entry's estimated TOC footprint, hash included.</param>
-    private void GrowTocReserve(long entryBytes)
-    {
-        if (Drive.HasInitiatorPartition)
-            return;
-        m_tocBytes += TOC.CurrentSetTOC.EstimateEntryGrowth(entryBytes);
-        if (m_tocBytes - m_tocBytesArmed < c_tocReserveSlack)
-            return;
-        m_tocBytesArmed = m_tocBytes;
-        long reserve = Navigator.TocReserveFor(m_tocBytes + c_tocReserveSlack);
-        Drive.RaiseEarlyWarning(reserve);
-        m_logger.LogTrace("TOC reserve raised to {Reserve:N0} B for a TOC of ~{Toc:N0} B", reserve, m_tocBytes);
+            m_logger.LogTrace("TOC reserve armed: {Reserve:N0} B for a TOC of ~{Toc:N0} B", reserve, toc);
     }
 
     /// <summary>
@@ -760,7 +737,10 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         m_logger.LogTrace("Backing up (packed) file >{File}< in {Method}",
             template.FileDescr.FullName, nameof(BackupFile));
 
-        var wstream = Manager.BeginPackedFile() ??
+        // The file's TOC entry, counted into the reserve by the write that reaches its first byte (Design-TocReserve
+        //  §4.2). The hash does not exist yet: count the largest.
+        long tocEntryBytes = TOC.CurrentSetTOC.EstimateEntryGrowth(template.EstimateSerializedSize() + c_maxHashBytes);
+        var wstream = Manager.BeginPackedFile(tocEntryBytes) ??
             throw new TapeIOException(this, this, $"failed to open packed write stream for >{template.FileDescr.FullName}<");
 
         CommitToken token = wstream.CommitToken;
@@ -884,6 +864,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     {
         Debug.Assert(MultiVolumeContext != null);
         TapeBackupContext bc = MultiVolumeContext.Value;
+        // A fresh continuation volume that takes no file can only be followed by another that takes none (TR-7)
+        bool freshContinuation = bc.isContinuation;
 
         if (bc.fileList.Count == 0)
         {
@@ -1106,10 +1088,6 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
                     var token = BackupFile(template, out var hash, out var codec);
                     tracker.Register(token, template, bc.fileIndex, hash, codec);
-                    // TOC reserve growth counted at HAND-OFF, not at commit: up to two packer buffers of entries are
-                    //  in flight (Design-TocReserve §4). Only a successful hand-off counts, so a retried file counts
-                    //  once. The template carries no hash.
-                    GrowTocReserve(template.EstimateSerializedSize() + (hash?.Length ?? 0));
                 }
                 catch (TapeAbortRequestedException)
                 {
@@ -1259,11 +1237,24 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             Debug.Assert(CanResumeToNextVolume);
             bc.overallSuccess = false;
 
-            // do NOT LatchFailure(): we can continue to the next volume, hence no hard failure
+            if (freshContinuation && TOC.CurrentSetTOC.Count == 0)
+            {
+                // Design-TocReserve TR-7: a fresh volume took not a single file together with the TOC — another volume
+                //  of this size cannot do better. End here instead of asking for volumes forever.
+                MultiVolumeContext = null;
+                TOC.ContinuedOnNextVolume = false;
+                SetError(WIN32_ERROR.ERROR_DISK_FULL,
+                    $"Volume #{TOC.Volume} holds not a single file of the set together with its table of contents " +
+                    $"(reserve {Helpers.BytesToString(Drive.EarlyWarning)}) — a volume of this size cannot continue the backup");
+                LatchFailure();
+                m_logger.LogError("{Message}", LastErrorMessage);
+                return false;
+            }
 
+            // do NOT LatchFailure(): we can continue to the next volume, hence no hard failure
+            
             m_carriedFailure = LatchedFailure;  // survives the caller's BackupTOC() between the volumes --
                                                 //  but the latch only: the live EOM is a continuation, not a fault!
-            
             m_logger.LogTrace("{Method}: EOM was encountered & handled during backup; MultiVolumeContext set up",
                 nameof(BackupFilesToCurrentSet));
             return false;

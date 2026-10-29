@@ -153,13 +153,29 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     }
 
     /// <summary>The floor (TR-6) — capped at 1/32 of the medium, so small (virtual) media lose little to it.</summary>
-    private static long TocReserveCore(TapeDrive? drive, long footprint)
+    private static long TocReserveFloorFor(TapeDrive? drive)
     {
         long floor = (drive?.LtoGeneration ?? -1) >= 1 ? TocReserveFloorLto : TocReserveFloor;
         long capacity = drive?.Capacity ?? 0L;
         if (capacity > 0L)
             floor = Math.Min(floor, capacity / 32);
-        return Math.Max(floor, footprint + TocMarkAllowance);
+        return floor;
+    }
+
+    private static long TocReserveCore(TapeDrive? drive, long footprint)
+        => Math.Max(TocReserveFloorFor(drive), footprint + TocMarkAllowance);
+
+    /// <summary>
+    /// <see cref="TocReserveFor"/> as a pure function, snapshotted now: the floor and the override are read once. For the
+    ///  writing thread, which evaluates it many times per buffer (Design-TocReserve §4.3) — <see cref="TapeDrive.Capacity"/>
+    ///  would query the device after every write.
+    /// </summary>
+    internal virtual Func<long, long> CaptureTocReserve()
+    {
+        if (TocReserveOverride is long fixedReserve)
+            return _ => fixedReserve;
+        long floor = TocReserveFloorFor(Drive);
+        return tocBytes => Math.Max(floor, TOCFootprint(tocBytes) + TocMarkAllowance);
     }
 
     /// <summary>Two copies of <paramref name="tocBytes"/>, each rounded up to whole TOC blocks.</summary>
@@ -1121,6 +1137,9 @@ public class TapeNavigatorTOCInPartition : TapeNavigator
     /// The TOC has its own partition: content may run to the end of medium — no reserve, whatever the override.
     /// </remarks>
     public override long TocReserveFor(long tocBytes) => 0L;
+
+    /// <inheritdoc/>
+    internal override Func<long, long> CaptureTocReserve() => static _ => 0L;
 
     #endregion
 

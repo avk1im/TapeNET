@@ -68,6 +68,12 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     //  early warning, armed once by the backup agent.
     private long m_packerBytesWritten;
 
+    // Design-TocReserve §4: the TOC as committed in this content session (writing
+    //  thread only once the packer runs), and the reserve function snapshotted at
+    //  set start. Null function = no TOC reserve tracking (TOC partition, tests).
+    private long m_tocCommittedBytes;
+    private Func<long, long>? m_tocReserveFor;
+
     // Read-side packer: lazily constructed inside BeginPackedFileRead and torn down
     //  by EndReadContent. Both remain null while the manager is not in
     //  TapeState.ReadingContent. Typed via interfaces so the concrete implementation
@@ -533,6 +539,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         }
 
         bool closed = EndWriteContentSet();     // a setmark — or, on TOC-in-partition media, end-of-media itself
+        m_tocReserveFor = null;                 // the session's TOC tracking ends with it
 
         State.TransitionTo(TapeState.MediaPrepared);
 
@@ -1221,9 +1228,30 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
 
     #region *** Packer-backed content writing (Phase 2) ***
 
-    // Sink that bridges the worker-thread backend to TapeDrive.WriteDirect.
-    //  Captured once and passed to the backend; lives for the backend's lifetime.
-    private WriteResult PackerWriteSink(TapeWriteBuffer buffer, int validBytes)
+    /// <summary>
+    /// Starts tracking the TOC reserve for the next content session (Design-TocReserve §4.2):
+    ///  the TOC as it stands (<paramref name="committedTocBytes"/>), and the navigator's reserve
+    ///  function.
+    /// <para>
+    /// Call before <see cref="BeginWriteContent"/>; the session's writes then plan against it, and
+    ///  <see cref="EndWriteContent"/> ends it.
+    /// </para>
+    /// </summary>
+    internal void TrackTocReserve(long committedTocBytes)
+    {
+        m_tocCommittedBytes = committedTocBytes;
+        m_tocReserveFor = Navigator.CaptureTocReserve();
+    }
+
+    /// <summary>
+    /// Sink that bridges the worker-thread backend to TapeDrive.WriteDirect.
+    ///  Captured once and passed to the backend; lives for the backend's lifetime.
+    /// </summary>
+    /// <param name="buffer"></param>
+    /// <param name="validBytes"></param>
+    /// <param name="plan"></param>
+    /// <returns></returns>
+    private WriteResult PackerWriteSink(TapeWriteBuffer buffer, int validBytes, TocCommitPlan? plan)
     {
         try
         {
@@ -1266,7 +1294,18 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
                     DriveNumber, validBytes, m_packerBytesWritten, remaining);
             }
 
-            int written = Drive.WriteDirect(buffer.Array, buffer.Offset, validBytes, out _, out bool ew, out bool eom);
+            // Design-TocReserve §4.3: the drive plans this write against the reserve the files it starts will need.
+            Func<long, long>? reserveFor = m_tocReserveFor;
+            long committedToc = Volatile.Read(ref m_tocCommittedBytes);
+            Func<int, long>? reserveForBlocks = plan is not null && reserveFor is not null
+                ? blocks => reserveFor(committedToc + plan.TocBytesFor(blocks))
+                : null;
+
+            int written = Drive.WriteDirect(buffer.Array, buffer.Offset, validBytes, honorEwReserve: true,
+                out _, out bool ew, out bool eom, reserveForBlocks);
+            
+            if (plan is not null && Drive.BlockSize > 0)
+                Volatile.Write(ref m_tocCommittedBytes, committedToc + plan.TocBytesFor(written / (int)Drive.BlockSize));
 
             int blocks = written / (int)Drive.BlockSize;
             m_packerBytesWritten += written;
@@ -1443,7 +1482,10 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     ///  <see cref="TapeFileWritePacker"/>. Final tape addresses are surfaced via
     ///  <see cref="FilesCommitted"/> once the file's tail block is durably on tape.</para>
     /// </summary>
-    internal TapeWriteStreamFacade? BeginPackedFile()
+    /// <param name="tocEntryBytes">
+    /// The file's TOC entry estimate (Design-TocReserve §4.2); 0 = not tracked.
+    /// </param>
+    internal TapeWriteStreamFacade? BeginPackedFile(long tocEntryBytes = 0)
     {
         ResetError();
 
@@ -1466,7 +1508,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
 
         try
         {
-            return m_packer.BeginFile();
+            return m_packer.BeginFile(tocEntryBytes);
         }
         catch (TapePackerEndOfMediaException)
         {
