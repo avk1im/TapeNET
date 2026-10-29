@@ -205,6 +205,8 @@ can happen is that the grown reserve leaves no room for the write: that is the t
 early warning and handled by the ordinary end-of-volume path. The reserve is never lowered to make room (TR-2); a
 volume ends instead.
 
+> Final flush crosses early warning with every file committed → the set is complete on this volume; no continuation.
+
 ### 4.7 Tests
 
 | Test | Proves |

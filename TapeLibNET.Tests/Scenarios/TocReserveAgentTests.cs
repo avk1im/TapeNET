@@ -113,7 +113,7 @@ public class TocReserveAgentTests
     [MemberData(nameof(InSetProfiles))]
     public void EncryptedSeries_BothCopiesFit(DriveProfile profile)
     {
-        using var tree = LongNamedFiles(400, minSize: 1024, maxSize: 2048);
+        using var tree = LongNamedFiles(800, minSize: 1024, maxSize: 2048);
         using var fixture = new MultiVolumeVirtualTapeFixture(profile,
             contentCapacity: 1L * 1024 * 1024, headerMode: VolumeHeaderMode.All)
         {

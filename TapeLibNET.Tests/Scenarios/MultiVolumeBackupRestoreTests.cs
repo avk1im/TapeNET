@@ -647,6 +647,11 @@ public abstract class MultiVolumeBackupRestoreTestsBase
         Assert.True(fixture.TOC.Count > set1Count,
             "Second backup should add at least one more set");
 
+        // A set that ends exactly at a full volume asks for no further volume (and none is left empty)
+        for (int s = 1; s <= fixture.TOC.Count; s++)
+            Assert.True(fixture.TOC[s].Count > 0, $"set #{s} on volume #{fixture.TOC[s].Volume} is empty");
+        Assert.False(fixture.TOC.ContinuedOnNextVolume, "the last volume must not promise a continuation");
+
         // Restore set 2 (latest) — should yield only batch2 files
         string restoreDir2 = Path.Combine(Path.GetTempPath(), $"TapeNET_MVSet2_{Guid.NewGuid():N}");
         try

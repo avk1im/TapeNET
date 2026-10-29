@@ -874,6 +874,16 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             return true;
         }
 
+        if (bc.fileIndex >= bc.fileList.Count)
+        {
+            // A continuation with nothing left to write: never request a volume for it (should be unreachable).
+            Debug.Fail("Continuation past the end of the file list");
+            m_logger.LogError("Continuation past the end of the file list in {Method}", nameof(BackupFilesToCurrentSet));
+            MultiVolumeContext = null;
+            NotifySetEnd(bc.fileNotify);
+            return true;
+        }
+
         // One Start per SET, matching the Ends below. The count is contributed only by the first set of
         //  the operation — see NotifySetStart.
         NotifySetStart(bc.fileNotify, filesAdded: bc.isContinuation ? 0 : bc.fileList.Count);
@@ -1187,7 +1197,17 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             }
             catch (TapePackerEndOfMediaException eomEx)
             {
-                eomHandled = HandleEom(eomEx, bc.fileIndex, currentTemplate: null);
+                if (eomEx.RolledBackTokens.Count == 0 && bc.fileIndex >= bc.fileList.Count)
+                {
+                    // Every file is on tape: the early warning of the final flush only says the volume is now full.
+                    //  The set is complete — the manager has already closed it (set mark written, state left). No
+                    //  continuation: asking for another volume would start a set with nothing left to write.
+                    m_logger.LogInformation("{Method}: the set fills up volume #{Volume} — every file written, no continuation",
+                        nameof(BackupFilesToCurrentSet), TOC.Volume);
+                    ResetError();
+                }
+                else
+                    eomHandled = HandleEom(eomEx, bc.fileIndex, currentTemplate: null);
             }
             catch (TapePackerWriteFaultException wfEx)
             {

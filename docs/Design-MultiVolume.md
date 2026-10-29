@@ -101,6 +101,9 @@ that want to offer a choice look at `IsVolumeRejected`.
 
    The agent returns `false` with `CanResumeToNextVolume`. The live error is `ERROR_END_OF_MEDIA`, which is **not
    latched** (MV-2).
+
+   **Exception:** If the final flush crosses **early warning with every file committed** → the set is complete on this volume; no continuation.
+
 2. **F32 shortcut.** On TOC-in-partition media, a previous set that ran to end-of-media means the volume is full before
    the new set starts. The agent asks for the next volume straight away.
 3. **Between volumes (service).**
