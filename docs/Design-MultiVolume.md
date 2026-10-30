@@ -106,12 +106,16 @@ that want to offer a choice look at `IsVolumeRejected`.
 
 2. **F32 shortcut.** On TOC-in-partition media, a previous set that ran to end-of-media means the volume is full before
    the new set starts. The agent asks for the next volume straight away.
+
+   If a set header that doesn't fit ahead of the reserve then the volume is full before the set → continue on the next volume (as for a trimmed first content write).
+
 3. **Between volumes (service).**
    - Clean up the TOC (an empty trailing part is removed) and save it to the full volume.
    - Ask the user (`OnVolumeFullConfirm`).
    - Eject and insert fresh media (`OnInsertNewMediaConfirm`), then load.
    - **Verify the cartridge is fresh.** This identity check is inverted: a header with the series' own `MediaId` means
      *an earlier volume of this series* and is `WrongVolume`.
+
 4. **Resume.** `ResumeBackupToNextVolume`:
    - consumes the stale live error, and restores the carried latch (§6);
    - renews the navigator, which also drops any stale session (§7);
@@ -119,6 +123,7 @@ that want to offer a choice look at `IsVolumeRejected`.
    - runs the file loop from the resume index.
 
    The new volume is headed by the agent itself, inside `BeginWriteContentForCurrentSet` (§17.10 of Design-SetHeaders).
+
 5. Repeat until the file list is done. The service saves the final TOC.
 
 ### 4.2 Rejecting a continuation cartridge

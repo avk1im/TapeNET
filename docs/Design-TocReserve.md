@@ -207,6 +207,8 @@ volume ends instead.
 
 > Final flush crosses early warning with every file committed → the set is complete on this volume; no continuation.
 
+> A set header that doesn't fit ahead of the reserve → the volume is full before the set; continue on the next volume (as for a trimmed first content write).
+
 ### 4.7 Tests
 
 | Test | Proves |
