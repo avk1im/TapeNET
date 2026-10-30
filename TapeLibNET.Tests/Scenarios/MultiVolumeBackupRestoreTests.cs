@@ -369,6 +369,10 @@ public abstract class MultiVolumeBackupRestoreTestsBase
         for (int i = 1; i <= fixture.TOC.Count; i++)
             totalFiles += fixture.TOC[i].Count;
         Assert.Equal(FileCount, totalFiles);
+
+        // Correct continuation set naming with volume numbers
+        for (int i = 2; i <= fixture.TOC.Count; i++)
+            Assert.Equal($"Flagged multi-volume ({fixture.TOC[i].Volume})", fixture.TOC[i].Description);
     }
 
     #endregion
@@ -665,10 +669,20 @@ public abstract class MultiVolumeBackupRestoreTestsBase
         }
     }
 
+    /// <summary>The parts of the LOGICAL (source) backuo set ending at <paramref name="lastPart"/>
+    ///  — itself and the continuations before it.</summary>
+    private static List<TapeSetTOC> PartsOf(TapeTOC toc, int lastPart)
+    {
+        var parts = new List<TapeSetTOC> { toc[lastPart] };
+        for (int i = lastPart; i > 1 && toc[i].ContinuedFromPrevVolume; i--)
+            parts.Insert(0, toc[i - 1]);
+        return parts;
+    }
+
     /// <summary>
-    /// A second set appended to a volume that is full up to the TOC reserve: with set headers, the header itself does
-    ///  not fit — the set must start on the next volume (not fail with "operation completed successfully"); without,
-    ///  the first write is trimmed to nothing, to the same effect.
+    /// A second set appended after a first that filled its volume(s). Wherever it starts — in the room left on the last
+    ///  volume (it may then continue on the next), or straight on a fresh one when not even its set header fits ahead of
+    ///  the TOC reserve — the logical set holds exactly its files and restores them.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -682,11 +696,13 @@ public abstract class MultiVolumeBackupRestoreTestsBase
         fixture.BackupFiles(first, "First");
         int volumesAfterFirst = fixture.TotalVolumes;
         var stats = fixture.BackupFiles(second, "Second");
-
         Assert.Equal(second.Count, stats.FilesSucceeded);
-        TapeSetTOC last = fixture.TOC[fixture.TOC.Count];
-        Assert.Equal(second.Count, last.Count);
-        Assert.True(last.Volume >= volumesAfterFirst, "the second set is on the last volume or the next one");
+
+        // The logical set: one part, or a part plus its continuation — never an empty part
+        List<TapeSetTOC> parts = PartsOf(fixture.TOC, fixture.TOC.Count);
+        Assert.Equal(second.Count, parts.Sum(p => p.Count));
+        Assert.All(parts, p => Assert.True(p.Count > 0, $"empty part on volume #{p.Volume}"));
+        Assert.True(parts[0].Volume >= volumesAfterFirst, "the second set starts on the last volume or the next one");
 
         string restoreDir = Path.Combine(Path.GetTempPath(), $"TapeNET_MVFull_{Guid.NewGuid():N}");
         try

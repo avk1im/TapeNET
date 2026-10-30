@@ -559,6 +559,10 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         ///  saving the full volume's TOC, so we cannot rely on it being there at resume.
         /// </summary>
         internal TapeSetTOCParams? continuationSetParams = null;
+
+        /// <summary>The set's original description as the caller gave it — continuation parts append
+        ///  only their volume to it.</summary>
+        internal string? baseDescription = null;
     }
 
     private TapeBackupContext? MultiVolumeContext { get; set; } = null;
@@ -657,7 +661,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         //  removed and the new set is logically a fresh start, not a continuation.
         var setParams = context.continuationSetParams with
         {
-            Description = context.continuationSetParams.Description + $" ({TOC.Volume})",
+            Description = (context.baseDescription ?? context.continuationSetParams.Description) + $" ({TOC.Volume})",
             Incremental = context.incremental,
         };
         TOC.AddContinuationSetTOC(setParams,
@@ -1430,7 +1434,10 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         if (TOC.CurrentSetTOC.Incremental)
             m_logger.LogTrace("Performing incremental (packed) backup to incremental set #{Set}", TOC.CurrentSetIndex);
 
-        MultiVolumeContext = new(fileList, ignoreFailures, fileNotify, TOC.CurrentSetTOC.Incremental);
+        MultiVolumeContext = new(fileList, ignoreFailures, fileNotify, TOC.CurrentSetTOC.Incremental)
+        {
+            baseDescription = TOC.CurrentSetTOC.Description,
+        };
         var result = BackupFilesToCurrentSet(newSet)
             ? TapeResult.OK : FailedOperationResult;
 
