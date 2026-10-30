@@ -1,8 +1,6 @@
-using Google.Protobuf.WellKnownTypes;
 using TapeLibNET.Compression;
 using TapeLibNET.Format;
 using TapeLibNET.Toc;
-using static Google.Protobuf.Collections.MapField<TKey, TValue>;
 
 namespace TapeLibNET.Tests.Toc;
 
