@@ -36,8 +36,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     public long BytesBackedupInCurrentSet => BytesBackedup - BytesBackedupMarker;
 
     // ── TOC reserve tracking (Design-TocReserve §4) ──────────────────────────
-    /// <summary>The largest hash any algorithm writes (XxHash128): a file's TOC entry is estimated before its hash exists.</summary>
-    private const int c_maxHashBytes = 16;
+    // Design-TocReserve §9.4: the TOC bytes each file adds, measured at hand-off. One per agent; reset per set.
+    private readonly TocEntryMeter m_tocMeter = new();
 
     // ── Software-compression session state ───────────────────────────────
     //  Allocated lazily on first use of the Software compression path and
@@ -413,11 +413,12 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
     /// <summary>
     /// Arms the set's TOC reserve from the series TOC as it stands — every set of every volume, the current one included
-    ///  — and hands it to the manager, whose writes then plan against it (Design-TocReserve §4.2). With a TOC partition
-    ///  the reserve is 0 and nothing is planned.
+    ///  — and starts measuring the set's entries (Design-TocReserve §9.4). With a TOC partition the reserve is 0
+    ///  and nothing is planned.
     /// </summary>
     private void ArmTocReserve()
     {
+        m_tocMeter.Reset(TOC.CurrentSetTOC);
         long toc = Drive.HasInitiatorPartition ? 0L : TOC.EstimateSerializedSize();
         long reserve = Navigator.TocReserveFor(toc);
         Drive.SetEarlyWarning(reserve);
@@ -759,9 +760,10 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         m_logger.LogTrace("Backing up (packed) file >{File}< in {Method}",
             template.FileDescr.FullName, nameof(BackupFile));
 
-        // The file's TOC entry, counted into the reserve by the write that reaches its first byte (Design-TocReserve
-        //  §4.2). The hash does not exist yet: count the largest.
-        long tocEntryBytes = TOC.CurrentSetTOC.EstimateEntryGrowth(template.EstimateSerializedSize() + c_maxHashBytes);
+        // The file's TOC entry — its tight bound against the entry before it — counted into the reserve by the write
+        //  that reaches its first byte (Design-TocReserve §4.2, §9.4).
+        long tocEntryBytes = TOC.CurrentSetTOC.EstimateEntryGrowth(m_tocMeter.Measure(template));
+
         var wstream = Manager.BeginPackedFile(tocEntryBytes) ??
             throw new TapeIOException(this, this, $"failed to open packed write stream for >{template.FileDescr.FullName}<");
 
@@ -859,6 +861,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             // Close the packer file slot. The actual TapeAddress will be reported
             //  later via Manager.FilesCommitted, keyed by the returned token.
             Manager.EndPackedFile();
+
+            m_tocMeter.Accept();    // handed off: the next file is measured against this one
 
             m_logger.LogTrace("File >{File}< handed off to packer ok", template.FileDescr.FullName);
             return token;

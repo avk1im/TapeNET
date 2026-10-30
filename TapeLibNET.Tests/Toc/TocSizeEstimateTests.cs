@@ -97,15 +97,16 @@ public class TocSizeEstimateTests
         Assert.InRange(estimate, actual, 4 * actual);
     }
 
-    /// <summary>The running total the agent keeps: each entry adds exactly its own estimate to a plain set.</summary>
+    /// <summary>The running total the agent keeps: each entry adds exactly what the meter measured for it.</summary>
     [Fact]
-    public void EntryGrowth_IsAdditive_ForPlainSets()
+    public void EntryGrowth_EqualsTheMeter_ForPlainSets()
     {
         TapeTOC toc = Toc(1, 10, Deep);
         long before = toc.EstimateSerializedSize();
+        var meter = new TocEntryMeter();
+        meter.Reset(toc.CurrentSetTOC);
         TapeFileInfo added = Add(toc.CurrentSetTOC, Deep(0, 99));
-        Assert.Equal(before + toc.CurrentSetTOC.EstimateEntryGrowth(added.EstimateSerializedSize()),
-            toc.EstimateSerializedSize());
+        Assert.Equal(before + meter.Measure(added), toc.EstimateSerializedSize());
     }
 
     #endregion
