@@ -33,6 +33,22 @@ internal static class TocEntrySizing
     ///  that elides them all — AddressBlock 10 → 1 B, AddressOffset 7, SizeOnTape 12, Codec 3, Hash 18 — plus one byte
     ///  where the group's length varint crosses 128 for the bound only.
     /// </summary>
+    /// <remarks>
+    /// The calculation:
+    /// <code>
+    /// +-------------------------------------+--------------+-------------------------------------+---------+
+    /// | Field (unknown at hand-off)         | In the bound | In the actual entry                 | Over by |
+    /// +-------------------------------------+--------------+-------------------------------------+---------+
+    /// | 2  AddressBlock (always written)    | 1 + 1 + 10   | 1 + 1 + 19                          | 3       |
+    /// | 3  AddressOffset                    | 1 + 1 + 5    | not written                         | 7       |
+    /// | 5  SizeOnTape                       | 1 + 1 + 10   | not written                         | 12      |
+    /// | 7  Codec                            | 1 + 1 + 1    | not written (Stored is the default) | 33      |
+    /// | 9  Hash                             | 1 + 1 + 16   | not written                         | 18      |
+    /// |    Addtl. byte where the group's length varint crosses 128 for the bound only            | 1       |
+    /// | Total                               |              |                                     | 50      |
+    /// +-------------------------------------+--------------+-------------------------------------+---------+
+    /// </code>
+    /// </remarks>
     internal const int MaxSlack = 9 + 7 + 12 + 3 + 18 + 1;   // 50
 
     private static int Field(int valueLength) => 1 + TapePrimitives.VarUIntSize((ulong)valueLength) + valueLength;

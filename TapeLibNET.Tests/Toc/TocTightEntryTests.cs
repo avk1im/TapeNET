@@ -1,6 +1,8 @@
+using Google.Protobuf.WellKnownTypes;
+using TapeLibNET.Compression;
 using TapeLibNET.Format;
 using TapeLibNET.Toc;
-using TapeLibNET.Compression;
+using static Google.Protobuf.Collections.MapField<TKey, TValue>;
 
 namespace TapeLibNET.Tests.Toc;
 
@@ -113,6 +115,29 @@ public class TocTightEntryTests
         long estimate = toc.EstimateSerializedSize();
         long saved = Saved(toc);
         Assert.InRange(estimate, saved, saved + ((long)TocEntrySizing.MaxSlack) * files + 1024);
+        // exact slack in this test: 29 bytes:
+        // +---------------+----------------+-----------------------------+-----------+
+        // | Field         | In the bound   | In the test files           | Over by   |
+        // +---------------+----------------+-----------------------------+-----------+
+        // | AddressBlock  | 10 bytes       | block 1,000,000 → 3 bytes   | 7         |
+        // | AddressOffset | 5 bytes        | 4,000 → 2 bytes             | 3         |
+        // | SizeOnTape    | 10 bytes       | 13,000 → 2 bytes            | 8         |
+        // | Codec         | written        | Stored, left out            | 3         |
+        // | Hash          | 16 bytes       | 8 bytes                     | 8         |
+        // | Total         |                |                             | 29        |
+        // +---------------+----------------+-----------------------------+-----------+
+        // vs. the max esytimates used for TocEntrySizing.MaxSlack:
+        // +-------------------------------------+--------------+-------------------------------------+---------+
+        // | Field (unknown at hand-off)         | In the bound | In the actual entry                 | Over by |
+        // +-------------------------------------+--------------+-------------------------------------+---------+
+        // | 2  AddressBlock (always written)    | 1 + 1 + 10   | 1 + 1 + 19                          | 3       |
+        // | 3  AddressOffset                    | 1 + 1 + 5    | not written                         | 7       |
+        // | 5  SizeOnTape                       | 1 + 1 + 10   | not written                         | 12      |
+        // | 7  Codec                            | 1 + 1 + 1    | not written (Stored is the default) | 33      |
+        // | 9  Hash                             | 1 + 1 + 16   | not written                         | 18      |
+        // |    plus one byte where the group's length varint crosses 128 for the bound only          | 1       |
+        // | Total                               |              |                                     | 50      |
+        // +-------------------------------------+--------------+-------------------------------------+---------+
     }
 
     [Fact]
