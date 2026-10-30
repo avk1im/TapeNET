@@ -1,5 +1,6 @@
 using TapeLibNET.Format;
 using TapeLibNET.Toc;
+using TapeLibNET.Compression;
 
 namespace TapeLibNET.Tests.Toc;
 
@@ -94,7 +95,7 @@ public class TocTightEntryTests
         {
             int bound = TocEntrySizing.GroupBound(file, previous);
             int actual = ActualGroup(file, previous);
-            Assert.InRange(bound, actual, actual + 48);
+            Assert.InRange(bound, actual, actual + TocEntrySizing.MaxSlack);
         }
     }
 
@@ -111,7 +112,7 @@ public class TocTightEntryTests
         TapeTOC toc = Toc(files, longNames ? f => Deep(f) + new string('x', 600) : Deep);
         long estimate = toc.EstimateSerializedSize();
         long saved = Saved(toc);
-        Assert.InRange(estimate, saved, saved + 48L * files + 1024);
+        Assert.InRange(estimate, saved, saved + ((long)TocEntrySizing.MaxSlack) * files + 1024);
     }
 
     [Fact]

@@ -28,6 +28,13 @@ internal static class TocEntrySizing
     /// <summary>The largest hash any algorithm writes (XxHash128).</summary>
     internal const int MaxHashBytes = 16;
 
+    /// <summary>
+    /// Most the bound can exceed an entry: every field unknown at hand-off counted at its widest, against an actual entry
+    ///  that elides them all — AddressBlock 10 → 1 B, AddressOffset 7, SizeOnTape 12, Codec 3, Hash 18 — plus one byte
+    ///  where the group's length varint crosses 128 for the bound only.
+    /// </summary>
+    internal const int MaxSlack = 9 + 7 + 12 + 3 + 18 + 1;   // 50
+
     private static int Field(int valueLength) => 1 + TapePrimitives.VarUIntSize((ulong)valueLength) + valueLength;
     private static int UIntField(ulong value) => Field(TapePrimitives.VarUIntSize(value));
     private static int OptionalUIntField(ulong value) => value == 0 ? 0 : UIntField(value);
