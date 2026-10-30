@@ -42,6 +42,10 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     //  media reload (a session preference like block size); cleared only in CloseDrive.
     private long m_desiredEarlyWarning = 0L;
 
+    // A reserve raise requested for the running set (Design-TocReserve TR-2..TR-4): written by any thread
+    //  (RaiseEarlyWarning), consumed by the writing thread at the start of WriteDirect. -1 = none pending.
+    private long m_pendingEarlyWarning = -1L;
+
     // Logical early-warning runtime state, mapped from the backend's physical EW/PEW + calibration.
     private bool m_physicalEwSeen = false;          // backend reported built-in EW this pass
     private long m_ewAnchorBlock = -1L;             // drive logical block where physical EW first fired
@@ -305,10 +309,11 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     /// the backend's physical EW/PEW and driver ReportedRemaining — through the active
     /// <see cref="Calibration"/> — onto this logical threshold, so <see cref="WriteDirect"/> raises
     /// <c>ew</c> (and the sticky <see cref="IsEarlyWarning"/>) ~this many bytes before EOM.
-    /// Precision reflects <see cref="EarlyWarningMechanism"/>. To set, use <see cref="SetEarlyWarning(long)"/>.
-    /// Cleared in <see cref="CloseDrive"/>.
+    /// Precision reflects <see cref="EarlyWarningMechanism"/>. To set, use <see cref="SetEarlyWarning(long)"/>;
+    /// to grow it during a set, <see cref="RaiseEarlyWarning(long)"/>. Cleared in <see cref="CloseDrive"/>.
     /// </summary>
-    public long EarlyWarning => m_desiredEarlyWarning;
+    /// <remarks>Read from any thread: the writing thread updates it when it applies a raise.</remarks>
+    public long EarlyWarning => Volatile.Read(ref m_desiredEarlyWarning);
 
     /// <summary>How the logical <see cref="EarlyWarning"/> is currently realized (best available mechanism).</summary>
     public EarlyWarningMechanism EarlyWarningMechanism => m_ewMechanism;
@@ -417,20 +422,28 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     ///  reserve does not CLAMP the write: the reserve exists for the TOC, so the TOC area itself must be allowed
     ///  to use it (Design-TocLocation TL-8). Early-warning tracking and reporting are unaffected.
     /// </summary>
+    /// <param name="reserveForBlocks">
+    /// The reserve the set needs if this write gets <c>b</c> blocks onto the tape (Design-TocReserve §4.3): the write is
+    ///  trimmed to the largest prefix that leaves room for it, and the reserve grows to it. <see langword="null"/>: the
+    ///  armed reserve as it stands. Ignored without an armed reserve, and for the TOC area.
+    /// </param>
     internal int WriteDirect(byte[] buffer, int offset, int count, bool honorEwReserve,
-        out bool tapemark, out bool ew, out bool eom)
+        out bool tapemark, out bool ew, out bool eom, Func<int, long>? reserveForBlocks = null)
     {
         m_backend.CheckForRW(buffer, offset, count);
+        ApplyPendingEarlyWarning();     // Design-TocReserve TR-4: a raise takes effect here, on the writing thread
 
         int blocksToWrite = count / (int)BlockSize;
         int toWrite = blocksToWrite * (int)BlockSize;
-
         tapemark = false;
         ew = false;
         eom = false;
-
         if (toWrite == 0)
             return 0;
+
+        // Plan the write against the reserve it will need (§4.3) — before the clamp, which then sees the grown reserve.
+        bool planTrimmed = honorEwReserve && reserveForBlocks is not null
+            && PlanWriteAgainstTocReserve(ref toWrite, reserveForBlocks);
 
         // Logical EW is evaluated AFTER the write, so on its own it can only ever report
         //  "you have already crossed the line". That is harmless while a single write is small
@@ -438,7 +451,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         //  consume the whole reserve -- and the room meant for the TOC -- in one go. Guard that
         //  case by clamping the write to what still fits ahead of the reserve. Never for the TOC
         //  area itself: the reserve is ITS room.
-        bool ewClamped = honorEwReserve && ClampWriteToEarlyWarning(ref toWrite);
+        bool ewClamped = (honorEwReserve && ClampWriteToEarlyWarning(ref toWrite)) || planTrimmed;
         if (toWrite == 0)
         {
             // Nothing fits ahead of the reserve: report EW without writing so the caller
@@ -473,6 +486,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         //  With NO reserve requested this surfaces the drive's physical EW 1:1 (v1.0 behavior, and exactly
         //  what a calibration run needs to capture the EW landmark). The costly ReportedRemaining poll lives
         //  inside EvaluateLogicalEarlyWarning and is gated + throttled, so calling it per write is cheap.
+        //  A trimmed or clamped write reports EW regardless: the caller must end the set there.
         bool logicalEw = EvaluateLogicalEarlyWarning(written, physicalEw) || ewClamped;
         if (logicalEw && !IsEarlyWarning)
             m_logger.LogInformation("{Prefix}: WriteDirect crossed logical early-warning boundary", LogPrefix);
@@ -491,7 +505,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
 
         m_byteCounter += written;
         return written;
-    }
+    } // internal WriteDirect()
 
     /// <summary>Writes raw blocks to tape (parameter-less version). Returns bytes written; ignores tapemark/ew/eom.</summary>
     public int WriteDirect(byte[] buffer, int offset, int count)
@@ -557,10 +571,11 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         IsProgrammableEarlyWarning = false;
         m_physicalEwSeen = false;
         m_ewAnchorBlock = -1L;
-        m_ewZoneEntryBlock = -1L;   
+        m_ewZoneEntryBlock = -1L;
         m_bytesAfterPhysicalEwCarry = 0L;
         m_bytesSinceRemainingPoll = 0L;
         m_writableHeadroomAtLastPoll = long.MaxValue;
+        Interlocked.Exchange(ref m_pendingEarlyWarning, -1L);  // a raise never outlives the medium or the run
     }
 
     private void CapturePhysicalEarlyWarning(bool physicalEw)
@@ -618,6 +633,9 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     /// back for the requested value and <see cref="EarlyWarningMechanism"/> for the achieved precision.
     /// Pass 0 to disable.
     /// </summary>
+    /// <remarks>
+    /// Starts a set: drops any raise still pending from the previous one (<see cref="RaiseEarlyWarning"/>).
+    /// </remarks>
     /// <param name="bytesBeforeEom">Desired reserve in bytes before EOM (0 = none).</param>
     /// <returns>
     /// True if the requested reserve is honored (<see langword="true"/> unless capacity is unknown and the backend has no physical EW).
@@ -632,7 +650,8 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         if (bytesBeforeEom < 0L)
             bytesBeforeEom = 0L;
 
-        m_desiredEarlyWarning = bytesBeforeEom;
+        Interlocked.Exchange(ref m_pendingEarlyWarning, -1L);   // a raise belongs to the set it was made for
+        Volatile.Write(ref m_desiredEarlyWarning, bytesBeforeEom);
 
         // Ask the backend to surface its physical EW too (best-effort, non-binding): when present it
         //  feeds the precise calibrated-tail path and serves as a safety backstop. A backend without
@@ -647,10 +666,59 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
 
         m_logger.LogTrace("{Prefix}: Early warning set to {Req} bytes (mechanism {Mech})",
             LogPrefix, bytesBeforeEom, m_ewMechanism);
-
-        return m_desiredEarlyWarning == 0L
+        return bytesBeforeEom == 0L
             || EarlyWarningMechanism != EarlyWarningMechanism.None; // Failure is unlikely -- only happens when
                                                                     //  capacity is unknown and the backend has no physical EW
+    }
+
+    /// <summary>
+    /// Raises the logical-EW reserve of the running set to <paramref name="bytesBeforeEom"/> — never lowers it
+    ///  (Design-TocReserve TR-2). Safe from any thread; applied at the start of the next <see cref="WriteDirect"/>, on the
+    ///  thread that writes (TR-4). Keeps every runtime state of the EW mapping — the physical-EW anchor, the tail byte
+    ///  count, the sticky latch (TR-3) — unlike <see cref="SetEarlyWarning"/>, which starts a set.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Ignored when no reserve is armed: a raise never arms one (a calibration run, TOC-in-partition).
+    /// </para>
+    /// <para>
+    /// Several raises before the next write collapse into the largest. A raise cannot clear a latched early warning: the
+    ///  reserve only grows, so the condition that latched it still holds.
+    /// </para>
+    /// </remarks>
+    public void RaiseEarlyWarning(long bytesBeforeEom)
+    {
+        long pending;
+        do
+        {
+            pending = Volatile.Read(ref m_pendingEarlyWarning);
+            if (bytesBeforeEom <= pending)
+                return;
+        }
+        while (Interlocked.CompareExchange(ref m_pendingEarlyWarning, bytesBeforeEom, pending) != pending);
+    }
+
+    /// <summary>
+    /// Applies a pending <see cref="RaiseEarlyWarning"/> — first thing in <see cref="WriteDirect"/>, on the writing thread.
+    /// </summary>
+    /// <remarks>
+    /// Invalidates the cached headroom rather than shifting it: the cache may be up to one poll interval stale, and a
+    ///  stale value less a large raise could still let the clamp skip a write that crosses the new reserve. Invalidated,
+    ///  the clamp takes one fresh estimate on this very write, and the throttled poll runs on it too.
+    /// </remarks>
+    private void ApplyPendingEarlyWarning()
+    {
+        if (Volatile.Read(ref m_pendingEarlyWarning) < 0L)
+            return;                                         // the common case: one read, nothing pending
+        long pending = Interlocked.Exchange(ref m_pendingEarlyWarning, -1L);
+        long desired = m_desiredEarlyWarning;               // written only here and by SetEarlyWarning
+        if (desired <= 0L || pending <= desired)
+            return;                                         // never arms a reserve; never lowers one (TR-2)
+
+        Volatile.Write(ref m_desiredEarlyWarning, pending);
+        m_writableHeadroomAtLastPoll = long.MaxValue;       // the clamp re-estimates on this write
+        m_bytesSinceRemainingPoll = long.MaxValue / 2;      // ...and so does the throttled pre-EW poll
+        m_logger.LogTrace("{Prefix}: Early-warning reserve raised from {Old} B to {New} B", LogPrefix, desired, pending);
     }
 
     /// <summary>
@@ -1060,6 +1128,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         }
 
         InvalidateMediaParams(keepBlockSize: false);
+        InvalidateContentCache();   // another cartridge may be in the drive now: never carry its predecessor's figures
         EnsureOnContentPartition(); // CHECKME: do we indeed need to force to Content partition right away? or is it ok to fill the content param cache later?
 
         ReloadDriveCaps(); // refresh drive caps after media load, as some drives (e.g. virtual ones) change their capabilities depending on the media loaded
@@ -1406,6 +1475,72 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         OnPositionChanged(backwards: false);
 
         m_logger.LogTrace("{Prefix}: Fast forwarded to end", LogPrefix);
+        return true;
+    }
+
+    /// <summary>
+    /// Plans a write against the reserve it will need (Design-TocReserve §4.3): writes the largest prefix of <c>b</c>
+    ///  blocks with <c>b × BlockSize + reserveForBlocks(b) ≤ estimated remaining</c>, and grows the reserve to
+    ///  <c>reserveForBlocks(b)</c> — never lowering it (TR-2), never arming one (no reserve → no planning).
+    /// </summary>
+    /// <returns><see langword="true"/> when the write was trimmed: the set must end after it.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>Cheap path</b> — no device query — when the write plus the reserve's growth is well inside the headroom cached
+    ///  at the last poll: the clamp's own rule ("actual ≥ ¾ of cached") then still leaves more than the write.
+    /// </para>
+    /// <para>
+    /// <b>Slow path</b> — one estimate, then a descending scan: <paramref name="reserveForBlocks"/> is a monotone step
+    ///  function, cheap to evaluate (a binary search and a snapshotted formula), so the scan costs no I/O.
+    /// </para>
+    /// </remarks>
+    private bool PlanWriteAgainstTocReserve(ref int toWrite, Func<int, long> reserveForBlocks)
+    {
+        long desired = m_desiredEarlyWarning;
+        if (desired <= 0L)
+            return false; // no reserve armed: nothing to plan against
+
+        int blockSize = (int)BlockSize;
+        int blocks = toWrite / blockSize;
+        long full = Math.Max(desired, reserveForBlocks(blocks));
+        long growth = full - desired;
+
+        if (!IsEarlyWarning && m_writableHeadroomAtLastPoll != long.MaxValue
+            && toWrite + growth < m_writableHeadroomAtLastPoll / 4L)
+        {
+            if (growth > 0L)
+            {
+                Volatile.Write(ref m_desiredEarlyWarning, full);
+                m_writableHeadroomAtLastPoll -= growth;
+            }
+            return false;
+        }
+
+        long available = EstimatedContentRemainingForEw();
+        int best = 0;
+        for (int b = blocks; b > 0; b--)
+        {
+            if ((long)b * blockSize + Math.Max(desired, reserveForBlocks(b)) <= available)
+            {
+                best = b;
+                break;
+            }
+        }
+
+        long chosen = Math.Max(desired, reserveForBlocks(best));
+        Volatile.Write(ref m_desiredEarlyWarning, chosen);
+        m_writableHeadroomAtLastPoll = available - chosen;
+
+        if (best == blocks)
+        {
+            if (chosen > desired)
+                m_logger.LogTrace("{Prefix}: TOC reserve {Old} B → {New} B for this write", LogPrefix, desired, chosen);
+            return false;
+        }
+        m_logger.LogInformation(
+            "{Prefix}: Write of {Blocks} block(s) trimmed to {Best}: the TOC of the files it starts needs a {Reserve} B reserve",
+            LogPrefix, blocks, best, chosen);
+        toWrite = best * blockSize;
         return true;
     }
 

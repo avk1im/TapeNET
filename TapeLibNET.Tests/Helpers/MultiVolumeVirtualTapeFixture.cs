@@ -112,6 +112,19 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     public long ContentCapacity { get; }
 
     /// <summary>
+    /// The content capacity of each volume by number (1-based); <see langword="null"/> = every volume
+    ///  <see cref="ContentCapacity"/>.
+    /// </summary>
+    /// <remarks>
+    /// A real series mixes at most a couple of cartridge sizes (one drive, two generations);
+    ///  keep ratios realistic (≈2×).
+    /// </remarks>
+    public Func<int, long>? VolumeCapacity { get; }
+
+    /// <summary>The content capacity of <paramref name="volume"/>.</summary>
+    public long CapacityOfVolume(int volume) => VolumeCapacity?.Invoke(volume) ?? ContentCapacity;
+
+    /// <summary>
     /// TOC capacity override applied to each agent's navigator; <see langword="null"/> (default) =
     ///  what this layout needs to write two one-block copies in full: the navigator's own footprint
     ///  (copies, plus the TOC mark's gap file where the layout has one) and an allowance for
@@ -125,16 +138,32 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     public long? TOCCapacityOverride { get; set; }
 
     /// <summary>
+    /// When <see langword="true"/> and <see cref="TOCCapacityOverride"/> is not set, the agents run with the LIVE TOC
+    ///  reserve (Design-TocReserve): sized from the TOC and raised as the set grows, never below the floor (capped at
+    ///  1/32nd of the volume). Default <see langword="false"/>: the fixed 5d parity reserve.
+    /// </summary>
+    public bool UseLiveTocReserve { get; init; }
+
+    /// <summary>
     /// The TOC reserve the fixture's agents run with on the loaded medium — for diagnostics and assertion messages.
+    ///  Live:the reserve a set starting now would arm.
     /// </summary>
     public long EffectiveTOCCapacity
     {
         get
         {
             using var probe = new TapeAgentBase(Drive, TOC);
-            return TocReserveFor(probe.Navigator);
+            return UseLiveTocReserve && TOCCapacityOverride is null
+                ? probe.Navigator.TocReserveFor(TOC.EstimateSerializedSize())
+                : TocReserveFor(probe.Navigator);
         }
     }
+
+    /// <summary>
+    /// Whether <c>BackupFiles</c> checks the TOC it just saved (<see cref="TocInvariants"/>).
+    ///  On by default; turn off in tests that write a malformed TOC on purpose.
+    /// </summary>
+    public bool ValidatesTocAfterBackup { get; set; } = true;
 
     #endregion
 
@@ -238,27 +267,22 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     }
 
     /// <summary>
-    /// Saves the current volume snapshot, ejects it, and inserts a fresh
-    /// blank volume with the next volume number. Prepares the drive for writing.
+    /// Saves the current volume snapshot, ejects it, and inserts a fresh blank volume with the next volume number —
+    ///  of the size the series defines for it (<see cref="CapacityOfVolume"/>). Prepares the drive for writing.
     /// </summary>
     /// <returns>The new volume number.</returns>
     public int SwapToNewVolume()
     {
         SaveCurrentVolumeSnapshot();
-
         int newVolume = _volumeSnapshots.Count + 1;
-
         long initCap = Capabilities.SupportsInitiatorPartition
             ? DefaultInitiatorCapacity : 0;
 
-        var capacity = ContentCapacity;
-        if (!Drive.HasInitiatorPartition)
-            capacity += TapeNavigator.DefaultTOCCapacity(Drive); // ensure enough space for TOC in set
-
-        Backend.InsertMemoryMedia(capacity, initCap);
+        // No padding: every volume has exactly its own capacity, as in a real series. The TOC reserve is the
+        //  backup's business (Design-TocReserve), not the fixture's.
+        Backend.InsertMemoryMedia(CapacityOfVolume(newVolume), initCap);
         Assert.True(Drive.ReloadMedia(), $"Failed to load new volume #{newVolume}");
         Assert.True(Drive.PrepareMedia(), $"Failed to prepare new volume #{newVolume}");
-
         _loadedVolume = newVolume; // important!
         return newVolume;
     }
@@ -295,6 +319,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// </summary>
     /// <param name="profile">Drive capability profile to emulate.</param>
     /// <param name="contentCapacity">Content partition capacity per volume.</param>
+    /// <param name="volumeCapacity">Optional function to define capacity by volume number.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     /// <param name="mediaDescription">Description for the initial TOC.</param>
     /// <param name="headerMode">How the volumes of the series receive media and set headers.</param>
@@ -305,12 +330,14 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     public MultiVolumeVirtualTapeFixture(
         DriveProfile profile = DriveProfile.Setmarks,
         long contentCapacity = DefaultContentCapacity,
+        Func<int, long>? volumeCapacity = null,
         ILoggerFactory? loggerFactory = null,
         string mediaDescription = "Multi-Volume Test Media",
         VolumeHeaderMode headerMode = VolumeHeaderMode.None,
         bool sealPadding = false)
     {
         ContentCapacity = contentCapacity;
+        VolumeCapacity = volumeCapacity;
         LoggerFactory = loggerFactory ?? TestLoggerFactory.Default;
         Capabilities = VirtualTapeFixture.ProfileToCapabilities(profile);
         HeaderMode = headerMode;
@@ -323,7 +350,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
         //    contentCapacity += TapeNavigator.DefaultTOCCapacity(null); // ensure enough space for TOC in set
 
         Backend = VirtualTapeDriveBackend.CreateMemoryBacked(
-            LoggerFactory, Capabilities, contentCapacity, initCap);
+            LoggerFactory, Capabilities, CapacityOfVolume(1), initCap);
 
         // Disable IO throttling for test speed
         Backend.IoRate = VirtualTapeDriveIoRate.Unlimited;
@@ -378,8 +405,13 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     private long TocReserveFor(TapeNavigator navigator)
         => TOCCapacityOverride ?? navigator.TOCFootprint(TestTocCopyBytes) + TocMarkAllowance;
 
-    /// <summary>Applies <see cref="TocReserveFor"/> to <paramref name="navigator"/>.</summary>
-    private void ApplyTocCapacity(TapeNavigator navigator) => navigator.TOCCapacity = TocReserveFor(navigator);
+    /// <summary>
+    /// Applies the TOC reserve to <paramref name="navigator"/> — the override, the default, or none (live).
+    /// </summary>
+    private void ApplyTocCapacity(TapeNavigator navigator)
+        => navigator.TocReserveOverride = UseLiveTocReserve && TOCCapacityOverride is null
+            ? null
+            : TocReserveFor(navigator);
 
     /// <summary>
     /// Writes the TOC to tape (via agent) and asserts success.
@@ -500,6 +532,8 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
                 ? $" (continuation volume #{TOC.Volume + 1} rejected)" : string.Empty));
 
         SaveToc("after backup");
+        if (ValidatesTocAfterBackup)
+            TocInvariants.AssertWellFormed(TOC);
         return agent.Statistics;
     }
 

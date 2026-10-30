@@ -127,7 +127,8 @@ internal sealed class MemoryTapeWriteBackend : ITapeWriteBackend
         return new WriteResult(blocksAccepted, eom, error);
     }
 
-    public void StartWriting(TapeWriteBuffer buffer, int validBytes) => _inner.StartWriting(buffer, validBytes);
+    public void StartWriting(TapeWriteBuffer buffer, int validBytes, TocCommitPlan? plan = null)
+        => _inner.StartWriting(buffer, validBytes, plan);
     public WriteBackendStatus PollStatus() => _inner.PollStatus();
     public (WriteResult Result, TapeWriteBuffer? Buffer) AwaitCompletion() => _inner.AwaitCompletion();
 

@@ -546,7 +546,7 @@ public partial class TapeSetTOC
         if (maxFileId >= NextFileId)
             NextFileId = maxFileId + 1;
     }
-}
+} // TapeSetTOC
 
 #endregion
 
@@ -853,6 +853,100 @@ public partial class TapeTOC : ITapeBlockPeeker<TapeTocPeek>
         {
             return TapeFrameStatus.Unparseable;
         }
+    }
+}
+
+#endregion
+
+#region *** Size estimates (Design-TocReserve §1) ***
+
+public partial class TapeSetTOC
+{
+    /// <summary>Upper bound of a set record without its description: header, the scalar fields at maximum width.</summary>
+    private const int c_setRecordMax = 160;
+
+    /// <summary>Upper bound of a sealed set's stub record, key envelope included.</summary>
+    private const int c_sealedStubMax = 512;
+
+    /// <summary>Upper bound of one <c>TocSealedChunk</c> record's framing, beside its ciphertext.</summary>
+    private const int c_chunkRecordMax = 32;
+
+    /// <summary>
+    /// Upper bound of this set's footprint in a 2.1 TOC stream (Design-TocReserve TR-5): never below what
+    ///  <see cref="TapeTOC.SaveTo(Stream)"/> writes for it.
+    /// </summary>
+    /// <param name="padUnit">The pad unit an encrypted set would be sealed with (<see cref="TapeTOC.SealPadUnit"/>).</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Plain:</b> the set record plus every entry's <see cref="TapeFileInfo.EstimateSerializedSize"/> — which already
+    ///  carries its share of the batch prologue and assumes no front-coding gain.
+    /// </para>
+    /// <para>
+    /// <b>Locked:</b> exact — its sealed bytes are re-emitted verbatim (E7). <b>Unlocked:</b> the plain content, framed and
+    ///  padded by a whole extra pad unit (≥ the real round-up, and additive, so a running total stays an upper bound),
+    ///  plus one tag and one record per chunk; never below what it was last sealed at.
+    /// </para>
+    /// </remarks>
+    internal long EstimateSerializedSize(int padUnit = TapeSealedPayload.PadUnit)
+    {
+        if (IsLocked)
+            return SealedFootprint(Sealed);
+
+        long plain = c_setRecordMax
+            + Math.Min(Encoding.UTF8.GetByteCount(m_description), TapeFormat.MaxStringBytes);
+        foreach (TapeFileInfo file in m_tapeFileInfos)
+            plain += file.EstimateSerializedSize();
+        if (!IsEncrypted)
+            return plain;
+
+        long sealedNow = SealedEstimate(plain, padUnit);
+        return Sealed is { } last ? Math.Max(sealedNow, SealedFootprint(last)) : sealedNow;
+    }
+
+    /// <summary>
+    /// How much this set's TOC footprint grows by one more entry of <paramref name="entryBytes"/> — the entry itself, plus
+    ///  for an encrypted set its share of the AEAD tags and chunk records (one each per MiB; generously rounded up).
+    /// </summary>
+    internal long EstimateEntryGrowth(long entryBytes)
+        => IsEncrypted ? entryBytes + entryBytes / 32_768 + 1 : entryBytes;
+
+    private static long SealedFootprint(TapeSealedPayload? sealedPayload)
+        => c_sealedStubMax + (sealedPayload is null ? 0L
+            : sealedPayload.CiphertextLength + (long)c_chunkRecordMax * sealedPayload.Chunks.Count);
+
+    private static long SealedEstimate(long content, int padUnit)
+    {
+        // Real plaintext: max(padUnit, roundUp(varuint + content, padUnit)) < content + 10 + padUnit.
+        long padded = content + 10 + Math.Max(1, padUnit);
+        long chunks = padded / TapeAead.MetaChunkSize + 1;
+        return c_sealedStubMax + TapeAead.CiphertextLength(padded, TapeAead.MetaChunkSize) + chunks * c_chunkRecordMax;
+    }
+}
+
+public partial class TapeTOC
+{
+    /// <summary>Upper bound of the TOC header record without its strings.</summary>
+    private const int c_tocHeaderMax = 128;
+
+    /// <summary>Upper bound of the end record plus the CRC-64 trailer.</summary>
+    private const int c_tocEndMax = 64;
+
+    /// <summary>
+    /// Upper bound of ONE copy of this TOC as written on tape (Design-TocReserve §1, TR-5): header, every set — plain,
+    ///  sealed or locked — and the end record. Pure, in memory, one pass over the entries.
+    /// </summary>
+    /// <remarks>
+    /// Not thread-safe against a set being appended to: a backup in progress estimates through its agent's running total
+    ///  instead (Design-TocReserve §4).
+    /// </remarks>
+    public long EstimateSerializedSize()
+    {
+        long size = c_tocHeaderMax + c_tocEndMax
+            + Math.Min(Encoding.UTF8.GetByteCount(Description ?? string.Empty), TocHeaderWire.MaxDescriptionBytes)
+            + Math.Min(Encoding.UTF8.GetByteCount(DefaultWrittenBy), TocHeaderWire.MaxWrittenByBytes);
+        foreach (TapeSetTOC set in m_setTOCs)
+            size += set.EstimateSerializedSize(SealPadUnit);
+        return size;
     }
 }
 

@@ -11,16 +11,17 @@ namespace TapeLibNET.Drive;
 /// A pooled, system-page-aligned write buffer backed by a Pinned-Object-Heap (POH) array.
 /// <para>
 /// The SPTD write path can DMA directly from a page-aligned buffer, skipping the intermediate copy into
-/// native scratch. A POH array never moves, so its data address is stable for life; we over-allocate by
-/// one page and expose a page-aligned WINDOW of <see cref="Capacity"/> bytes. The window's internal start
-/// offset is a private detail — the high layer addresses the window with 0-based positions and never sees it.
+///  native scratch. A POH array never moves, so its data address is stable for life; we over-allocate by
+///  one page and expose a page-aligned WINDOW of <see cref="Capacity"/> bytes. The window's internal start
+///  offset is a private detail — the high layer addresses the window with 0-based positions and never sees it.
 /// </para>
 /// <para>
-/// This is the storable rental handle (it survives the packer's buffer rotation and the worker-thread
-/// handoff), which is why <c>Rent</c> returns this object rather than a <see cref="Span{T}"/> — a ref struct
-/// cannot be stored in a field. The SCSI layer never references this type: the write glue passes the plain
-/// backing array + window offset (both <c>internal</c>), and the SPTD path auto-detects page alignment from
-/// the pinned pointer, so no "isAligned" flag has to cross the boundary.
+///  This is the storable rental handle (it survives the packer's buffer rotation and the worker-thread
+///  handoff), which is why <see cref="TapeWriteBufferPool.Rent"/> returns this object rather than
+///  a <see cref="Span{T}"/> — a ref struct cannot be stored in a field. The SCSI layer never references
+///  this type: the write glue passes the plain backing array + window offset (both <see langword="internal"/>),
+///  and the SPTD path auto-detects page alignment from the pinned pointer, so no "isAligned" flag has to
+///  cross the boundary.
 /// </para>
 /// </summary>
 public sealed class TapeWriteBuffer
@@ -92,12 +93,12 @@ public sealed class TapeWriteBuffer
 
 /// <summary>
 /// Pool of page-aligned <see cref="TapeWriteBuffer"/> instances, bucketed by (page-rounded) capacity.
-/// Supports several live rentals of the same size (e.g. the packer's double-buffering), so each bucket is a
-/// stack of free buffers rather than a single slot. Rent/Return are cheap and thread-safe.
+///  Supports several live rentals of the same size (e.g. the packer's double-buffering), so each bucket is a
+///  stack of free buffers rather than a single slot. Rent/Return are cheap and thread-safe.
 /// <para>
 /// Backed by POH arrays (<see cref="GC.AllocateArray{T}(int, bool)"/>): real <see cref="byte"/>[] that never
-/// move and are GC-reclaimed — no manual free, no leak on exception paths. Keep the pooled count small; POH
-/// is not compacted.
+///  move and are GC-reclaimed — no manual free, no leak on exception paths. Keep the pooled count small; POH
+///  is not compacted.
 /// </para>
 /// </summary>
 public sealed class TapeWriteBufferPool : IDisposable
@@ -122,7 +123,7 @@ public sealed class TapeWriteBufferPool : IDisposable
     /// <summary>
     /// Rents a page-aligned buffer whose <see cref="TapeWriteBuffer.Capacity"/> is at least
     /// <paramref name="minimumCapacity"/> (rounded up to a whole page). Reuses a free buffer of the same
-    /// bucket if available, else allocates a new POH-pinned array.
+    ///  bucket if available, else allocates a new POH-pinned array.
     /// </summary>
     public TapeWriteBuffer Rent(int minimumCapacity)
     {

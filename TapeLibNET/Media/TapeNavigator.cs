@@ -98,30 +98,102 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
         };
     }
 
+    // ── TOC reserve (Design-TocReserve §2) ──────────────────────────────────
+    #region *** TOC reserve ***
+
+    /// <summary>Smallest TOC reserve on LTO drives: one SCSI direct-I/O content buffer.</summary>
+    public const long TocReserveFloorLto = 16L * 1024 * 1024;
+
+    /// <summary>Smallest TOC reserve on other drives (pre-LTO, virtual).</summary>
+    public const long TocReserveFloor = 4L * 1024 * 1024;
+
     /// <summary>
-    /// Maximum space reserved for the TOC area on this tape.
-    /// Instance-level so that concurrent tape operations (or tests) don't interfere.
+    /// Room for the marks around the TOC area — the set's closing mark, the TOC mark, the copies' closing filemarks. One
+    ///  header block: enough on every layout, the virtual one included (the 5d parity test ran with exactly this).
+    /// </summary>
+    internal const long TocMarkAllowance = TapeHeader.FixedHeaderBlockSize;
+
+    /// <summary>
+    /// A fixed TOC reserve replacing the computed one (<see cref="TocReserveFor"/>) — tests, diagnostics.
+    ///  <see langword="null"/> (default) = computed from the TOC's size.
+    /// </summary>
+    public long? TocReserveOverride { get; set; }
+
+    /// <summary>
+    /// The reserve for an EMPTY TOC — the computed floor, or the override. Kept for existing callers; setting it sets
+    ///  <see cref="TocReserveOverride"/>. New code asks <see cref="TocReserveFor"/> with the TOC's size.
     /// </summary>
     public long TOCCapacity
     {
-        get => m_tocCapacityOverride ?? DefaultTOCCapacity(Drive);
-        set => m_tocCapacityOverride = value;
+        get => TocReserveFor(0L);
+        set => TocReserveOverride = value;
     }
 
     /// <summary>
-    /// Size on tape a TOC of <paramref name="tocBytes"/> occupies in this layout when written in full:
-    ///  two copies, each rounded up to whole TOC blocks. Marks are not counted (a few bytes on real media).
-    ///  Layouts with extra structure add it.
+    /// The early-warning reserve this layout needs for a TOC of <paramref name="tocBytes"/> (one copy): both copies, the
+    ///  layout's extra structure and the marks — never below the floor (TR-6). The override, when set, instead.
     /// </summary>
-    /// <remarks>Compared against <see cref="TOCCapacity"/> after each TOC save (Design-TocLocation F4).</remarks>
-    public virtual long TOCFootprint(long tocBytes)
+    public virtual long TocReserveFor(long tocBytes)
+        => TocReserveOverride ?? TocReserveCore(Drive, TOCFootprint(tocBytes));
+
+    /// <summary>
+    /// <see cref="TocReserveFor"/> without a navigator — for the service, which reports the reserve the NEXT backup would
+    ///  start with. Same layout decision as <see cref="ProduceNavigator"/>; 0 without media or with a TOC partition.
+    /// </summary>
+    public static long PredictTocReserve(TapeDrive drive, long tocBytes)
+    {
+        if (!drive.IsMediaLoaded)
+            return 0L;
+        string kind = TapeMediaLayout.Predict(drive, useTOCMark: true).NavigatorKind;
+        if (kind == nameof(TapeNavigatorTOCInPartition))
+            return 0L;
+        long footprint = CopiesFootprint(tocBytes)
+            + (kind == nameof(TapeNavigatorTOCInSetWithFmksAndTOCMark) ? drive.GapFileLength : 0L);
+        return TocReserveCore(drive, footprint);
+    }
+
+    /// <summary>The floor (TR-6) — capped at 1/32 of the medium, so small (virtual) media lose little to it.</summary>
+    private static long TocReserveFloorFor(TapeDrive? drive)
+    {
+        long floor = (drive?.LtoGeneration ?? -1) >= 1 ? TocReserveFloorLto : TocReserveFloor;
+        long capacity = drive?.Capacity ?? 0L;
+        if (capacity > 0L)
+            floor = Math.Min(floor, capacity / 32);
+        return floor;
+    }
+
+    private static long TocReserveCore(TapeDrive? drive, long footprint)
+        => Math.Max(TocReserveFloorFor(drive), footprint + TocMarkAllowance);
+
+    /// <summary>
+    /// <see cref="TocReserveFor"/> as a pure function, snapshotted now: the floor and the override are read once. For the
+    ///  writing thread, which evaluates it many times per buffer (Design-TocReserve §4.3) — <see cref="TapeDrive.Capacity"/>
+    ///  would query the device after every write.
+    /// </summary>
+    internal virtual Func<long, long> CaptureTocReserve()
+    {
+        if (TocReserveOverride is long fixedReserve)
+            return _ => fixedReserve;
+        long floor = TocReserveFloorFor(Drive);
+        return tocBytes => Math.Max(floor, TOCFootprint(tocBytes) + TocMarkAllowance);
+    }
+
+    /// <summary>Two copies of <paramref name="tocBytes"/>, each rounded up to whole TOC blocks.</summary>
+    private protected static long CopiesFootprint(long tocBytes)
     {
         const long block = TapeHeader.FixedHeaderBlockSize;     // TOC and headers share one block size
         long perCopy = Math.Max(1L, (tocBytes + block - 1) / block) * block;
         return 2 * perCopy;
     }
 
-    private long? m_tocCapacityOverride = null;
+    /// <summary>
+    /// Size on tape a TOC of <paramref name="tocBytes"/> occupies in this layout when written in full:
+    ///  two copies, each rounded up to whole TOC blocks. Marks are not counted. Layouts with extra structure add it.
+    /// </summary>
+    /// <remarks>Compared against the reserve armed after each TOC save (Design-TocLocation F4).</remarks>
+    public virtual long TOCFootprint(long tocBytes) => CopiesFootprint(tocBytes);
+
+    #endregion // TOC Reserve
 
     /// <summary>
     /// Whether the navigator knows for sure that TOC exists on the tape.
@@ -1056,6 +1128,20 @@ public class TapeNavigatorTOCInPartition : TapeNavigator
     //private const int ContentPartition = 1;
 
     #endregion // Constants
+
+
+    #region *** TOC reserve ***
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// The TOC has its own partition: content may run to the end of medium — no reserve, whatever the override.
+    /// </remarks>
+    public override long TocReserveFor(long tocBytes) => 0L;
+
+    /// <inheritdoc/>
+    internal override Func<long, long> CaptureTocReserve() => static _ => 0L;
+
+    #endregion
 
 
     #region *** Constructors ***

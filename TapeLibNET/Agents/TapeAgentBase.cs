@@ -506,15 +506,17 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
                 m_logger.LogWarning("TOC 2nd copy backup failed");
         }
 
-        // F4: does this layout's full TOC footprint fit the reserve armed for content? A TOC that outgrew it loses its
-        //  2nd copy on a full volume. (TOC-in-set only: with an initiator partition there is no reserve.)
+        // F4: did this TOC fit the reserve armed for content? A TOC that outgrew it loses its 2nd copy on a full volume.
+        //  The reserve is the drive's (raised as the set grew, Design-TocReserve §4), or a fixed override.
+        //  (TOC-in-set only: with an initiator partition there is no reserve.)
         if (Navigator is TapeNavigatorTOCInSet && LastTOCCopyBytes > 0)
         {
             long footprint = Navigator.TOCFootprint(LastTOCCopyBytes);
-            if (footprint > Navigator.TOCCapacity)
+            long reserve = Navigator.TocReserveOverride ?? Drive.EarlyWarning;
+            if (reserve > 0 && footprint > reserve)
                 m_logger.LogWarning(
                     "The TOC ({Bytes:N0} B) needs {Footprint:N0} B in this layout, more than its reserve of {Reserve:N0} B — " +
-                    "on a full volume only one copy may fit", LastTOCCopyBytes, footprint, Navigator.TOCCapacity);
+                    "on a full volume only one copy may fit", LastTOCCopyBytes, footprint, reserve);
         }
 
         // ── Copy accounting (Design-TocLocation §5.1): COMPLETE copies only ──

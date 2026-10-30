@@ -33,7 +33,7 @@ public class ServiceTocLocationTests : ServiceTestBase
 
     private const int MvFileCount = 16;
     private const long MvFileSize = 350L * 1024;
-    private const long MvCapacitySet = 36L * 1024 * 1024;
+    private const long MvCapacitySet = 3L * 1024 * 1024; // TOC Reserve update. Was: 36L * 1024 * 1024;
     private const long MvCapacityPartitions = 3L * 1024 * 1024;
     private static readonly TimeSpan NoHang = TimeSpan.FromMinutes(2);
 

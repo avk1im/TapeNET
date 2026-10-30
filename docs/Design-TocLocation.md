@@ -860,3 +860,25 @@ Each phase's instructions end with a precise list of what the next phase needs. 
   copies plus room for the closing marks — so every layout keeps both copies, closed, on a full volume. A guard test
   checks it on every volume of every profile and header mode. Single-copy and open-tail volumes are tested only where a
   test asks for them (`SingleCopyTOCCapacity`).
+- **The parity reserve** is the fixture's default; live-reserve tests use equal 1 MiB volumes (see Design-TocReserve §4.7).
+
+#### 12.6 Detour: the live TOC reserve (toc-reserve branch)
+
+- **TL-8 is now realized by Design-TocReserve.** The reserve is no longer `TOCCapacity` (a fixed share of capacity): it is
+  armed from the series TOC at set start and grown by each content write for the files that write starts. F4's
+  after-save size check stays as a backstop and compares against the reserve armed on the drive.
+- **The 5d parity reserve is a test fixture choice only.** The multi-volume fixture keeps it as its default
+  (`TOCCapacityOverride` / layout default); tests opt into the live reserve with `UseLiveTocReserve`. Continuation
+  volumes are no longer padded by 32 MiB: every volume has its own capacity (`VolumeCapacity`, default equal), which
+  the parity guard and the per-volume TOC checks now exercise for real.
+- **Three end-of-volume boundaries surfaced by equal volumes** (now in Design-TocReserve §4.6 and Design-MultiVolume §4.1):
+  a final flush that crosses early warning with every file committed ends the set with no continuation; a set header that
+  does not fit ahead of the reserve moves the set to the next volume; a fresh continuation volume that takes no file ends
+  the backup. Before, the first crashed the resume (index past the file list) and the second failed with "the operation
+  completed successfully".
+- **TOC structure is checked after every fixture backup** (`TocInvariants.AssertWellFormed`): no continuation promised by
+  a completed series, no empty continuation part, ordered volumes and set ends, FileIds unique per logical set, and
+  continuation identity by format — 2.1 parts share the SetId; a 2.1 part continuing a legacy part has its own; never
+  2.1 → legacy.
+  
+> §0.4's "pre-flight check" and §2's TL-8 should reference `Design-TocReserve` instead of describing a fixed reserve.

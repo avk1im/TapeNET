@@ -224,7 +224,49 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     ///<summary>Whether the drive supports hardware compression</summary>
     public bool SupportsCompression => _drive?.SupportsCompression ?? false;
 
-    /// <summary>Estimated used bytes, accounting for TOC-in-set mode.</summary>
+    // The TOC estimate is one pass over every entry — cached per TOC state, since the status bar asks on every refresh.
+    private (TapeTOC? Toc, DateTime Saved, int Sets, long Bytes) m_tocSizeCache;
+
+    /// <summary>
+    /// Upper bound of one copy of the loaded TOC on tape (Design-TocReserve §1); 0 without a TOC. Cached until the TOC is
+    ///  saved or gains a set.
+    /// </summary>
+    /// <remarks>
+    /// The UI may ask while a backup appends to the TOC on its worker thread; a walk that collides with it answers the
+    ///  last value instead — a display figure, renewed at the next save.
+    /// </remarks>
+    public long TocSizeEstimate
+    {
+        get
+        {
+            if (_toc is not TapeTOC toc)
+                return 0L;
+            var cached = m_tocSizeCache;
+            if (ReferenceEquals(cached.Toc, toc) && cached.Saved == toc.LastSaveTime && cached.Sets == toc.Count)
+                return cached.Bytes;
+            try
+            {
+                long bytes = toc.EstimateSerializedSize();
+                m_tocSizeCache = (toc, toc.LastSaveTime, toc.Count, bytes);
+                return bytes;
+            }
+            catch (InvalidOperationException)
+            {
+                return cached.Bytes;        // collided with a backup appending to the TOC
+            }
+        }
+    }
+
+    /// <summary>
+    /// The TOC reserve the NEXT backup starts with (Design-TocReserve §5): both copies of the loaded TOC plus the marks,
+    ///  never below the floor; 0 with a TOC partition or without media. A running backup raises it as it grows.
+    /// </summary>
+    public long TocReserve => _drive is { IsMediaLoaded: true } drive
+        ? TapeNavigator.PredictTocReserve(drive, TocSizeEstimate)
+        : 0L;
+
+    /// <summary>Estimated used bytes: the sets on this volume, plus the TOC reserve when the TOC shares
+    ///  the content partition.</summary>
     public long Used
     {
         get
@@ -233,10 +275,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             // The loaded media header declares whether the sets carry set headers (SH-1); when no header
             //  is loaded the medium is legacy and carries none.
             bool withSetHeaders = LoadedMediaHeader?.HasSetHeaders ?? false;
-            var used = _toc.ComputeTotalFileSizeOnTape(DefaultBlockSize, withSetHeaders);
-            if (!HasInitiatorPartition)
-                used += DefaultTOCCapacity;
-            return used;
+            return _toc.ComputeTotalFileSizeOnTape(DefaultBlockSize, withSetHeaders) + TocReserve;
         }
     }
 
@@ -380,10 +419,14 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// Pass the free space <b>without</b> the TOC deducted; this method performs the deduction.
     /// </para>
     /// </summary>
+    /// <remarks>
+    /// The reserve is the loaded TOC's (<see cref="TocReserve"/>), not re-estimated for the what-if: a set added or removed
+    ///  moves it by its entries only — far below the floor for any realistic set.
+    /// </remarks>
     /// <param name="estimatedFree">Hypothetical estimated free bytes, TOC reserve NOT yet deducted.</param>
     /// <returns>The writable-for-content bytes, never negative.</returns>
     public long ComputeWritableRemaining(long estimatedFree)
-        => Math.Max(0L, estimatedFree - (HasInitiatorPartition ? 0L : DefaultTOCCapacity));
+        => Math.Max(0L, estimatedFree - TocReserve);
 
     /// <summary>
     /// Reads the RAW driver-reported remaining capacity directly from the drive hardware (thread-safe).

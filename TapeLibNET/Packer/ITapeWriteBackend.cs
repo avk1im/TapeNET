@@ -45,11 +45,11 @@ internal readonly record struct WriteResult(
 
 /// <summary>
 /// Synchronous block-write callback the backend invokes on its worker thread (or
-/// inline, depending on the implementation). Implementations should perform the
-/// actual <c>TapeDrive.WriteDirect</c> call and translate its results into a
-/// <see cref="WriteResult"/>. The callback MUST NOT throw for EOM - return
-/// <c>EomEncountered = true</c> instead. Exceptions should be reserved for
-/// hard errors and will be packaged by the backend into
+///  inline, depending on the implementation). Implementations should perform the
+///  actual <c>TapeDrive.WriteDirect</c> call and translate its results into a
+///  <see cref="WriteResult"/>. The callback MUST NOT throw for EOM - return
+///  <c>EomEncountered = true</c> instead. Exceptions should be reserved for
+///  hard errors and will be packaged by the backend into
 /// <see cref="WriteResult.Exception"/>.
 /// </summary>
 /// <param name="buffer">
@@ -60,12 +60,18 @@ internal readonly record struct WriteResult(
 internal delegate WriteResult TapeWriteSink(TapeWriteBuffer buffer, int validBytes);
 
 /// <summary>
+/// <see cref="TapeWriteSink"/> that also receives the buffer's <see cref="TocCommitPlan"/>
+///  (Design-TocReserve §4.2), or <see langword="null"/> when nothing in the buffer carries a TOC entry.
+/// </summary>
+internal delegate WriteResult TapePlannedWriteSink(TapeWriteBuffer buffer, int validBytes, TocCommitPlan? plan);
+
+/// <summary>
 /// Low-layer tape write abstraction used by <c>TapeFileWritePacker</c>. Hides the
-/// (a)synchrony of the underlying tape driver behind a single-write-in-flight
-/// contract: at most one buffer is being written at any moment.
+///  (a)synchrony of the underlying tape driver behind a single-write-in-flight
+///  contract: at most one buffer is being written at any moment.
 /// <para>
 /// Buffer ownership is explicit. After <see cref="StartWriting"/> returns, the
-/// caller MUST NOT touch the handed-off buffer until it is returned via the
+///  caller MUST NOT touch the handed-off buffer until it is returned via the
 /// <c>Buffer</c> field of a subsequent <see cref="AwaitCompletion"/>.
 /// </para>
 /// </summary>
@@ -75,7 +81,7 @@ internal interface ITapeWriteBackend : IDisposable
     uint BlockSize { get; }
 
     /// <summary>
-    ///  Hand off <paramref name="validBytes"/> of <paramref name="buffer"/> for writing.
+    /// Hand off <paramref name="validBytes"/> of <paramref name="buffer"/> for writing.
     ///  Blocks until any previous write has finished. The caller relinquishes ownership
     ///  of <paramref name="buffer"/> until it is returned by <see cref="AwaitCompletion"/>
     ///  (or by an internal completion harvested by the next <see cref="StartWriting"/>).
@@ -85,7 +91,9 @@ internal interface ITapeWriteBackend : IDisposable
     ///  Number of bytes from the start of the buffer window to write. Should be a multiple of
     ///  <see cref="BlockSize"/>; the sink will round down if not.
     /// </param>
-    void StartWriting(TapeWriteBuffer buffer, int validBytes);
+    /// <param name="plan">
+    ///  The TOC entries this buffer's write puts on tape; carried to the sink unchanged.</param>
+    void StartWriting(TapeWriteBuffer buffer, int validBytes, TocCommitPlan? plan = null);
 
     /// <summary>Non-blocking snapshot. <see cref="WriteBackendStatus.Idle"/> when no write is in flight.</summary>
     WriteBackendStatus PollStatus();

@@ -369,6 +369,10 @@ public abstract class MultiVolumeBackupRestoreTestsBase
         for (int i = 1; i <= fixture.TOC.Count; i++)
             totalFiles += fixture.TOC[i].Count;
         Assert.Equal(FileCount, totalFiles);
+
+        // Correct continuation set naming with volume numbers
+        for (int i = 2; i <= fixture.TOC.Count; i++)
+            Assert.Equal($"Flagged multi-volume ({fixture.TOC[i].Volume})", fixture.TOC[i].Description);
     }
 
     #endregion
@@ -662,6 +666,54 @@ public abstract class MultiVolumeBackupRestoreTestsBase
         finally
         {
             TryDeleteDirectory(restoreDir2);
+        }
+    }
+
+    /// <summary>The parts of the LOGICAL (source) backuo set ending at <paramref name="lastPart"/>
+    ///  — itself and the continuations before it.</summary>
+    private static List<TapeSetTOC> PartsOf(TapeTOC toc, int lastPart)
+    {
+        var parts = new List<TapeSetTOC> { toc[lastPart] };
+        for (int i = lastPart; i > 1 && toc[i].ContinuedFromPrevVolume; i--)
+            parts.Insert(0, toc[i - 1]);
+        return parts;
+    }
+
+    /// <summary>
+    /// A second set appended after a first that filled its volume(s). Wherever it starts — in the room left on the last
+    ///  volume (it may then continue on the next), or straight on a fresh one when not even its set header fits ahead of
+    ///  the TOC reserve — the logical set holds exactly its files and restores them.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void SecondSet_OnAVolumeFullToTheReserve_StartsOnTheNextVolume(DriveProfile profile)
+    {
+        using var tree = new TempFileTree();
+        var first = tree.AddFiles("first", count: FileCount, minSize: MinFileSize, maxSize: MaxFileSize);
+        var second = tree.AddFiles("second", count: 4, minSize: MinFileSize, maxSize: MaxFileSize);
+        using var fixture = CreateFixture(profile);
+
+        fixture.BackupFiles(first, "First");
+        int volumesAfterFirst = fixture.TotalVolumes;
+        var stats = fixture.BackupFiles(second, "Second");
+        Assert.Equal(second.Count, stats.FilesSucceeded);
+
+        // The logical set: one part, or a part plus its continuation — never an empty part
+        List<TapeSetTOC> parts = PartsOf(fixture.TOC, fixture.TOC.Count);
+        Assert.Equal(second.Count, parts.Sum(p => p.Count));
+        Assert.All(parts, p => Assert.True(p.Count > 0, $"empty part on volume #{p.Volume}"));
+        Assert.True(parts[0].Volume >= volumesAfterFirst, "the second set starts on the last volume or the next one");
+
+        string restoreDir = Path.Combine(Path.GetTempPath(), $"TapeNET_MVFull_{Guid.NewGuid():N}");
+        try
+        {
+            fixture.TOC.MakeLastSetCurrent();
+            Assert.Equal(second.Count, fixture.RestoreAllFilesFromCurrentSet(restoreDir).FilesSucceeded);
+            FileComparer.AssertFilesMatch(tree.RootPath, second, RestoreEquivalentRoot(restoreDir, tree.RootPath));
+        }
+        finally
+        {
+            TryDeleteDirectory(restoreDir);
         }
     }
 

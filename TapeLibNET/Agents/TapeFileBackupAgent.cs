@@ -35,6 +35,10 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     /// </remarks>
     public long BytesBackedupInCurrentSet => BytesBackedup - BytesBackedupMarker;
 
+    // ── TOC reserve tracking (Design-TocReserve §4) ──────────────────────────
+    /// <summary>The largest hash any algorithm writes (XxHash128): a file's TOC entry is estimated before its hash exists.</summary>
+    private const int c_maxHashBytes = 16;
+
     // ── Software-compression session state ───────────────────────────────
     //  Allocated lazily on first use of the Software compression path and
     //  reused across every file in the session to avoid per-file GC pressure.
@@ -122,12 +126,14 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     /// </summary>
     /// <returns>The remaining content capacity in bytes.</returns>
     /// <remarks>
-    /// The authoritative remaining-capacity figure is the drive's calibrated ESTIMATE
-    ///  (quantity (6)). The TOC reserve is NOT subtracted here: it is armed once, at the drive,
-    ///  via <see cref="TapeDrive.SetEarlyWarning"/> in <see cref="BeginWriteContentForCurrentSet"/>.
-    ///  Subtracting it again would reserve room for the TOC twice and prematurely cut the set short
-    ///  (see the multi-volume regression). Early warning is the real stop signal; this value is advisory
-    ///  only (see <seealso cref="TapeStreamManager.CapacityForCurrentSet"/>).
+    /// <b>This value is advisory only</b> (see <seealso cref="TapeStreamManager.CapacityForCurrentSet"/>).
+    ///  The authoritative remaining-capacity figure is the drive's calibrated ESTIMATE (quantity (6)).
+    /// <para>
+    /// The TOC reserve is NOT subtracted here: armed at set start and grown by each write for
+    ///  the files it starts (Design-TocReserve §4). Subtracting the TOC reserve again would reserve room for
+    ///  the TOC twice and prematurely cut the set short (see the multi-volume regression). Early warning is
+    ///  the real stop signal.
+    /// </para>
     /// </remarks>
     private long ComputeRemainingCapacity()
     {
@@ -202,6 +208,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         //  yet -- see the remarks: it would truncate what verification is about to read.
         bool headsVolume = TOC.CurrentSetIndex == TOC.FirstSetOnVolume && WritesMediaHeader;
         bool deferMediaHeaderWrite = headsVolume && !newSet;
+        m_volumeFullBeforeSetHeader = false;
 
         if (headsVolume && !deferMediaHeaderWrite)
         {
@@ -265,12 +272,11 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         Drive.SetHardwareCompression(TOC.CurrentSetTOC.Compression == TapeCompression.Hardware
             && CipherFor(TOC.CurrentSetTOC).AllowsHardwareCompression);
 
-        // Phase 3: arm the drive's logical early warning to reserve room for the TOC when it is
-        //  co-located with content (TOC-in-set). The drive selects the best available mechanism
-        //  (matching calibration, physical EW, or an a-priori estimate), so WriteDirect raises EW
-        //  ~one TOC-reserve before EOM and the content write can stop cleanly and write the TOC.
-        //  With an Initiator partition the TOC lives elsewhere, so no reserve is needed.
-        Drive.SetEarlyWarning(Drive.HasInitiatorPartition ? 0L : Navigator.TOCCapacity);
+        // Arm the drive's logical early warning with the TOC reserve (TOC-in-set; the TOC-partition
+        //  navigator answers 0): sized from the TOC as it stands, raised by each write for the files it starts
+        //  (Design-TocReserve §4). The drive picks the best mechanism (calibration, physical EW, a-priori),
+        //  so WriteDirect stops content with room for both copies.
+        ArmTocReserve();
 
         // Overwriting existing content (not appending at EOD) leaves the drive reporting capacity−EOD,
         //  which would trip a premature early warning and clamp the set to zero bytes. Anchor the EW
@@ -367,9 +373,23 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             //  sets and restores its own block size, so the set's survives untouched.
             if (!WriteSetHeader())
             {
+                if (newSet && Drive.IsEarlyWarning && Drive.WentOK)
+                {
+                    // Clamped by the reserve, nothing written: the volume is full BEFORE this set — as when the
+                    //  planner trims a header-less set's first write to 0 blocks. The set starts on the next volume.
+                    m_volumeFullBeforeSetHeader = true;
+                    SetError(WIN32_ERROR.ERROR_END_OF_MEDIA,
+                        $"Volume #{TOC.Volume} is full: the set header does not fit ahead of the TOC reserve");
+                    m_logger.LogInformation("{Message}", LastErrorMessage);
+                    return false;
+                }
                 m_logger.LogWarning("Failed to write the set header in {Method}",
                     nameof(BeginWriteContentForCurrentSet));
-                return false;   // WriteSetHeader already set the error; SH-6 reset the position
+                if (WentOK)
+                    SyncErrorFrom(Drive);           // never fail with "operation completed successfully"
+                if (WentOK)
+                    SetError(WIN32_ERROR.ERROR_WRITE_FAULT, "The set header could not be written");
+                return false;   // SH-6 reset the position
             }
         }
 
@@ -390,6 +410,21 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
         return true;
     } // BeginWriteContentForCurrentSet()
+
+    /// <summary>
+    /// Arms the set's TOC reserve from the series TOC as it stands — every set of every volume, the current one included
+    ///  — and hands it to the manager, whose writes then plan against it (Design-TocReserve §4.2). With a TOC partition
+    ///  the reserve is 0 and nothing is planned.
+    /// </summary>
+    private void ArmTocReserve()
+    {
+        long toc = Drive.HasInitiatorPartition ? 0L : TOC.EstimateSerializedSize();
+        long reserve = Navigator.TocReserveFor(toc);
+        Drive.SetEarlyWarning(reserve);
+        Manager.TrackTocReserve(toc);
+        if (reserve > 0)
+            m_logger.LogTrace("TOC reserve armed: {Reserve:N0} B for a TOC of ~{Toc:N0} B", reserve, toc);
+    }
 
     /// <summary>
     /// The recorded end of content could not be confirmed on tape; the marks located one instead. Agreement of the two
@@ -524,12 +559,19 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         ///  saving the full volume's TOC, so we cannot rely on it being there at resume.
         /// </summary>
         internal TapeSetTOCParams? continuationSetParams = null;
+
+        /// <summary>The set's original description as the caller gave it — continuation parts append
+        ///  only their volume to it.</summary>
+        internal string? baseDescription = null;
     }
 
     private TapeBackupContext? MultiVolumeContext { get; set; } = null;
 
     // The fresh cartridge offered for the continuation could not be written — see IsVolumeRejected.
     private bool m_volumeRejected;
+
+    // The set header did not fit ahead of the TOC reserve: the volume is full before this set (nothing written).
+    private bool m_volumeFullBeforeSetHeader;
 
     // The operation's diagnosis when it stopped for a volume change. The caller saves the full volume's TOC with the
     //  public BackupTOC(), which resets the latch; the resume restores it, so an earlier failure survives the swap.
@@ -619,7 +661,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         //  removed and the new set is logically a fresh start, not a continuation.
         var setParams = context.continuationSetParams with
         {
-            Description = context.continuationSetParams.Description + $" ({TOC.Volume})",
+            Description = (context.baseDescription ?? context.continuationSetParams.Description) + $" ({TOC.Volume})",
             Incremental = context.incremental,
         };
         TOC.AddContinuationSetTOC(setParams,
@@ -717,7 +759,10 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         m_logger.LogTrace("Backing up (packed) file >{File}< in {Method}",
             template.FileDescr.FullName, nameof(BackupFile));
 
-        var wstream = Manager.BeginPackedFile() ??
+        // The file's TOC entry, counted into the reserve by the write that reaches its first byte (Design-TocReserve
+        //  §4.2). The hash does not exist yet: count the largest.
+        long tocEntryBytes = TOC.CurrentSetTOC.EstimateEntryGrowth(template.EstimateSerializedSize() + c_maxHashBytes);
+        var wstream = Manager.BeginPackedFile(tocEntryBytes) ??
             throw new TapeIOException(this, this, $"failed to open packed write stream for >{template.FileDescr.FullName}<");
 
         CommitToken token = wstream.CommitToken;
@@ -841,6 +886,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     {
         Debug.Assert(MultiVolumeContext != null);
         TapeBackupContext bc = MultiVolumeContext.Value;
+        // A fresh continuation volume that takes no file can only be followed by another that takes none (TR-7)
+        bool freshContinuation = bc.isContinuation;
 
         if (bc.fileList.Count == 0)
         {
@@ -849,34 +896,52 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             return true;
         }
 
+        if (bc.fileIndex >= bc.fileList.Count)
+        {
+            // A continuation with nothing left to write: never request a volume for it (should be unreachable).
+            Debug.Fail("Continuation past the end of the file list");
+            m_logger.LogError("Continuation past the end of the file list in {Method}", nameof(BackupFilesToCurrentSet));
+            MultiVolumeContext = null;
+            NotifySetEnd(bc.fileNotify);
+            return true;
+        }
+
         // One Start per SET, matching the Ends below. The count is contributed only by the first set of
         //  the operation — see NotifySetStart.
         NotifySetStart(bc.fileNotify, filesAdded: bc.isContinuation ? 0 : bc.fileList.Count);
 
-        // F32: the previous set on this volume ran to end-of-media — the volume is full, and appending would overwrite
-        //  that set. Continue on the next volume straight away, exactly as an EOM on the first file would.
-        if (VolumeIsFullBeforeCurrentSet(newSet))
+        // The volume is full before the current set starts (F32, or a set header that does not fit ahead of the TOC
+        //  reserve): nothing of the set is on this volume. Continue on the next one, exactly as an end-of-media on the first
+        //  file would.
+        bool ContinueOnNextVolumeBeforeSet(string why)
         {
-            m_logger.LogInformation("{Method}: volume #{Volume} ends inside set #{Set} (closed by end-of-media) — " +
-                "the new set starts on the next volume", nameof(BackupFilesToCurrentSet), TOC.Volume, TOC.CurrentSetIndex - 1);
+            m_logger.LogInformation("{Method}: {Why} — set #{Set} starts on the next volume",
+                nameof(BackupFilesToCurrentSet), why, TOC.CurrentSetIndex);
             SetError(WIN32_ERROR.ERROR_END_OF_MEDIA, $"Volume #{TOC.Volume} is full");
-
             bc.prevVolumeHasFiles = false;      // nothing of THIS set is on the full volume
             bc.continuationSetParams = TOC.CurrentSetTOC.ToParams();
-            bc.isContinuation = true;           // files already counted by the NotifySetStart above
+            bc.isContinuation = true;           // files already counted by NotifySetStart
             MultiVolumeContext = bc;
 
             NotifySetEnd(bc.fileNotify);
             TOC.ContinuedOnNextVolume = true;
             Debug.Assert(CanResumeToNextVolume);
-
-            m_carriedFailure = LatchedFailure;  // survives the caller's BackupTOC() between the volumes --
-                                                //  but the latch only: the live EOM is a continuation, not a fault!
-            return false;                       // do NOT LatchFailure(): this is a continuation, not a fault
+            
+            m_carriedFailure = LatchedFailure;  // the latch only: the live EOM is a continuation, not a fault
+            return false;                       // do NOT LatchFailure()
         }
+
+        // F32: the previous set on this volume ran to end-of-media — the volume is full, and appending would overwrite
+        //  that set. Continue on the next volume straight away, exactly as an EOM on the first file would.
+        if (VolumeIsFullBeforeCurrentSet(newSet))
+            return ContinueOnNextVolumeBeforeSet(
+                $"volume #{TOC.Volume} ends inside set #{TOC.CurrentSetIndex - 1} (closed by end-of-media)");
 
         if (!BeginWriteContentForCurrentSet(newSet, bc.fileNotify))
         {
+            if (m_volumeFullBeforeSetHeader && !bc.isContinuation)
+                return ContinueOnNextVolumeBeforeSet($"volume #{TOC.Volume} has no room for the set header");
+
             NotifySetEnd(bc.fileNotify);
 
             if (bc.isContinuation && !IsAbortRequested)
@@ -1162,7 +1227,17 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             }
             catch (TapePackerEndOfMediaException eomEx)
             {
-                eomHandled = HandleEom(eomEx, bc.fileIndex, currentTemplate: null);
+                if (eomEx.RolledBackTokens.Count == 0 && bc.fileIndex >= bc.fileList.Count)
+                {
+                    // Every file is on tape: the early warning of the final flush only says the volume is now full.
+                    //  The set is complete — the manager has already closed it (set mark written, state left). No
+                    //  continuation: asking for another volume would start a set with nothing left to write.
+                    m_logger.LogInformation("{Method}: the set fills up volume #{Volume} — every file written, no continuation",
+                        nameof(BackupFilesToCurrentSet), TOC.Volume);
+                    ResetError();
+                }
+                else
+                    eomHandled = HandleEom(eomEx, bc.fileIndex, currentTemplate: null);
             }
             catch (TapePackerWriteFaultException wfEx)
             {
@@ -1212,11 +1287,24 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             Debug.Assert(CanResumeToNextVolume);
             bc.overallSuccess = false;
 
-            // do NOT LatchFailure(): we can continue to the next volume, hence no hard failure
+            if (freshContinuation && TOC.CurrentSetTOC.Count == 0)
+            {
+                // Design-TocReserve TR-7: a fresh volume took not a single file together with the TOC — another volume
+                //  of this size cannot do better. End here instead of asking for volumes forever.
+                MultiVolumeContext = null;
+                TOC.ContinuedOnNextVolume = false;
+                SetError(WIN32_ERROR.ERROR_DISK_FULL,
+                    $"Volume #{TOC.Volume} holds not a single file of the set together with its table of contents " +
+                    $"(reserve {Helpers.BytesToString(Drive.EarlyWarning)}) — a volume of this size cannot continue the backup");
+                LatchFailure();
+                m_logger.LogError("{Message}", LastErrorMessage);
+                return false;
+            }
 
+            // do NOT LatchFailure(): we can continue to the next volume, hence no hard failure
+            
             m_carriedFailure = LatchedFailure;  // survives the caller's BackupTOC() between the volumes --
                                                 //  but the latch only: the live EOM is a continuation, not a fault!
-            
             m_logger.LogTrace("{Method}: EOM was encountered & handled during backup; MultiVolumeContext set up",
                 nameof(BackupFilesToCurrentSet));
             return false;
@@ -1346,7 +1434,10 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         if (TOC.CurrentSetTOC.Incremental)
             m_logger.LogTrace("Performing incremental (packed) backup to incremental set #{Set}", TOC.CurrentSetIndex);
 
-        MultiVolumeContext = new(fileList, ignoreFailures, fileNotify, TOC.CurrentSetTOC.Incremental);
+        MultiVolumeContext = new(fileList, ignoreFailures, fileNotify, TOC.CurrentSetTOC.Incremental)
+        {
+            baseDescription = TOC.CurrentSetTOC.Description,
+        };
         var result = BackupFilesToCurrentSet(newSet)
             ? TapeResult.OK : FailedOperationResult;
 
