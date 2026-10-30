@@ -208,6 +208,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         //  yet -- see the remarks: it would truncate what verification is about to read.
         bool headsVolume = TOC.CurrentSetIndex == TOC.FirstSetOnVolume && WritesMediaHeader;
         bool deferMediaHeaderWrite = headsVolume && !newSet;
+        m_volumeFullBeforeSetHeader = false;
 
         if (headsVolume && !deferMediaHeaderWrite)
         {
@@ -372,9 +373,23 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             //  sets and restores its own block size, so the set's survives untouched.
             if (!WriteSetHeader())
             {
+                if (newSet && Drive.IsEarlyWarning && Drive.WentOK)
+                {
+                    // Clamped by the reserve, nothing written: the volume is full BEFORE this set — as when the
+                    //  planner trims a header-less set's first write to 0 blocks. The set starts on the next volume.
+                    m_volumeFullBeforeSetHeader = true;
+                    SetError(WIN32_ERROR.ERROR_END_OF_MEDIA,
+                        $"Volume #{TOC.Volume} is full: the set header does not fit ahead of the TOC reserve");
+                    m_logger.LogInformation("{Message}", LastErrorMessage);
+                    return false;
+                }
                 m_logger.LogWarning("Failed to write the set header in {Method}",
                     nameof(BeginWriteContentForCurrentSet));
-                return false;   // WriteSetHeader already set the error; SH-6 reset the position
+                if (WentOK)
+                    SyncErrorFrom(Drive);           // never fail with "operation completed successfully"
+                if (WentOK)
+                    SetError(WIN32_ERROR.ERROR_WRITE_FAULT, "The set header could not be written");
+                return false;   // SH-6 reset the position
             }
         }
 
@@ -550,6 +565,9 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
     // The fresh cartridge offered for the continuation could not be written — see IsVolumeRejected.
     private bool m_volumeRejected;
+
+    // The set header did not fit ahead of the TOC reserve: the volume is full before this set (nothing written).
+    private bool m_volumeFullBeforeSetHeader;
 
     // The operation's diagnosis when it stopped for a volume change. The caller saves the full volume's TOC with the
     //  public BackupTOC(), which resets the latch; the resume restores it, so an earlier failure survives the swap.
@@ -888,30 +906,38 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         //  the operation — see NotifySetStart.
         NotifySetStart(bc.fileNotify, filesAdded: bc.isContinuation ? 0 : bc.fileList.Count);
 
-        // F32: the previous set on this volume ran to end-of-media — the volume is full, and appending would overwrite
-        //  that set. Continue on the next volume straight away, exactly as an EOM on the first file would.
-        if (VolumeIsFullBeforeCurrentSet(newSet))
+        // The volume is full before the current set starts (F32, or a set header that does not fit ahead of the TOC
+        //  reserve): nothing of the set is on this volume. Continue on the next one, exactly as an end-of-media on the first
+        //  file would.
+        bool ContinueOnNextVolumeBeforeSet(string why)
         {
-            m_logger.LogInformation("{Method}: volume #{Volume} ends inside set #{Set} (closed by end-of-media) — " +
-                "the new set starts on the next volume", nameof(BackupFilesToCurrentSet), TOC.Volume, TOC.CurrentSetIndex - 1);
+            m_logger.LogInformation("{Method}: {Why} — set #{Set} starts on the next volume",
+                nameof(BackupFilesToCurrentSet), why, TOC.CurrentSetIndex);
             SetError(WIN32_ERROR.ERROR_END_OF_MEDIA, $"Volume #{TOC.Volume} is full");
-
             bc.prevVolumeHasFiles = false;      // nothing of THIS set is on the full volume
             bc.continuationSetParams = TOC.CurrentSetTOC.ToParams();
-            bc.isContinuation = true;           // files already counted by the NotifySetStart above
+            bc.isContinuation = true;           // files already counted by NotifySetStart
             MultiVolumeContext = bc;
 
             NotifySetEnd(bc.fileNotify);
             TOC.ContinuedOnNextVolume = true;
             Debug.Assert(CanResumeToNextVolume);
-
-            m_carriedFailure = LatchedFailure;  // survives the caller's BackupTOC() between the volumes --
-                                                //  but the latch only: the live EOM is a continuation, not a fault!
-            return false;                       // do NOT LatchFailure(): this is a continuation, not a fault
+            
+            m_carriedFailure = LatchedFailure;  // the latch only: the live EOM is a continuation, not a fault
+            return false;                       // do NOT LatchFailure()
         }
+
+        // F32: the previous set on this volume ran to end-of-media — the volume is full, and appending would overwrite
+        //  that set. Continue on the next volume straight away, exactly as an EOM on the first file would.
+        if (VolumeIsFullBeforeCurrentSet(newSet))
+            return ContinueOnNextVolumeBeforeSet(
+                $"volume #{TOC.Volume} ends inside set #{TOC.CurrentSetIndex - 1} (closed by end-of-media)");
 
         if (!BeginWriteContentForCurrentSet(newSet, bc.fileNotify))
         {
+            if (m_volumeFullBeforeSetHeader && !bc.isContinuation)
+                return ContinueOnNextVolumeBeforeSet($"volume #{TOC.Volume} has no room for the set header");
+
             NotifySetEnd(bc.fileNotify);
 
             if (bc.isContinuation && !IsAbortRequested)

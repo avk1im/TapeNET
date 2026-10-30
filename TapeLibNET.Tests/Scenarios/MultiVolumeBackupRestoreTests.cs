@@ -665,6 +665,42 @@ public abstract class MultiVolumeBackupRestoreTestsBase
         }
     }
 
+    /// <summary>
+    /// A second set appended to a volume that is full up to the TOC reserve: with set headers, the header itself does
+    ///  not fit — the set must start on the next volume (not fail with "operation completed successfully"); without,
+    ///  the first write is trimmed to nothing, to the same effect.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(AllProfiles))]
+    public void SecondSet_OnAVolumeFullToTheReserve_StartsOnTheNextVolume(DriveProfile profile)
+    {
+        using var tree = new TempFileTree();
+        var first = tree.AddFiles("first", count: FileCount, minSize: MinFileSize, maxSize: MaxFileSize);
+        var second = tree.AddFiles("second", count: 4, minSize: MinFileSize, maxSize: MaxFileSize);
+        using var fixture = CreateFixture(profile);
+
+        fixture.BackupFiles(first, "First");
+        int volumesAfterFirst = fixture.TotalVolumes;
+        var stats = fixture.BackupFiles(second, "Second");
+
+        Assert.Equal(second.Count, stats.FilesSucceeded);
+        TapeSetTOC last = fixture.TOC[fixture.TOC.Count];
+        Assert.Equal(second.Count, last.Count);
+        Assert.True(last.Volume >= volumesAfterFirst, "the second set is on the last volume or the next one");
+
+        string restoreDir = Path.Combine(Path.GetTempPath(), $"TapeNET_MVFull_{Guid.NewGuid():N}");
+        try
+        {
+            fixture.TOC.MakeLastSetCurrent();
+            Assert.Equal(second.Count, fixture.RestoreAllFilesFromCurrentSet(restoreDir).FilesSucceeded);
+            FileComparer.AssertFilesMatch(tree.RootPath, second, RestoreEquivalentRoot(restoreDir, tree.RootPath));
+        }
+        finally
+        {
+            TryDeleteDirectory(restoreDir);
+        }
+    }
+
     #endregion
 
 
