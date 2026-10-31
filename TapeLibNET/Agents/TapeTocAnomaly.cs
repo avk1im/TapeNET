@@ -17,6 +17,15 @@ public enum TapeTocAnomalyKind
     ForeignCopySkipped,
     /// <summary>The TOC position was reached, but no copy there could be read.</summary>
     NoReadableCopy,
+    /// <summary>
+    /// The end of content the TOC records was not confirmed by the tape, and the marks lead elsewhere: an append was
+    ///  refused before writing anything (Design-TocLocation §8.1, TL-3).
+    /// <para>
+    /// Not settled by a later write in the operation, which is intended: the dispute stays on tape until someone
+    ///  looks at it.
+    /// </para>
+    /// </summary>
+    RecordedEndDisputed,
 }
 
 /// <summary>

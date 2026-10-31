@@ -83,6 +83,12 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     /// </summary>
     public ContentStopReason VolumeEndReason { get; private set; }
 
+    /// <summary>
+    /// Whether the backup stopped because a fresh continuation volume took not a single file (Design-TocReserve TR-7) —
+    ///  <see cref="VolumeEndReason"/> says why. The series cannot continue on a volume of this kind; the service advises.
+    /// </summary>
+    public bool FreshVolumeTookNoFile { get; private set; }
+
     /// <inheritdoc/>
     /// <remarks>
     /// A backup destroys what it lands on, and lands there by counting marks. Nothing it could learn
@@ -482,11 +488,16 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             return true;
         }
 
-        // The refusal
+        // The refusal — the tape is untouched. Recorded as a TOC anomaly: the TOC's own record is what is in question,
+        //  and the service advises what to do (AdviseOnTocAnomalies).
         SetError(WIN32_ERROR.ERROR_INVALID_DATA,
             $"End of content disputed: the TOC records block {recorded}, the marks lead to block {landed} ({why}) — " +
-            "refusing to append at an unconfirmed position. Scan the media, or reload its table of contents.");
+            "the append was refused, nothing was written");
         m_logger.LogError("{Message}", LastErrorMessage);
+        NotifyTocAnomaly(tocNotify,
+            BuildTocAnomaly(TapeTocAnomalyKind.RecordedEndDisputed, TOC.Volume, copyIndex: 0, TapeResult.Fail(this))
+                with
+            { Block = recorded });
         LatchFailure();
         return false;
     }
@@ -676,6 +687,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         int volume = TOC.Volume + 1;
         m_volumeRejected = false;
         VolumeEndReason = ContentStopReason.None;
+        FreshVolumeTookNoFile = false;
 
         m_logger.LogTrace("Resuming multi-volume backup for volume #{Volume}", volume);
 
@@ -1335,13 +1347,14 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 //  of this size cannot do better. End here instead of asking for volumes forever.
                 MultiVolumeContext = null;
                 TOC.ContinuedOnNextVolume = false;
+                FreshVolumeTookNoFile = true;
 
                 SetError(WIN32_ERROR.ERROR_DISK_FULL, Drive.HasInitiatorPartition
-                    ? $"Volume #{TOC.Volume} holds not a single file of the set: its TOC partition " +
-                      $"({Helpers.BytesToString(Drive.InitiatorCapacity)}) cannot hold the series' table of contents and one " +
-                      "more entry — continue on a cartridge formatted with a larger TOC partition, or start a new series"
-                    : $"Volume #{TOC.Volume} holds not a single file of the set together with its table of contents " +
-                      $"(reserve {Helpers.BytesToString(Drive.EarlyWarning)}) — a volume of this size cannot continue the backup");
+                    ? $"Volume #{TOC.Volume} takes no file of the set: the series' table of contents fills its TOC " +
+                      $"partition ({Helpers.BytesToString(Drive.InitiatorCapacity)})"
+                    : $"Volume #{TOC.Volume} takes no file of the set: the series' table of contents needs its whole " +
+                      $"room (reserve {Helpers.BytesToString(Drive.EarlyWarning)})");
+
                 LatchFailure();
                 m_logger.LogError("{Message}", LastErrorMessage);
                 return false;
@@ -1465,6 +1478,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         m_carriedFailure = TapeResult.OK;
         m_volumeRejected = false;
         VolumeEndReason = ContentStopReason.None;
+        FreshVolumeTookNoFile = false;
 
         if (!EnsureSetFormat(TOC.CurrentSetTOC))
             return FailedOperationResult;

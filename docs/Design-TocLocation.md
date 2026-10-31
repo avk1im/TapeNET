@@ -408,6 +408,7 @@ public enum TapeTocAnomalyKind
     CopyUnreadable,         // a copy was found but did not read (torn, CRC)
     ForeignCopySkipped,     // a copy of another series / volume, or implausibly placed
     NoReadableCopy,         // the ladder ended without a readable copy
+    RecordedEndDisputed,    // the end of content the TOC records was not confirmed by the tape, and the marks lead elsewhere
 }
 
 /// <summary>Which stage produced — or settled — a TOC anomaly. Mirrors <see cref="TapeSetAnomalyStage"/>.</summary>
@@ -444,6 +445,8 @@ accumulated in the list without a second callback.
 
 The **statistics** nest in `TapeFileStatistics.Toc`. The **records** live on the agent (`TapeAgentBase.TocAnomalies`),
 for the same aliasing reason as set anomalies.
+
+A disputed append is recorded as `RecordedEndDisputed`; the service advises Scan Media or reloading the TOC.
 
 ### 5.2 Notifiable hierarchy
 
@@ -549,6 +552,8 @@ step 1, on headerless 2.1 media via step 3.
 | A legacy copy, no value: the earliest copy found by S2 | only if unambiguous; otherwise **refuse** the append ("repair the TOC first") |
 | "Blank" | only with positive evidence: EOD at BOM, or right after media header + FM |
 | `ClosedByEom` on the last set | volume full → next volume (F32, unchanged) |
+
+A disputed append is recorded as `RecordedEndDisputed`; the service advises Scan Media or reloading the TOC.
 
 ### 8.2 Phase-0 defect fixes
 
