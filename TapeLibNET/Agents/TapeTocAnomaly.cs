@@ -2,6 +2,7 @@ using TapeLibNET.Drive;
 
 namespace TapeLibNET.Agents;
 
+
 /// <summary>What is wrong with a TOC copy, or with the search for one (Design-TocLocation §5.1).</summary>
 public enum TapeTocAnomalyKind
 {
@@ -13,7 +14,7 @@ public enum TapeTocAnomalyKind
     NotFoundNatively,
     /// <summary>A copy was found but did not read (torn, CRC); another copy did.</summary>
     CopyUnreadable,
-    /// <summary>A copy of another series or volume, or one implausibly placed, was found and skipped (Phase 4).</summary>
+    /// <summary>A copy of another series or volume, or one implausibly placed, was found and skipped.</summary>
     ForeignCopySkipped,
     /// <summary>The TOC position was reached, but no copy there could be read.</summary>
     NoReadableCopy,
@@ -38,15 +39,16 @@ public enum TapeTocAnomalyStage
     Detected,
     /// <summary>Settled by the other copy, one file away (S1).</summary>
     Sibling,
-    /// <summary>Settled at the expected position from the series TOC (S3, Phase 4).</summary>
+    /// <summary>Settled at the expected position from the series TOC (S3).</summary>
     ExpectedPosition,
-    /// <summary>Settled by the walk from a layout anchor (S2, Phase 4).</summary>
+    /// <summary>Settled by the walk from a layout anchor (S2).</summary>
     AnchorWalk,
-    /// <summary>Settled by the full-media walk (S4, Phase 5).</summary>
+    /// <summary>Settled by the full-media walk (S4).</summary>
     FullWalk,
     /// <summary>
     /// Settled by a later attempt on the same volume within the same operation: an enforced TOC rewrite that wrote the
-    ///  copies, or a re-inserted cartridge whose TOC then read.
+    ///  copies, or a re-inserted cartridge whose TOC then read, or a TOC written over a damaged copy (the append cross-check,
+    ///  Design-TocLocation §8.1).
     /// </summary>
     Retried,
 }
@@ -60,7 +62,7 @@ public enum TapeTocAnomalyStage
 /// <param name="Volume">The volume concerned — the one written to, or the one identified on read; 0 = unknown.</param>
 /// <param name="CopyIndex">1 or 2; 0 = not about one copy.</param>
 /// <param name="Partition">Where the layout keeps its TOC.</param>
-/// <param name="Block">Where the copy stands; -1 = unknown (Phase 4 knows it).</param>
+/// <param name="Block">Where the copy stands; −1 when unknown (the layout's own position could not be reached).</param>
 /// <param name="CanAttemptRecovery">Whether a further stage remains.</param>
 /// <param name="Diagnosis">The drive's or the reader's own error; OK on a recovery.</param>
 public readonly record struct TapeTocAnomaly(
@@ -85,6 +87,8 @@ public readonly record struct TapeTocAnomaly(
         TapeTocAnomalyKind.CopyUnreadable => $"TOC copy {CopyIndex} is unreadable",
         TapeTocAnomalyKind.ForeignCopySkipped => "a TOC copy of another series or volume was skipped",
         TapeTocAnomalyKind.NoReadableCopy => "no readable TOC copy",
+        TapeTocAnomalyKind.RecordedEndDisputed =>
+           "an append was refused: the tape disputes the end of content the TOC records",
         _ => Kind.ToString(),
     };
 
@@ -99,6 +103,10 @@ public readonly record struct TapeTocAnomaly(
             TapeTocAnomalyKind.CopyWriteFailed or TapeTocAnomalyKind.NoCopyWritten
                 => "the TOC was written on a further attempt",
             TapeTocAnomalyKind.CopyUnreadable => "the damaged TOC copy was replaced by this operation's TOC",
+#if DEBUG
+            // TapeTocAnomalyKind.RecordedEndDisputed is detection-only and never reaches here
+            TapeTocAnomalyKind.RecordedEndDisputed => throw new InvalidDataException("RecordedEndDisputed is detection-only, cannot be settled"),
+#endif
             _ => "the TOC was read on a further attempt",
         },
         _ => "settled",

@@ -67,7 +67,10 @@ public partial class TapeAgentBase
     private MediaPartition TOCPartition =>
         TOCPlacement == TapeTocPlacement.InPartition ? MediaPartition.Initiator : MediaPartition.Content;
 
-    /// <summary>A detection on this layout's TOC partition. Phase 2 knows no block and has no further stage.</summary>
+    /// <summary>
+    /// A detection on this layout's TOC partition, with no block and no further stage — the caller sets
+    ///  <see cref="TapeTocAnomaly.Block"/> and <see cref="TapeTocAnomaly.CanAttemptRecovery"/> where it knows them.
+    /// </summary>
     private protected TapeTocAnomaly BuildTocAnomaly(TapeTocAnomalyKind kind, int volume, byte copyIndex, TapeResult diagnosis)
         => new(kind, TapeTocAnomalyStage.Detected, volume, copyIndex, TOCPartition,
             Block: -1, CanAttemptRecovery: false, diagnosis);

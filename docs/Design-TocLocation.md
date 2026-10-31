@@ -1,6 +1,6 @@
 # Design — Locating the TOC (rugged TOC location, TOC anomalies, one block classifier)
 
-**Version:** 4 (replaces v3 entirely). **Status:** final pre-implementation proposal; nothing is implemented yet.
+**Version:** 5 (replaces v4 entirely). **Status:** All phases implemented; pending the final review and rewrite as-implemented.
 
 **Changes since v3** (the user's review, analysed in §0):
 
@@ -885,7 +885,7 @@ Each phase's instructions end with a precise list of what the next phase needs. 
   test asks for them (`SingleCopyTOCCapacity`).
 - **The parity reserve** is the fixture's default; live-reserve tests use equal 1 MiB volumes (see Design-TocReserve §4.7).
 
-#### 12.6 Detour: the live TOC reserve (toc-reserve branch)
+### 12.6 Detour: the live TOC reserve (toc-reserve branch)
 
 - **TL-8 is now realized by Design-TocReserve.** The reserve is no longer `TOCCapacity` (a fixed share of capacity): it is
   armed from the series TOC at set start and grown by each content write for the files that write starts. F4's
@@ -904,7 +904,7 @@ Each phase's instructions end with a precise list of what the next phase needs. 
   continuation identity by format — 2.1 parts share the SetId; a 2.1 part continuing a legacy part has its own; never
   2.1 → legacy.
   
-##### 12.6.1 Budget for TOC-in-partition
+#### 12.6.1 Budget for TOC-in-partition
 
 - **TOC partitions get a budget** (Design-TocReserve §9): a volume ends when the next files' TOC entries would not fit
   the TOC partition twice — before the TOC save, not after. This supersedes §0.4's pre-flight check, which is dropped:

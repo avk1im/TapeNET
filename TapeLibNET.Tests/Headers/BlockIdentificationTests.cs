@@ -249,7 +249,7 @@ public class BlockIdentificationTests
             IdentifiedBlock id = TapeHeaderBlock.IdentifyBlock(block, block.Length);
 
             Assert.Equal(id.Header, TapeHeaderBlock.Classify(block, block.Length));
-            Assert.Equal(id.Header is not null, TapeHeaderBlock.TryIdentifyHeaderBlock(block, block.Length, out _));
+            Assert.Equal(id.Header is not null, TapeHeaderBlock.Classify(block, block.Length) is not null);
 
             bool isToc = TapeTOC.TryPeek(block, block.Length, out ushort version, out Guid media);
             Assert.Equal(id.Kind == HeaderBlockIdentity.TocCopy, isToc);

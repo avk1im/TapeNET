@@ -36,7 +36,7 @@ public enum FileFailedAction
 /// </summary>
 /// <remarks>
 /// A TOC anomaly is REPORTED, never asked about — the agent always tries whatever recovery is cheap (Design-TocLocation
-///  §0, TL-4). The one question, before the full-media walk, is <see cref="OnTocFullWalkConfirm"/> (Phase 5).
+///  §0, TL-4). The one question, before the full-media walk, is <see cref="OnTocFullWalkConfirm"/>.
 /// </remarks>
 public interface ITapeTocNotifiable
 {
@@ -50,7 +50,7 @@ public interface ITapeTocNotifiable
     void OnTocAnomalyRecovered(in TapeTocAnomaly anomaly, in TapeFileStatistics stats) { }
 
     /// <summary>
-    /// Asked before the full-media walk for the TOC of <paramref name="volume"/> (S4, Phase 5). Default: proceed — the
+    /// Asked before the full-media walk for the TOC of <paramref name="volume"/> (S4). Default: proceed — the
     ///  walk only reads, and an unattended run must not stall.
     /// </summary>
     bool OnTocFullWalkConfirm(int volume) => true;

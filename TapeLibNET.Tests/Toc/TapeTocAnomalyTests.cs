@@ -1,6 +1,7 @@
 using TapeLibNET.Agents;
-using TapeLibNET.Toc;
+using TapeLibNET.Drive;
 using TapeLibNET.Tests.Helpers;
+using TapeLibNET.Toc;
 
 namespace TapeLibNET.Tests.Toc;
 
@@ -45,6 +46,18 @@ public class TapeTocAnomalyTests
     }
 
     #endregion
+
+    /// <summary>Every kind has its own wording — the log never falls back to the enum name.</summary>
+    [Fact]
+    public void Summary_EveryKindIsWorded()
+    {
+        foreach (TapeTocAnomalyKind kind in Enum.GetValues<TapeTocAnomalyKind>())
+        {
+            var a = new TapeTocAnomaly(kind, TapeTocAnomalyStage.Detected, 1, 1, MediaPartition.Content, -1, false,
+                TapeResult.OK);
+            Assert.NotEqual(kind.ToString(), a.Summary);
+        }
+    }
 
     #region *** Write: the clean path is silent ***
 

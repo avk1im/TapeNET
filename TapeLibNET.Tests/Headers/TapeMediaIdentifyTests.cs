@@ -12,7 +12,7 @@ namespace TapeLibNET.Tests.Headers;
 
 
 /// <summary>
-/// Scan Media Phase 0, pure tier: <see cref="TapeHeaderBlock.TryIdentifyHeaderBlock"/>,
+/// Scan Media Phase 0, pure tier: <see cref="TapeHeaderBlock.Classify"/>,
 ///  <see cref="TapeHeaderBlock.CarriesRecordSignature"/>, and the JSON round-trip of the scan records.
 /// </summary>
 /// <remarks>
@@ -85,6 +85,19 @@ public class TapeMediaIdentifyTests
         return block;
     }
 
+    private static TapeHeader? AssertGetHeader(byte[] block, int length, string? message = null)
+    {
+        var header = TapeHeaderBlock.Classify(block, length);
+        Assert.True(header is not null, message);
+        return header;
+    }
+
+    private static void AssertNoHeader(byte[] block, int length, string? message = null)
+    {
+        var header = TapeHeaderBlock.Classify(block, length);
+        Assert.True(header is null, message);
+    }
+
     #endregion
 
     #region *** (A) The three header kinds ***
@@ -98,7 +111,7 @@ public class TapeMediaIdentifyTests
     {
         byte[] block = Block(MakeMediaHeader());
 
-        Assert.True(TapeHeaderBlock.TryIdentifyHeaderBlock(block, block.Length, out TapeHeader? header));
+        var header = AssertGetHeader(block, block.Length);
         var media = Assert.IsType<TapeMediaHeader>(header);
         Assert.Equal(s_mediaId, media.MediaId);
         Assert.Equal(2, media.Volume);
@@ -111,7 +124,7 @@ public class TapeMediaIdentifyTests
     {
         byte[] block = Block(MakeSetHeader(volumeSetIndex: 4, globalSetIndex: 9));
 
-        Assert.True(TapeHeaderBlock.TryIdentifyHeaderBlock(block, block.Length, out TapeHeader? header));
+        var header = AssertGetHeader(block, block.Length);
 
         var set = Assert.IsType<TapeSetHeader>(header);
         Assert.Equal(4, set.VolumeSetIndex);
@@ -130,7 +143,7 @@ public class TapeMediaIdentifyTests
         var original = MakeCalibrationHeader();
         byte[] block = Block(original);
 
-        Assert.True(TapeHeaderBlock.TryIdentifyHeaderBlock(block, block.Length, out TapeHeader? header));
+        var header = AssertGetHeader(block, block.Length);
 
         var cal = Assert.IsType<TapeCalibrationHeader>(header);
         Assert.Equal(original.RunId, cal.RunId);
@@ -155,7 +168,7 @@ public class TapeMediaIdentifyTests
         {
             byte[] block = Block(header);
 
-            Assert.True(TapeHeaderBlock.TryIdentifyHeaderBlock(block, block.Length, out TapeHeader? read));
+            var read = AssertGetHeader(block, block.Length);
             Assert.IsType(expected, read);
         }
     }
@@ -204,8 +217,7 @@ public class TapeMediaIdentifyTests
     public void TryIdentify_UnidentifiableInput_ReturnsFalseWithoutThrowing(
         string because, byte[] block, int length)
     {
-        Assert.False(TapeHeaderBlock.TryIdentifyHeaderBlock(block, length, out TapeHeader? header), because);
-        Assert.Null(header);
+        AssertNoHeader(block, length, because);
     }
 
     /// <summary>
@@ -218,8 +230,7 @@ public class TapeMediaIdentifyTests
         byte[] block = Block(MakeSetHeader());
         block[20] ^= 0xFF;       // inside the record body, past the prologue
 
-        Assert.False(TapeHeaderBlock.TryIdentifyHeaderBlock(block, block.Length, out TapeHeader? header));
-        Assert.Null(header);
+        AssertNoHeader(block, block.Length);
     }
 
     /// <summary>
@@ -236,8 +247,7 @@ public class TapeMediaIdentifyTests
         while (recordLength > 0 && block[recordLength - 1] == 0)
             recordLength--;
 
-        Assert.False(TapeHeaderBlock.TryIdentifyHeaderBlock(block, recordLength / 2, out TapeHeader? header));
-        Assert.Null(header);
+        AssertNoHeader(block, recordLength / 2);
     }
 
     /// <summary>
@@ -252,8 +262,7 @@ public class TapeMediaIdentifyTests
         var block = new byte[TapeHeaderBlock.Size];
         LegacyFormatWriter.FileEntryBytes(tfi).CopyTo(block, 0);
 
-        Assert.False(TapeHeaderBlock.TryIdentifyHeaderBlock(block, block.Length, out TapeHeader? header));
-        Assert.Null(header);
+        AssertNoHeader(block, block.Length);
     }
 
     /// <summary>A length beyond the buffer is a caller error, and is refused rather than read past.</summary>
@@ -262,20 +271,7 @@ public class TapeMediaIdentifyTests
     {
         byte[] block = Block(MakeSetHeader());
 
-        Assert.False(TapeHeaderBlock.TryIdentifyHeaderBlock(block, block.Length + 1, out _));
-    }
-
-    /// <summary>The span overload agrees with the array overload on every input.</summary>
-    [Fact]
-    public void TryIdentify_SpanOverload_AgreesWithArrayOverload()
-    {
-        byte[] good = Block(MakeMediaHeader());
-        byte[] bad = RandomBlock(11);
-
-        Assert.True(TapeHeaderBlock.TryIdentifyHeaderBlock(good.AsSpan(), out TapeHeader? fromSpan));
-        Assert.IsType<TapeMediaHeader>(fromSpan);
-
-        Assert.False(TapeHeaderBlock.TryIdentifyHeaderBlock(bad.AsSpan(), out _));
+        AssertNoHeader(block, block.Length + 1);
     }
 
     #endregion
@@ -285,7 +281,7 @@ public class TapeMediaIdentifyTests
     /// <summary>
     /// A header carries the library's signature, so the probe answers TRUE for it. That is not a defect:
     ///  the probe answers "is this one of ours?", and the TOC-copy test (§4.3) is the CONJUNCTION —
-    ///  signature present AND <see cref="TapeHeaderBlock.TryIdentifyHeaderBlock"/> failing.
+    ///  signature present AND <see cref="TapeHeaderBlock.Classify"/> failing.
     /// </summary>
     [Fact]
     public void CarriesRecordSignature_TrueForEveryHeaderKind()

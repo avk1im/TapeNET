@@ -276,8 +276,13 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
         BytesBackedupMarker = BytesBackedup; // important in case of multi-volume backup continuation
 
-        // Design-TocLocation §8.1 (TL-3): an append goes where the TOC says content ends on THIS volume
-        //  — confirmed by the tape, or cross-checked against the marks below when the tape couldn't confirm it.
+        // Design-TocLocation §8.1 (TL-3): an append goes where the TOC says content ends on THIS volume — confirmed by
+        //  the tape, or cross-checked against the marks below when the tape couldn't confirm it.
+        // TL-10 says per-volume facts are looked up by the IDENTIFIED volume, never by TOC.Volume assumed. Here the two
+        //  coincide: an append writes onto the cartridge whose TOC was just read (or written) — the service verified the
+        //  loaded header against this TOC before appending (§10.5 checkpoint 2), and a continuation volume was verified
+        //  fresh before ResumeBackupToNextVolume set TOC.Volume. And the guard does not trust the number anyway: the
+        //  recorded end is checked against the tape, and a dispute refuses the append (RecordedEndDisputed).
         long recordedEnd = -1;
         RecordedEndOfContent endCheck = RecordedEndOfContent.NotApplicable;
         TapeResult endEvicence = TapeResult.OK;

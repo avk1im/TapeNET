@@ -1,5 +1,4 @@
 using System.Diagnostics.CodeAnalysis;
-using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
 using TapeLibNET.Format;
 using TapeLibNET.Legacy;
@@ -64,10 +63,10 @@ public readonly record struct IdentifiedBlock(
     public static readonly IdentifiedBlock Foreign = new(HeaderBlockIdentity.Foreign);
 
     /// <summary>The TOC version for <see cref="HeaderBlockIdentity.TocCopy"/>; 0 otherwise.</summary>
-    public ushort TocVersion => Toc?.Version ?? 0;
+    public ushort TocVersion => TryGetToc(out TapeTocPeek toc) ? toc.Version : (ushort)0;
 
     /// <summary>The TOC's series identity for <see cref="HeaderBlockIdentity.TocCopy"/>; empty otherwise.</summary>
-    public Guid TocMediaId => Toc?.MediaId ?? Guid.Empty;
+    public Guid TocMediaId => TryGetToc(out TapeTocPeek toc) ? toc.MediaId : Guid.Empty;
 
     /// <summary>The intact header of kind <typeparamref name="T"/>, if that is what the block is.</summary>
     public bool TryGetHeader<T>([NotNullWhen(true)] out T? header) where T : TapeHeader
@@ -178,31 +177,13 @@ public static partial class TapeHeaderBlock
 
     #endregion
 
-    #region *** Projections — one-line views of the dispatcher ***
+    #region *** Projection — one-line view of the dispatcher ***
 
     /// <summary>
     /// The intact header a block holds — media, set, or calibration, in either format — or <see langword="null"/> for
     ///  everything else. A projection of <see cref="IdentifyBlock"/>.
     /// </summary>
     public static TapeHeader? Classify(byte[] buffer, int length) => IdentifyBlock(buffer, length).Header;
-
-    /// <summary>
-    /// "Is this an intact header?" — a projection of <see cref="IdentifyBlock"/>. A caller that must tell a DAMAGED
-    ///  header from foreign data, or recognize a TOC copy or a file header, uses <see cref="IdentifyBlock"/>.
-    /// </summary>
-    /// <remarks>
-    /// <b>Deliberately NOT a change to <see cref="TapeAgentBase.ClassifySetHeader"/>.</b> That method takes an
-    ///  already-parsed <see cref="TapeSetHeader"/> and compares it with the TOC's expectation — it never parses.
-    /// </remarks>
-    public static bool TryIdentifyHeaderBlock(byte[] block, int length, out TapeHeader? header)
-    {
-        header = IdentifyBlock(block, length).Header;
-        return header is not null;
-    }
-
-    /// <summary>Span overload for callers holding a slice rather than the whole block. Copies into a temporary.</summary>
-    public static bool TryIdentifyHeaderBlock(ReadOnlySpan<byte> block, out TapeHeader? header)
-        => TryIdentifyHeaderBlock(block.ToArray(), block.Length, out header);
 
     #endregion
 

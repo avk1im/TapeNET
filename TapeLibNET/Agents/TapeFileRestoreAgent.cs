@@ -567,10 +567,15 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
     public bool CanResumeFromAnotherVolume => MultiVolumeContext is not null && !m_volumeRejected;
 
     /// <summary>
-    /// Whether the volume loaded for the continuation CANNOT be used — its TOC unreadable (or undecryptable), another
-    ///  series, the wrong volume number, or not holding the set the TOC describes. The restore is still pending
-    ///  (<see cref="VolumeToResumeFrom"/> is still needed). The caller decides: load a cartridge and call
-    ///  <see cref="ResumeRestoreFromAnotherVolume"/> again, <see cref="SkipRequestedVolume"/>, or end.
+    /// Whether the volume loaded for the continuation CANNOT be used: nothing identifies it as the requested volume of
+    ///  this series (Design-TocLocation §7 — media header, own TOC, the set's first block, a search of the whole medium),
+    ///  or something identifies it as another — another series, another volume number, a set that does not match. A
+    ///  cartridge whose own TOC merely does not read is NOT rejected when its header or its set identifies it. The
+    ///  restore is still pending (<see cref="VolumeToResumeFrom"/> is still needed).
+    /// <para>
+    /// The caller decides: load a cartridge and call <see cref="ResumeRestoreFromAnotherVolume"/> again,
+    ///  <see cref="SkipRequestedVolume"/>, or end.
+    /// </para> 
     /// </summary>
     public bool IsVolumeRejected => MultiVolumeContext is not null && m_volumeRejected;
 
@@ -594,10 +599,10 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
     /// <summary>
     /// Continues the restore from a different volume after the caller has loaded the requested media.
     /// <para>
-    /// Identifies the cartridge first — its own TOC must read, belong to this series, carry the requested volume number
-    ///  and the next set as the TOC describes it. A cartridge that fails any of these is REJECTED
-    ///  (<see cref="IsVolumeRejected"/>): nothing has been restored from it, and the caller may retry, skip the volume,
-    ///  or end.
+    /// Identifies the cartridge first (<see cref="CheckVolumeToResumeFrom"/>, Design-TocLocation §7): by its media header,
+    ///  its own TOC, its set's first block, or — asked first — a search of the whole medium. A cartridge nothing
+    ///  identifies, or one identified as another, is REJECTED (<see cref="IsVolumeRejected"/>): nothing has been restored
+    ///  from it, and the caller may retry, skip the volume, or end.
     /// </para>
     /// <para>The original TOC is kept: it addresses the whole series.</para>
     /// </summary>
