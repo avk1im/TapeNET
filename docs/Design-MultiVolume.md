@@ -16,7 +16,7 @@ Design-Encryption (§8.3 continuation sets, §9.5 locked sets across volumes).
 
 | Term | Meaning |
 |---|---|
-| **Volume** | One cartridge of a series. `TapeTOC.Volume` is 1-based; every volume carries its own media header (if headed) and its own TOC. |
+| **Volume** | One cartridge of a series. `TapeTOC.Volume` is 1-based; every volume carries its own media header (if headed) and, normally, its own TOC — a volume whose TOC was lost is still restorable through the series TOC (§5.2). |
 | **Series** | All volumes of one backup history, identified by `TapeTOC.MediaId` (stamped into every media header). |
 | **Logical set** | One backup set as the user sees it. It may consist of several **parts**, one per volume. |
 | **Continuation part** | A `TapeSetTOC` with `ContinuedFromPrevVolume = true`. It shares the logical set's `SetId`, `FileId` sequence and (if encrypted) envelope and key. Its description is the set's original description plus `(n)`, the part's volume — never a chain of suffixes. |
@@ -96,28 +96,21 @@ that want to offer a choice look at `IsVolumeRejected`.
   early warning of the TOC reserve (Design-TocReserve). `HandleEom` rolls back the uncommitted files (their ids stay
   burned, MV-6), snapshots the continuation metadata, closes the write session and sets `TOC.ContinuedOnNextVolume`. The
   agent returns false with `CanResumeToNextVolume`; the live `ERROR_END_OF_MEDIA` is **not latched** (MV-2).
-- **Full, but complete.** If the early warning comes from the **final** flush and every file is committed, the set is
-  complete on this volume: **no continuation** is set up.
-- **Full before the set** — the agent asks for the next volume straight away, without writing to this one:
-  - F32: on TOC-in-partition media, the previous set ran to end-of-media;
-  - the new set's **set header does not fit** ahead of the TOC reserve (`ContinueOnNextVolumeBeforeSet`) — the same
-    outcome as a header-less set whose first write is trimmed to nothing.
-- **A fresh continuation volume that takes no file** ends the backup with `ERROR_DISK_FULL`: a volume of that size cannot
-  continue it, and asking for another would loop (TR-7).
+  - **Full, but complete.** If the early warning comes from the **final** flush and every file is committed, the set is
+    complete on this volume: **no continuation** is set up.
+  - **Full before the set** — the agent asks for the next volume straight away, without writing to this one: 
+    - F32: on TOC-in-partition media, the previous set ran to end-of-media;
+    - the new set's set header does not fit ahead of the TOC reserve (ContinueOnNextVolumeBeforeSet) — the same outcome as a header-less set whose first write is trimmed to nothing.
+  - **A fresh continuation volume that takes no file** ends the backup with ERROR_DISK_FULL: a volume of that size cannot continue it, and asking for another would loop (Design-TocReserve TR-7).
 
-2. **F32 shortcut.** On TOC-in-partition media, a previous set that ran to end-of-media means the volume is full before
-   the new set starts. The agent asks for the next volume straight away.
-
-   If a set header that doesn't fit ahead of the reserve then the volume is full before the set → continue on the next volume (as for a trimmed first content write).
-
-3. **Between volumes (service).**
+2. **Between volumes (service).**
    - Clean up the TOC (an empty trailing part is removed) and save it to the full volume.
    - Ask the user (`OnVolumeFullConfirm`).
    - Eject and insert fresh media (`OnInsertNewMediaConfirm`), then load.
    - **Verify the cartridge is fresh.** This identity check is inverted: a header with the series' own `MediaId` means
-     *an earlier volume of this series* and is `WrongVolume`.
+     an earlier volume of this series and is `WrongVolume`.
 
-4. **Resume.** `ResumeBackupToNextVolume`:
+3. **Resume.** `ResumeBackupToNextVolume`:
    - consumes the stale live error, and restores the carried latch (§6);
    - renews the navigator, which also drops any stale session (§7);
    - increments `TOC.Volume` and appends the continuation part;
@@ -125,7 +118,7 @@ that want to offer a choice look at `IsVolumeRejected`.
 
    The new volume is headed by the agent itself, inside `BeginWriteContentForCurrentSet` (§17.10 of Design-SetHeaders).
 
-5. Repeat until the file list is done. The service saves the final TOC.
+4. Repeat until the file list is done. The service saves the final TOC.
 
 ### 4.2 Rejecting a continuation cartridge
 
@@ -174,7 +167,7 @@ For the selected sets the `TapeRestoreContext` holds:
 
 ### 5.2 The flow
 
-1. The service opens the **last** volume (complete TOC) and calls `RestoreFilesFromCurrentSetDown`.
+1. Open the last volume (complete TOC) and call `RestoreFilesFromCurrentSetDown`.
 2. **The walk.** The agent works through the package. When the next set is not on the loaded cartridge
    (`!TOC.IsCurrentSetOnVolume`), it:
    - stores the context;
@@ -191,11 +184,8 @@ For the selected sets the `TapeRestoreContext` holds:
      series TOC describes it (file count; SetId, scheme and size on tape for locked encrypted sets);
    - if neither identifies it: the **first block of the needed set** (a set header or 2.1 file header with its SetId);
    - last resort, asked first: a **full-media search** for its own TOC (S4).
-     A cartridge whose own TOC does not read is **not** rejected when step 1 or 3 identifies it: the series TOC addresses
-     every file; `NoReadableCopy` is recorded as a TOC anomaly. The series TOC is then put back.
-
-   The original TOC is then put back; it addresses the whole series. The walk continues.
-5. The walk takes ownership of the context on entry (it clears it), so no volume is "pending" while it runs. Only a
+   A cartridge whose own TOC does not read is not rejected when step 1 or 3 identifies it: the series TOC addresses every file; NoReadableCopy is recorded as a TOC anomaly. The series TOC is put back whatever the outcome, and the walk continues.
+5. **The walk takes ownership of the context on entry** (it clears it), so no volume is "pending" while it runs. Only a
    new volume request re-establishes it. A `break` (abort, or a failure with `!ignoreFailures`) can therefore never
    leave a stale context behind (§9, D4).
 
@@ -283,7 +273,7 @@ neither retries them nor writes a filemark behind the broken file, and further `
 - the read packer is released;
 - the state is forced back to `MediaPrepared`.
 
-Every branch logs a warning. With §7.1 in place none should fire; if one does, a session leaked across a volume change.
+With §7.1 in place, the warnings should never fire; if one does, a session leaked across a volume change.
 
 This is defence in depth for MV-4. The manager's ordinary `EndReadWrite()` (force-dispose a stream in use) does tape
 I/O and is correct **within** a cartridge; it must never be the thing that cleans up **after** a media change.
@@ -301,7 +291,7 @@ The host is asked at three volume-level stages, plus the "go on?" prompts:
 | Continue (restore) | `OnVolumeContinueSelect(volume, mode)` | `VolumeAction` | the agent asks for an earlier volume |
 | Continue (backup) | `OnVolumeFullConfirm(…)` | `bool` | the volume is full |
 | **Load** | `OnMediaLoadRetryConfirm(error, again)` | `bool` | the drive cannot load the cartridge |
-| **Identity** | `OnMediaMismatchConfirm(header, verdict, context, …)` | `MediaMismatchChoice` | the header says it is the wrong cartridge |
+| **Identity** | `OnMediaMismatchConfirm(header, verdict, context, …)` | `MediaMismatchChoice` | the header says it is the wrong cartridge — or, context FullWalkForTOC, before searching the whole medium for its TOC (resume step 4, Design-TocLocation §7) |
 | **Content** | `OnVolumeErrorSelect(volume, error, operation, allowSkip)` | `VolumeAction` | loaded and identified, but unusable |
 
 `VolumeAction` is `Insert` (insert the volume again, or another copy, and continue), `Skip` (go on without it; restore
@@ -352,7 +342,7 @@ result is **failed**, naming the files left out ("Backup ended after volume #n �
 
 | # | Defect | Effect | Fix |
 |---|---|---|---|
-| D1 | A failed `ResumeRestoreFromAnotherVolume` (unreadable TOC, wrong volume, …) left the context unchanged | every caller looping on `CanResume…` re-offered the same cartridge **forever**; the service never said why | the three-state model, §3 |
+| D1 | A failed `ResumeRestoreFromAnotherVolume` (unreadable TOC, wrong volume, …) left the context unchanged | every caller looping on `CanResume…` re-offered the same cartridge **forever**; the service never said why | the three-state model, §3; since Design-TocLocation §7, a rejection needs an unidentifiable cartridge (§5.3) |
 | D2 | `ResumeBackupToNextVolume` leaked its context when the navigator could not be renewed or the format check refused; a fresh cartridge refusing the first write ended the backup | the service saved a TOC onto an unusable cartridge, or repeated volume increments; no chance to offer another cartridge | rejection with rollback, §4.2; MV-5 |
 | D3 | Restore failures on resumed volumes were not latched; the identification `RestoreTOC()` reset the latch | an early failure vanished after a swap: "operation did not complete" | the walk owns the context; latch restored, §5.2, §6 |
 | D4 | A `break` during a resumed walk left the old context set | a stale, out-of-date continuation | the walk clears the context on entry, §5.2 |
@@ -372,14 +362,14 @@ result is **failed**, naming the files left out ("Backup ended after volume #n �
 
 | Suite | Layer | Pins |
 |---|---|---|
-| `MultiVolumeResumeTests` | agent | D1 (unreadable TOC, wrong volume), skip after error and voluntary, D3, D5, D6, backup rejection with rollback and retry |
-| `ServiceMultiVolumeErrorTests` | service | Skip at the continue prompt; unreadable volume → End / Insert / Skip; backup refused cartridge → End (nothing on vol 2) / Insert. Every operation under a time bound, so a loop regression fails instead of hanging |
-| `TapeStreamDisposalTests` | stream manager | D8: a failed flush still signs out; no stale write on the next transition; a fresh 2nd TOC stream; a faulted stream disposes quietly; abandon on a media change |
-| `MultiVolumeBackupRestoreTests`, `ServiceMultiVolumeTests`, `MultiVolumeEncryptionTests` | both | the normal flows over profiles and header modes; encrypted continuation (shared envelope and key, fresh FileIds, locked TOCs across volumes) |
-| `MultiVolumeBackupRestoreTests` | agent | D12 (`TwoSets_DifferentVolumes_…`), D13 (`SecondSet_OnAVolumeFullToTheReserve_…`), D14; parity of both TOC copies per volume |
-| `TocReserveAgentTests` | agent | D15 (mixed 2×/1× volume sizes, both orders); TR-7 no loop |
-| `ServiceMultiVolumeErrorTests` | service | D11 (`Backup_SeriesEndedByUser_…`); unidentifiable vs. merely TOC-less volumes (§5.3) |
-| `MultiVolumeEncryptionTests` | agent | D13 on encrypted incrementals |
+| MultiVolumeResumeTests | agent | D1 (unidentifiable cartridge, wrong volume), skip after error and voluntary, D3, D5, D6, backup rejection with rollback and retry; a TOC-less volume identified by header or set (§5.2); S4 as the last resort, confirmed and declined |
+| ResumeIdentificationTests | agent | §5.2 identification steps across header modes |
+| ServiceMultiVolumeErrorTests | service | Skip at the continue prompt; unidentifiable volume → End / Insert / Skip; a TOC-less but identifiable volume restores without a prompt (§5.3); backup refused cartridge → End / Insert; D11. Every operation under a time bound |
+| TapeStreamDisposalTests | stream manager | D8 |
+| MultiVolumeBackupRestoreTests | agent | the normal flows over profiles and header modes; D12, D13, D14; both TOC copies on every volume |
+| ServiceMultiVolumeTests | service | the normal flows |
+| MultiVolumeEncryptionTests | agent | encrypted continuation (shared envelope and key, fresh FileIds, locked TOCs across volumes); D13 on encrypted incrementals |
+| TocReserveAgentTests | agent | D15 (mixed 2×/1× volume sizes, both orders); TR-7 no loop |
 
 ---
 
@@ -403,7 +393,7 @@ result is **failed**, naming the files left out ("Backup ended after volume #n �
 | Concern | Where |
 |---|---|
 | Backup context, EOM handling, resume, rejection | `TapeFileBackupAgent`: `TapeBackupContext`, `HandleEom`, `ResumeBackupToNextVolume`, `UndoContinuationSet`, `RejectVolume` |
-| Restore context, walk, identification, skip | `TapeFileRestoreBaseAgent`: `TapeRestoreContext`, `RestoreFilesFromCurrentSetDownCore`, `ResumeRestoreFromAnotherVolume`, `CheckVolumeToResumeFrom`, `SkipRequestedVolume` |
+| Restore context, walk, identification, skip | `TapeFileRestoreBaseAgent` (`TapeFileRestoreAgent.cs`): `TapeRestoreContext`, `RestoreFilesFromCurrentSetDownCore`, `ResumeRestoreFromAnotherVolume`, `CheckVolumeToResumeFrom`, `SkipRequestedVolume` |
 | Shared helpers | `TapeAgentBase.MultiVolume`: `LatchedFailure`, `RestoreLatchedFailure`, `StatsUndoSet`, `StatsAddUnprocessed` |
 | Continuation sets | `TapeTOC.AddContinuationSetTOC`, `TapeSetTOC.ToParams` |
 | Service loops | `TapeServiceBase.Backup` (`ExecuteBackupCore`, `SwapToFreshVolume`), `TapeServiceBase.Restore` (`ExecuteRestoreCore`) |
@@ -411,5 +401,5 @@ result is **failed**, naming the files left out ("Backup ended after volume #n �
 | Stream lifecycle | `TapeLibNET.Streams.TapeStream` (`Dispose`, `CompleteOnDispose`, `Abandon`), `TapeStreamManager` (`OnDisposeStream`, `RenewNavigator`, `AbandonReadWrite`) |
 | Test drivers | `MultiVolumeVirtualTapeFixture` (agent level), `MultiVolumeTapeServiceHost` (service level) |
 | Full volume before / at the end of a set | `TapeFileBackupAgent`: `ContinueOnNextVolumeBeforeSet`, the final-flush handler in `BackupFilesToCurrentSet` |
-| Volume identification | `TapeFileRestoreAgent.CheckVolumeToResumeFrom`, `TapeAgentBase.TocLocation` (ladder, S4) |
+| Volume identification | `TapeFileRestoreBaseAgent` (`TapeFileRestoreAgent.cs`): `CheckVolumeToResumeFrom`, `TapeAgentBase.TocLocation` (ladder, S4) |
 | Test invariants | `TocInvariants`, `MultiVolumeVirtualTapeFixture.VolumeCapacity` |
