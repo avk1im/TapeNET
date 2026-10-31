@@ -1,6 +1,7 @@
 using TapeLibNET.Agents;
 using TapeLibNET.Compression;
 using TapeLibNET.Headers;
+using TapeLibNET.Media;
 using TapeLibNET.Toc;
 using Windows.Win32.System.SystemServices; // Helpers, Stopwatch
 using Stopwatch = Windows.Win32.System.SystemServices.Stopwatch;
@@ -62,6 +63,7 @@ public partial class TapeServiceBase
         ServiceBackupProgressHandler? progressHandler = null;
         TapeFileBackupAgent? agent = null;
         TapeResult agentResult = TapeResult.OK; // Note TapeResult.OK, NOT default — a default TapeResult means FAILURE
+        List<VolumeEnd> volumeEnds = [];        // Design-TocReserve §9.6: why each volume ended before the files did
 
         // +-------------------------------+--------------------------------------+-----------------------------------------------+
         // | Figure                        | Scope                                | Notes                                         |
@@ -104,6 +106,7 @@ public partial class TapeServiceBase
                 SetStats = progressHandler?.SetStats ?? new(),
                 TocStats = agent is null ? default : agent.Statistics.TocStats,
                 TocAnomalies = agent is null ? [] : [.. agent.TocAnomalies],
+                VolumeEnds = [.. volumeEnds],
             };
 
         if (_drive is null || !_drive.IsMediaLoaded)
@@ -460,6 +463,9 @@ public partial class TapeServiceBase
                     continue;   // → ResumeBackupToNextVolume on the new cartridge
                 }
 
+                if (agent.CanResumeToNextVolume || agent.FreshVolumeTookNoFile)
+                    volumeEnds.Add(new VolumeEnd(toc.Volume, agent.VolumeEndReason));
+
                 bool noFilesBackedUp = toc.CurrentSetTOC.Count == 0;
                 bool skipTOCSave = false;
 
@@ -540,11 +546,19 @@ public partial class TapeServiceBase
                     }
                 } // if (noFilesBackedUp)
 
-                // 2. Log volume-full status (applies regardless of file count)
-                //    Check CanResumeToNextVolume to determine if the backup can continue on a new volume.
+                // 2. Log volume-full status (applies regardless of file count) — with the reason when it is not the
+                //    medium's end (Design-TocReserve §9.6)
                 if (agent.CanResumeToNextVolume)
                 {
-                    if (!request.NoMultivolume)
+                    if (agent.VolumeEndReason == ContentStopReason.TocPartitionFull)
+                    {
+                        LogWarn($"Volume #{toc.Volume} ends early: its TOC partition " +
+                                $"({Helpers.BytesToString(_drive.InitiatorCapacity)}) is full");
+                        if (!request.NoMultivolume)
+                            LogWarnSub("Continue on a cartridge with a larger TOC partition — one of the same size " +
+                                       "cannot take more files of this series");
+                    }
+                    else if (!request.NoMultivolume)
                         LogInfo($"Volume #{toc.Volume} is full - backup can continue to next volume");
                     else
                         LogInfo($"Volume #{toc.Volume} is full - backup will complete (no-multivolume mode)");
@@ -690,12 +704,13 @@ public partial class TapeServiceBase
                             $"{resultSoFar.FilesTotal:N0} file(s) written so far");
                     LogInfoSub($"{Helpers.BytesToStringLong(agent.BytesBackedupInCurrentSet)} written to this volume");
                 }
-                else
+                else if (!agent.FreshVolumeTookNoFile)      // a stopped series reports once, after the loop
                 {
                     // The whole operation outcome
                     ReportFileOperationOutcome(resultSoFar, "Backup");
                     ReportSetAnomalyOutcome(progressHandler.SetStats);
                     ReportTocAnomalyOutcome(agent);
+                    ReportVolumeSpaceOutcome(volumeEnds, seriesStopped: false);
                 }
 
                 // Current statistics we report for each volume.
@@ -752,12 +767,15 @@ public partial class TapeServiceBase
             if (volumes > 0)
                 LogInfoSub($"Across {volumes} volume(s)");
 
-            if (endedOnRejectedVolume || endedByUser)
+            bool seriesStopped = agent.FreshVolumeTookNoFile;
+            if (endedOnRejectedVolume || endedByUser || seriesStopped)
             {
                 // The backup ends on the last volume that took data; its TOC was saved before the volume change. The files
-                //  after it were never written: the operation did not do what was asked, whoever ended it.
+                //  after it were never written: the operation did not do what was asked, whoever ended it. A stopped series
+                //  keeps the agent's diagnosis; the advice below says what to do.
+                int lastWithData = seriesStopped ? toc.Volume - 1 : toc.Volume;
                 int notBackedUp = Math.Max(0, progressHandler.FilesTotal - progressHandler.FilesProcessed);
-                string why = $"Backup ended after volume #{toc.Volume} — {notBackedUp:N0} file(s) not backed up";
+                string why = $"Backup ended after volume #{lastWithData} — {notBackedUp:N0} file(s) not backed up";
                 var ended = MakeResult(aborted: wasAborted, failed: !wasAborted,
                     // A rejected cartridge keeps the agent's diagnosis (it names the volume); a user's decision gets its own.
                     diagnosis: endedByUser && !wasAborted
@@ -767,6 +785,7 @@ public partial class TapeServiceBase
                 ReportBackupStats(ended,
                     dataSecs: dataElapsedUs / 1e6, ioSecs: dataIoElapsedUs / 1e6, tocSecs: tocElapsedUs / 1e6);
                 ReportTocAnomalyOutcome(agent);
+                ReportVolumeSpaceOutcome(volumeEnds, seriesStopped);
                 LogFail(why);
                 OnStatusUpdate(wasAborted ? "Backup aborted" : "Backup ended");
                 return ended;

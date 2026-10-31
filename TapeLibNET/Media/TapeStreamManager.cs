@@ -11,6 +11,19 @@ using TapeLibNET.Packer;
 namespace TapeLibNET.Media;
 
 
+/// <summary>Why the last content session stopped short of its files (Design-TocReserve §9.6).</summary>
+public enum ContentStopReason
+{
+    /// <summary>It did not, or not for lack of room.</summary>
+    None,
+    /// <summary>The medium ended (or the artificial content limit).</summary>
+    EndOfMedia,
+    /// <summary>TOC in set: the early-warning reserve for the TOC was reached.</summary>
+    TocReserve,
+    /// <summary>TOC in partition: the next files' entries would not fit the TOC partition twice.</summary>
+    TocPartitionFull,
+}
+
 /// <summary>
 /// High-level tape stream provisioning with state-machine-guarded read/write transitions.
 /// <para>Owns a <see cref="TapeNavigator"/> for positioning across content sets and TOC.
@@ -46,6 +59,17 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     /// </summary>
     public long LastSetFirstBlockAfter { get; private set; } = -1;
 
+    /// <summary>
+    /// Why the last content session stopped short (Design-TocReserve §9.6). Set on the writing thread; cleared by
+    ///  <see cref="BeginWriteContent"/>; survives the idempotent second <see cref="EndWriteContent"/>, like
+    ///  <see cref="LastSetClosedByEom"/>.
+    /// </summary>
+    public ContentStopReason LastContentStopReason
+    {
+        get => (ContentStopReason)Volatile.Read(ref m_stopReason);
+        private set => Volatile.Write(ref m_stopReason, (int)value);
+    }
+
     /// <summary>Currently active <see cref="TapeStream"/>, or <see langword="null"/> when idle.</summary>
     public TapeStream? Stream { get; private set; } = null;
     /// <summary>Whether a stream is currently checked out and in use.</summary>
@@ -68,11 +92,12 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     //  early warning, armed once by the backup agent.
     private long m_packerBytesWritten;
 
-    // Design-TocReserve §4: the TOC as committed in this content session (writing
-    //  thread only once the packer runs), and the reserve function snapshotted at
-    //  set start. Null function = no TOC reserve tracking (TOC partition, tests).
+    // Design-TocReserve §4.3, §9.2: the TOC as committed in this content session (writing thread only once the
+    //  packer runs), and the layout's TOC limits — reserve function and partition budget — snapshotted at set start.
+    //  Null = no TOC tracking (tests, or a session the agent did not arm).
     private long m_tocCommittedBytes;
-    private Func<long, long>? m_tocReserveFor;
+    private TocLimits? m_tocLimits;
+    private int m_stopReason;   // ContentStopReason, as int for Volatile; written on the writing thread
 
     // Read-side packer: lazily constructed inside BeginPackedFileRead and torn down
     //  by EndReadContent. Both remain null while the manager is not in
@@ -391,6 +416,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         ContentWritten = false;         // no content written yet in this session
         LastSetClosedByEom = false;     // a fresh session decides afresh how its set ends (F32)
         LastSetFirstBlockAfter = -1;    // likewise
+        LastContentStopReason = ContentStopReason.None;
 
         BeginReadWrite(TapeState.WritingContent);
         if (WentOK)
@@ -540,7 +566,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
         }
 
         bool closed = EndWriteContentSet();     // a setmark — or, on TOC-in-partition media, end-of-media itself
-        m_tocReserveFor = null;                 // the session's TOC tracking ends with it
+        m_tocLimits = null;                     // the session's TOC tracking ends with it
 
         State.TransitionTo(TapeState.MediaPrepared);
 
@@ -1230,9 +1256,9 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     #region *** Packer-backed content writing (Phase 2) ***
 
     /// <summary>
-    /// Starts tracking the TOC reserve for the next content session (Design-TocReserve §4.2):
-    ///  the TOC as it stands (<paramref name="committedTocBytes"/>), and the navigator's reserve
-    ///  function.
+    /// Starts tracking the TOC for the next content session (Design-TocReserve §4.2, §9.2): the TOC as it stands
+    ///  (<paramref name="committedTocBytes"/>), and the navigator's TOC limits — the reserve function (TOC in set) and the
+    ///  TOC partition's budget (TOC in partition).
     /// <para>
     /// Call before <see cref="BeginWriteContent"/>; the session's writes then plan against it, and
     ///  <see cref="EndWriteContent"/> ends it.
@@ -1241,7 +1267,7 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     internal void TrackTocReserve(long committedTocBytes)
     {
         m_tocCommittedBytes = committedTocBytes;
-        m_tocReserveFor = Navigator.CaptureTocReserve();
+        m_tocLimits = Navigator.CaptureTocLimits();
     }
 
     /// <summary>
@@ -1256,6 +1282,8 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
     {
         try
         {
+            int blockSize = (int)Drive.BlockSize;
+
             // The drive's logical early warning is the single authoritative stop signal for
             //  content writing: it is armed by the backup agent with the TOC reserve and is
             //  evaluated by TapeDrive using the best available mechanism (calibration, physical
@@ -1273,7 +1301,6 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
                     //  then synthesize EOM so the packer rolls back only the tail
                     //  pending tokens that didn't fit. Mirrors what a real drive would
                     //  do: write what it can, return EOM.
-                    uint blockSize = Drive.BlockSize;
                     int writable = (remaining > 0 && blockSize > 0)
                         ? (int)(remaining - (remaining % blockSize))
                         : 0;
@@ -1285,9 +1312,14 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
                     if (writable > 0)
                     {
                         int w = Drive.WriteDirect(buffer.Array, buffer.Offset, writable);
-                        partialBlocks = w / (int)blockSize;
+                        partialBlocks = w / blockSize;
                         m_packerBytesWritten += w;
+                        if (plan is not null)
+                            Volatile.Write(ref m_tocCommittedBytes,
+                                Volatile.Read(ref m_tocCommittedBytes) + plan.TocBytesFor(partialBlocks));
                     }
+
+                    LastContentStopReason = ContentStopReason.EndOfMedia;
                     return new WriteResult(partialBlocks, EomEncountered: true, Exception: null);
                 }
 
@@ -1295,31 +1327,61 @@ public class TapeStreamManager : TapeDriveHolder<TapeStreamManager>
                     DriveNumber, validBytes, m_packerBytesWritten, remaining);
             }
 
-            // Design-TocReserve §4.3: the drive plans this write against the reserve the files it starts will need.
-            Func<long, long>? reserveFor = m_tocReserveFor;
+            // Design-TocReserve §9.2: with a TOC partition, the files this write starts must leave both TOC copies room
+            //  there — the largest prefix that does is written, and the volume ends after it.
+            TocLimits? limits = m_tocLimits;
             long committedToc = Volatile.Read(ref m_tocCommittedBytes);
-            Func<int, long>? reserveForBlocks = plan is not null && reserveFor is not null
-                ? blocks => reserveFor(committedToc + plan.TocBytesFor(blocks))
-                : null;
+            bool budgetTrimmed = false;
+            if (plan is not null && limits is { HasBudget: true } budget && blockSize > 0)
+            {
+                int validBlocks = validBytes / blockSize;
+                int best = validBlocks;
+                while (best > 0 && !budget.Fits(committedToc + plan.TocBytesFor(best)))
+                    best--;
+                if (best < validBlocks)
+                {
+                    budgetTrimmed = true;
+                    m_logger.LogInformation("Drive #{Drive}: Write of {Blocks} block(s) trimmed to {Best}: the TOC partition " +
+                        "({Budget} B for both copies) holds no more entries", DriveNumber, validBlocks, best, budget.Budget);
+                    validBytes = best * blockSize;
+                    if (validBytes == 0)
+                    {
+                        LastContentStopReason = ContentStopReason.TocPartitionFull;
+                        return new WriteResult(0, EomEncountered: true, Exception: null);
+                    }
+                }
+            }
 
+            // Design-TocReserve §4.3: the drive plans this write against the reserve the files it starts will need.
+            Func<int, long>? reserveForBlocks = plan is not null && limits is { } l
+                ? n => l.ReserveFor(committedToc + plan.TocBytesFor(n))
+                : null;
             int written = Drive.WriteDirect(buffer.Array, buffer.Offset, validBytes, honorEwReserve: true,
                 out _, out bool ew, out bool eom, reserveForBlocks);
-            
-            if (plan is not null && Drive.BlockSize > 0)
-                Volatile.Write(ref m_tocCommittedBytes, committedToc + plan.TocBytesFor(written / (int)Drive.BlockSize));
+            if (plan is not null && blockSize > 0)
+                Volatile.Write(ref m_tocCommittedBytes, committedToc + plan.TocBytesFor(written / blockSize));
 
-            int blocks = written / (int)Drive.BlockSize;
+            int blocks = written / blockSize;
             m_packerBytesWritten += written;
 
             // Phase 3: in TOC-in-set mode a logical early warning means "stop content, leave room
             //  for the TOC" -- which is exactly our end-of-media continuation semantics. Surface it
             //  as EOM so the packer rolls back the uncommitted tail and the agent writes the TOC.
             //  With an Initiator partition the TOC lives elsewhere, so EW is not a stop condition
-            //  and we let the real EOM govern.
+            //  and we let the real EOM govern -- or the TOC partition's budget.
             bool ewStop = ew && !Drive.HasInitiatorPartition;
             if (ewStop)
                 m_logger.LogInformation("Drive #{Drive}: Packer crossed logical early warning (TOC-in-set); treating as EOM",
                     DriveNumber);
+            if (eom || Drive.RanToEOM)
+                LastContentStopReason = ContentStopReason.EndOfMedia;
+            else if (ewStop)
+                LastContentStopReason = ContentStopReason.TocReserve;
+            else if (budgetTrimmed && Drive.WentOK)
+            {
+                LastContentStopReason = ContentStopReason.TocPartitionFull;
+                return new WriteResult(blocks, EomEncountered: true, Exception: null);
+            }
 
             // Map drive errors. Treat ERROR_END_OF_MEDIA as the EOM status; everything
             //  else surfaces as a hard error exception per the backend contract.

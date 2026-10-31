@@ -134,6 +134,7 @@ public class ServiceTocAnomalyTests : ServiceTestBase
     [InlineData(TocAnomalyAdvice.TocUnreadable, false)]
     [InlineData(TocAnomalyAdvice.SingleCopyReserve, true)]
     [InlineData(TocAnomalyAdvice.TocPartitionFull, true)]
+    [InlineData(TocAnomalyAdvice.EndOfContentDisputed, false)]
     [InlineData(TocAnomalyAdvice.SingleCopyDamaged, false)]
     [InlineData(TocAnomalyAdvice.TocFoundBySearch, false)]
     public void AdviseTocText_CarriesAnAction(TocAnomalyAdvice advice, bool pointsToHelp)
@@ -159,6 +160,19 @@ public class ServiceTocAnomalyTests : ServiceTestBase
         Assert.Equal("volume #2", TapeServiceBase.DescribeVolumes([2]));
         Assert.Equal("volumes #1, #3", TapeServiceBase.DescribeVolumes([1, 3]));
         Assert.Equal("the loaded volume", TapeServiceBase.DescribeVolumes([0]));
+    }
+
+    /// <summary>A refused append outranks a missing copy — and no later write settles it.</summary>
+    [Fact]
+    public void Advise_RecordedEndDisputed_IsEndOfContentDisputed()
+    {
+        var (advice, volumes) = TapeServiceBase.AdviseOnTocAnomalies(
+            [A(TapeTocAnomalyKind.CopyWriteFailed, copy: 2, error: Eom),
+             A(TapeTocAnomalyKind.RecordedEndDisputed, volume: 2, error: (uint)WIN32_ERROR.ERROR_INVALID_DATA),
+             A(TapeTocAnomalyKind.RecordedEndDisputed, volume: 2, stage: TapeTocAnomalyStage.Retried)],
+            TapeTocPlacement.InSet);
+        Assert.Equal(TocAnomalyAdvice.EndOfContentDisputed, advice);
+        Assert.Equal([2], volumes);
     }
 
     #endregion

@@ -1,5 +1,6 @@
 using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
+using TapeLibNET.Media;
 using TapeLibNET.Scan; // MediaScanMap, ScannedMediaKind
 using TapeLibNET.Toc;
 
@@ -155,12 +156,24 @@ public abstract record FileOperationResult : ServiceOperationResult
 
 // ── Backup ───────────────────────────────────────────────────────────────────
 
+/// <summary>A volume a backup ended before its file list did, and why (Design-TocReserve §9.6).
+/// </summary>
+public readonly record struct VolumeEnd(int Volume, ContentStopReason Reason);
+
 /// <summary>
 /// Summary statistics returned by a backup operation.
 /// Allows the caller to distinguish full success, partial failure, abort,
 ///  and "no files backed up" without cross-boundary exceptions.
 /// </summary>
-public sealed record BackupResult : FileOperationResult;
+public sealed record BackupResult : FileOperationResult
+{
+    /// <summary>
+    /// Every volume the backup ended before its file list did, in order, with the reason —
+    ///  end-of-media, the TOC reserve, or a full TOC partition (Design-TocReserve §9.6).
+    ///  Empty for a single-volume backup.
+    /// </summary>
+    public IReadOnlyList<VolumeEnd> VolumeEnds { get; init; } = [];
+}
 
 // ── Restore / Validate / Verify ───────────────────────────────────────────────
 

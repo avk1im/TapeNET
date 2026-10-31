@@ -45,6 +45,21 @@ internal enum RecordedEndOfContent
 }
 
 /// <summary>
+/// What the TOC of a set may take, by layout (Design-TocReserve §2, §9.2): the content reserve for a TOC of a given size
+///  (TOC in set), and the budget of the TOC partition (TOC in partition). Snapshotted at set start for the writing thread.
+/// </summary>
+/// <param name="ReserveFor">The early-warning reserve for a TOC of the given size (one copy); 0 with a TOC partition.</param>
+/// <param name="Budget">Bytes both copies may take in the TOC partition; <see cref="long.MaxValue"/> = unlimited.</param>
+internal readonly record struct TocLimits(Func<long, long> ReserveFor, long Budget)
+{
+    /// <summary>Whether a budget applies.</summary>
+    public bool HasBudget => Budget < long.MaxValue;
+
+    /// <summary>Whether both copies of a TOC of <paramref name="tocBytes"/> fit the budget.</summary>
+    public bool Fits(long tocBytes) => !HasBudget || TapeNavigator.CopiesFootprint(tocBytes) <= Budget;
+}
+
+/// <summary>
 /// Handles tape positioning across a content area (zero or more content sets) and a TOC area.
 /// <para>Subclasses implement the physical layout; use <see cref="ProduceNavigator"/> to create
 ///  the appropriate one for the loaded media.</para>
@@ -166,20 +181,20 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
         => Math.Max(TocReserveFloorFor(drive), footprint + TocMarkAllowance);
 
     /// <summary>
-    /// <see cref="TocReserveFor"/> as a pure function, snapshotted now: the floor and the override are read once. For the
-    ///  writing thread, which evaluates it many times per buffer (Design-TocReserve §4.3) — <see cref="TapeDrive.Capacity"/>
-    ///  would query the device after every write.
+    /// This layout's TOC limits, snapshotted now: the floor and the override are read once. For the writing thread, which
+    ///  evaluates them many times per buffer (Design-TocReserve §4.3, §9.2) — <see cref="TapeDrive.Capacity"/> would query
+    ///  the device after every write. TOC in set: the reserve function, no budget.
     /// </summary>
-    internal virtual Func<long, long> CaptureTocReserve()
+    internal virtual TocLimits CaptureTocLimits()
     {
         if (TocReserveOverride is long fixedReserve)
-            return _ => fixedReserve;
+            return new(_ => fixedReserve, long.MaxValue);
         long floor = TocReserveFloorFor(Drive);
-        return tocBytes => Math.Max(floor, TOCFootprint(tocBytes) + TocMarkAllowance);
+        return new(tocBytes => Math.Max(floor, TOCFootprint(tocBytes) + TocMarkAllowance), long.MaxValue);
     }
 
     /// <summary>Two copies of <paramref name="tocBytes"/>, each rounded up to whole TOC blocks.</summary>
-    private protected static long CopiesFootprint(long tocBytes)
+    internal static long CopiesFootprint(long tocBytes)
     {
         const long block = TapeHeader.FixedHeaderBlockSize;     // TOC and headers share one block size
         long perCopy = Math.Max(1L, (tocBytes + block - 1) / block) * block;
@@ -1139,7 +1154,21 @@ public class TapeNavigatorTOCInPartition : TapeNavigator
     public override long TocReserveFor(long tocBytes) => 0L;
 
     /// <inheritdoc/>
-    internal override Func<long, long> CaptureTocReserve() => static _ => 0L;
+    /// <remarks>
+    /// No reserve: content runs to end-of-media. The budget is the TOC partition, less room for the copies' filemarks
+    ///  (Design-TocReserve §9.2). Unknown capacity — the partition not seen since the load — means no budget, logged.
+    /// </remarks>
+    internal override TocLimits CaptureTocLimits()
+    {
+        long capacity = Drive.InitiatorCapacity;
+        if (capacity <= 0)
+        {
+            m_logger.LogWarning("Drive #{Drive}: TOC partition capacity unknown — its budget is not enforced for this set",
+                DriveNumber);
+            return new(static _ => 0L, long.MaxValue);
+        }
+        return new(static _ => 0L, Math.Max(0L, capacity - TocMarkAllowance));
+    }
 
     #endregion
 

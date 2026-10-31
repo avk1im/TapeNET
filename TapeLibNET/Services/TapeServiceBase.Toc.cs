@@ -23,6 +23,8 @@ public enum TocAnomalyAdvice
     SingleCopyDamaged,
     /// <summary>TOC in set: only one copy fit before end-of-media — the reserve armed too late.</summary>
     SingleCopyReserve,
+    /// <summary>An append was refused: the TOC's recorded end of content and the tape disagree.</summary>
+    EndOfContentDisputed,
     /// <summary>TOC in partition: only one copy fit — the TOC outgrew its partition.</summary>
     TocPartitionFull,
     /// <summary>The volume's TOC could not be read at all.</summary>
@@ -178,8 +180,8 @@ public partial class TapeServiceBase
     ///  replaces it.
     /// </para>
     /// <para>
-    /// Severity order: no TOC written → no TOC readable → one copy for lack of room → one copy for another reason or a
-    ///  damaged copy → found only by searching.
+    /// Severity order: no TOC written → no TOC readable → an append refused at a disputed end → one copy for lack of room →
+    ///  one copy for another reason or a damaged copy → found only by searching.
     /// </para>
     /// </remarks>
     public static (TocAnomalyAdvice Advice, IReadOnlyList<int> Volumes) AdviseOnTocAnomalies(
@@ -206,6 +208,10 @@ public partial class TapeServiceBase
                          && !Settled(a));
         if (v.Count > 0)
             return (TocAnomalyAdvice.TocUnreadable, v);
+
+        v = Volumes(a => a.Kind == TapeTocAnomalyKind.RecordedEndDisputed);
+        if (v.Count > 0)
+            return (TocAnomalyAdvice.EndOfContentDisputed, v);
 
         v = Volumes(a => a.Kind == TapeTocAnomalyKind.CopyWriteFailed && !Settled(a)
                          && ErrorManageableBase.IsEOM(a.Diagnosis.ErrorCode));
@@ -257,6 +263,11 @@ public partial class TapeServiceBase
                 ServiceReportLevel.Failed,
                 $"The table of contents of {on} could not be read",
                 "Recover it with Scan Media, or import a TOC file exported earlier"),
+            TocAnomalyAdvice.EndOfContentDisputed => (
+                ServiceReportLevel.Failed,
+                $"The end of content on {on} does not match its table of contents — nothing was written",
+                "Scan the media (Media | Scan Media) and adopt the TOC it recovers, or reload the TOC; " +
+                "then retry the backup"),
             TocAnomalyAdvice.SingleCopyReserve => (
                 ServiceReportLevel.Warning,
                 $"Only one TOC copy fit on {on}",
@@ -299,11 +310,9 @@ public partial class TapeServiceBase
             parts.Add($"{toc.CopiesWritten:N0} TOC copy(ies) written, {toc.CopyWriteFailures:N0} not");
 
         var (level, headline, action) = AdviseTocText(advice, volumes);
-        _host.Report(level, headline);
-        if (parts.Count > 0)
-            _host.Report(level, string.Join(", ", parts), isSubEntry: true);
-        if (action.Length > 0)
-            _host.Report(ServiceReportLevel.Info, action, isSubEntry: true);
+
+        ReportAdvice(level, headline, parts.Count > 0 ? string.Join(", ", parts) : null, action);
+
         return advice;
     }
 

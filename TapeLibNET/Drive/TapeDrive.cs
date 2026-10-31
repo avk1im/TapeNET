@@ -34,6 +34,10 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     private long m_cachedContentCapacity = -1L;
     private long m_cachedContentRemaining = -1L;
     private bool m_onContentPartition; // tracked via MoveToPartition / EnsureOnContentPartition
+    // TOC (initiator) partition capacity cache (Design-TocReserve §9.2.1): filled whenever the drive stands on that
+    //  partition and reads its media parameters; -1 = not seen since the media was loaded.
+    private long m_cachedInitiatorCapacity = -1L;
+    private bool m_onInitiatorPartition;        // tracked like m_onContentPartition
 
     // Cached block size to accelerate BlockSize access; updated by EnsureMediaParams() and SetBlockSize()
     private uint m_cachedBlockSize = 0U;
@@ -246,6 +250,12 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
     /// refreshed while on Content. Falls back to <see cref="Capacity"/> if not yet cached.
     /// </summary>
     public long ContentCapacity => m_cachedContentCapacity >= 0 ? m_cachedContentCapacity : Capacity;
+
+    /// <summary>
+    /// Capacity of the initiator (TOC) partition, cached the last time the drive stood on it (Design-TocReserve §9.2.1);
+    ///  −1 when not seen since the media was loaded, or without an initiator partition. Never moves the tape.
+    /// </summary>
+    public long InitiatorCapacity => m_cachedInitiatorCapacity;
 
     /// <summary>
     /// Quantity (3) — the RAW driver-reported remaining for the CURRENT partition (refreshes media
@@ -1104,7 +1114,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         m_desiredEarlyWarning = 0L;
         SelectEarlyWarningMechanism();   // → None (reserve cleared / media gone)
 
-        InvalidateContentCache();
+        InvalidatePartitionCache();
         m_logger.LogTrace("{Prefix}: Closed", LogPrefix);
     }
 
@@ -1128,7 +1138,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         }
 
         InvalidateMediaParams(keepBlockSize: false);
-        InvalidateContentCache();   // another cartridge may be in the drive now: never carry its predecessor's figures
+        InvalidatePartitionCache();   // another cartridge may be in the drive now: never carry its predecessor's figures
         EnsureOnContentPartition(); // CHECKME: do we indeed need to force to Content partition right away? or is it ok to fill the content param cache later?
 
         ReloadDriveCaps(); // refresh drive caps after media load, as some drives (e.g. virtual ones) change their capabilities depending on the media loaded
@@ -1155,7 +1165,7 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         InvalidateMediaParams(keepBlockSize: false);
         ResetEarlyWarningRuntime();
 
-        InvalidateContentCache();
+        InvalidatePartitionCache();
         m_logger.LogTrace("{Prefix}: Media unloaded", LogPrefix);
         return true;
     }
@@ -1198,6 +1208,8 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         // Backend format succeeded — clear any stale errors (e.g. from prior I/O failures)
         //  so the post-format step chain can proceed.
         ResetError();
+
+        InvalidatePartitionCache(); // a format may change the partition sizes
 
         // Reload after format
         m_backend.LoadMedia();
@@ -1280,18 +1292,18 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
 
         ResetError(); // clear any stale errors (e.g. from prior I/O failures) for the new (or renewed) partition
 
-        // Track which partition we're on for content capacity caching
-        if (partition != MediaPartition.Current)
-            m_onContentPartition = (partition == MediaPartition.Content);
+        // Track which partition we're on for the capacity caches
+        TrackPartition(partition);
 
         // parameters may differ for another partition, e.g. Capacity -> refresh them
         InvalidateMediaParams(keepBlockSize: false);
-
         if (m_onContentPartition)
         {
             CacheContentMediaParams(EnsureMediaParams()); // refresh content capacity cache asap
             ReevaluateEarlyWarningAfterReposition(block);
         }
+        else if (m_onInitiatorPartition)
+            EnsureMediaParams();  // fills the initiator capacity cache (Design-TocReserve §9.2.1)
 
         m_logger.LogTrace("{Prefix}: Moved to partition {Partition}", LogPrefix, partition);
         return true;
@@ -1474,6 +1486,12 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
 
         OnPositionChanged(backwards: false);
 
+        if (TrackPartition(partition))
+        {
+            InvalidateMediaParams(keepBlockSize: false);  // another partition: other parameters
+            EnsureMediaParams();                          // fills the cache of the partition we are on
+        }
+
         m_logger.LogTrace("{Prefix}: Fast forwarded to end", LogPrefix);
         return true;
     }
@@ -1615,7 +1633,14 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
 
         MediaPartition partition = m_backend.GetCurrentPartition();
         SyncErrorFrom(m_backend);
-        return WentOK ? partition : MediaPartition.Current;
+        if (!WentOK)
+            return MediaPartition.Current;
+
+        if (TrackPartition(partition))
+            InvalidateMediaParams(keepBlockSize: true);   // what was cached described the other partition
+        if (m_onInitiatorPartition && m_cachedInitiatorCapacity < 0)
+            EnsureMediaParams();
+        return partition;
     }
 
     #endregion // *** Media Moving & Positioning ***
@@ -1641,8 +1666,12 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
 
         m_mediaParams = mediaParams;
         m_cachedBlockSize = mediaParams.BlockSize;
+
         if (m_onContentPartition)
             CacheContentMediaParams(mediaParams);
+        else if (m_onInitiatorPartition && mediaParams.Capacity > 0)
+            m_cachedInitiatorCapacity = mediaParams.Capacity;
+
         return m_mediaParams;
     }
 
@@ -1668,11 +1697,14 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
         }
     }
 
-    private void InvalidateContentCache()
+    private void InvalidatePartitionCache()
     {
         m_cachedContentCapacity = -1;
         m_cachedContentRemaining = -1;
         m_onContentPartition = false;
+
+        m_cachedInitiatorCapacity = -1;
+        m_onInitiatorPartition = false;
     }
 
     private void OnPositionChanged(bool backwards, long toBlock = -1)
@@ -1718,6 +1750,20 @@ public class TapeDrive(ILoggerFactory loggerFactory, TapeDriveBackend backend)
             if (m_cachedContentCapacity < 0 && EnsureMediaParams() is MediaParameters mediaParams)
                 CacheContentMediaParams(mediaParams);
         }
+    }
+
+    /// <summary>Records which partition the head stands on; <see langword="true"/> when it changed.
+    /// </summary>
+    private bool TrackPartition(MediaPartition partition)
+    {
+        if (partition == MediaPartition.Current)
+            return false;
+        bool content = partition == MediaPartition.Content;
+        bool initiator = partition == MediaPartition.Initiator;
+        bool changed = content != m_onContentPartition || initiator != m_onInitiatorPartition;
+        m_onContentPartition = content;
+        m_onInitiatorPartition = initiator;
+        return changed;
     }
 
     private void SetOptimalDriveParams()

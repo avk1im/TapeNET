@@ -221,7 +221,7 @@ public class TocReserveAgentTests
         };
 
         var ex = Assert.ThrowsAny<Exception>(() => fixture.BackupFiles(tree.Files, "Too big"));
-        Assert.Contains("not a single file", ex.Message);
+        Assert.Contains("takes no file", ex.Message);
         Assert.True(fixture.TotalVolumes <= 2, $"{fixture.TotalVolumes} volumes requested");
     }
 

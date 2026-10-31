@@ -36,8 +36,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     public long BytesBackedupInCurrentSet => BytesBackedup - BytesBackedupMarker;
 
     // ── TOC reserve tracking (Design-TocReserve §4) ──────────────────────────
-    /// <summary>The largest hash any algorithm writes (XxHash128): a file's TOC entry is estimated before its hash exists.</summary>
-    private const int c_maxHashBytes = 16;
+    // Design-TocReserve §9.4: the TOC bytes each file adds, measured at hand-off. One per agent; reset per set.
+    private readonly TocEntryMeter m_tocMeter = new();
 
     // ── Software-compression session state ───────────────────────────────
     //  Allocated lazily on first use of the Software compression path and
@@ -75,6 +75,19 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     /// </para>
     /// </remarks>
     public bool MediaHeaderStamped { get; private set; }
+
+    /// <summary>
+    /// Why the volume just completed ended before the file list did (Design-TocReserve §9.6): end-of-media, the TOC
+    ///  reserve (TOC in set), or a full TOC partition. <see cref="ContentStopReason.None"/> while the backup runs or
+    ///  when it completed on this volume.
+    /// </summary>
+    public ContentStopReason VolumeEndReason { get; private set; }
+
+    /// <summary>
+    /// Whether the backup stopped because a fresh continuation volume took not a single file (Design-TocReserve TR-7) —
+    ///  <see cref="VolumeEndReason"/> says why. The series cannot continue on a volume of this kind; the service advises.
+    /// </summary>
+    public bool FreshVolumeTookNoFile { get; private set; }
 
     /// <inheritdoc/>
     /// <remarks>
@@ -152,6 +165,25 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
            && previous.Volume == TOC.Volume;
 
     /// <summary>
+    /// Makes sure the drive knows the TOC partition's capacity before a set arms its budget (Design-TocReserve §9.2.1).
+    ///  Normally known already — every TOC read visits the partition; otherwise one move there. The navigator then
+    ///  re-locates content from scratch.
+    /// </summary>
+    private void EnsureTocPartitionCapacityKnown()
+    {
+        if (!Drive.HasInitiatorPartition || Drive.InitiatorCapacity > 0)
+            return;
+
+        m_logger.LogTrace("Visiting the TOC partition to learn its capacity");
+        if (!Drive.MoveToPartition(MediaPartition.Initiator) || Drive.InitiatorCapacity <= 0)
+            m_logger.LogWarning("TOC partition capacity unknown ({Error}) — its budget is not enforced for this set",
+                Drive.LastErrorMessage);
+        
+        Drive.ResetError();
+        Navigator.ResetContentSet();
+    }
+
+    /// <summary>
     /// Prepares the <see cref="Drive"/>, <see cref="TapeAgentBase.Navigator"/>, and
     ///  <see cref="TapeAgentBase.Manager"/> for writing content to the current set, and leaves the head at
     ///  the set's first content block.
@@ -209,6 +241,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         bool headsVolume = TOC.CurrentSetIndex == TOC.FirstSetOnVolume && WritesMediaHeader;
         bool deferMediaHeaderWrite = headsVolume && !newSet;
         m_volumeFullBeforeSetHeader = false;
+
+        EnsureTocPartitionCapacityKnown(); // call before WriteMediaHeader(), so the header write and all positioning follow
 
         if (headsVolume && !deferMediaHeaderWrite)
         {
@@ -413,17 +447,21 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
     /// <summary>
     /// Arms the set's TOC reserve from the series TOC as it stands — every set of every volume, the current one included
-    ///  — and hands it to the manager, whose writes then plan against it (Design-TocReserve §4.2). With a TOC partition
-    ///  the reserve is 0 and nothing is planned.
+    ///  — and starts measuring the set's entries (Design-TocReserve §9.4). With a TOC partition there is no reserve;
+    ///  the writes keep both copies within the partition (Design-TocReserve §9.2).
     /// </summary>
     private void ArmTocReserve()
     {
-        long toc = Drive.HasInitiatorPartition ? 0L : TOC.EstimateSerializedSize();
-        long reserve = Navigator.TocReserveFor(toc);
+        m_tocMeter.Reset(TOC.CurrentSetTOC);
+        long toc = TOC.EstimateSerializedSize();
+        long reserve = Navigator.TocReserveFor(toc);        // 0 with a TOC partition
         Drive.SetEarlyWarning(reserve);
-        Manager.TrackTocReserve(toc);
+        Manager.TrackTocReserve(toc);                       // the reserve function and the budget, for the writes
         if (reserve > 0)
             m_logger.LogTrace("TOC reserve armed: {Reserve:N0} B for a TOC of ~{Toc:N0} B", reserve, toc);
+        else if (Drive.HasInitiatorPartition)
+            m_logger.LogTrace("TOC partition budget: {Capacity:N0} B for a TOC of ~{Toc:N0} B now",
+                Drive.InitiatorCapacity, toc);
     }
 
     /// <summary>
@@ -450,11 +488,16 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             return true;
         }
 
-        // The refusal
+        // The refusal — the tape is untouched. Recorded as a TOC anomaly: the TOC's own record is what is in question,
+        //  and the service advises what to do (AdviseOnTocAnomalies).
         SetError(WIN32_ERROR.ERROR_INVALID_DATA,
             $"End of content disputed: the TOC records block {recorded}, the marks lead to block {landed} ({why}) — " +
-            "refusing to append at an unconfirmed position. Scan the media, or reload its table of contents.");
+            "the append was refused, nothing was written");
         m_logger.LogError("{Message}", LastErrorMessage);
+        NotifyTocAnomaly(tocNotify,
+            BuildTocAnomaly(TapeTocAnomalyKind.RecordedEndDisputed, TOC.Volume, copyIndex: 0, TapeResult.Fail(this))
+                with
+            { Block = recorded });
         LatchFailure();
         return false;
     }
@@ -643,6 +686,9 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
         int volume = TOC.Volume + 1;
         m_volumeRejected = false;
+        VolumeEndReason = ContentStopReason.None;
+        FreshVolumeTookNoFile = false;
+
         m_logger.LogTrace("Resuming multi-volume backup for volume #{Volume}", volume);
 
         // since we're on the new media volume, renew Navigator
@@ -759,9 +805,10 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         m_logger.LogTrace("Backing up (packed) file >{File}< in {Method}",
             template.FileDescr.FullName, nameof(BackupFile));
 
-        // The file's TOC entry, counted into the reserve by the write that reaches its first byte (Design-TocReserve
-        //  §4.2). The hash does not exist yet: count the largest.
-        long tocEntryBytes = TOC.CurrentSetTOC.EstimateEntryGrowth(template.EstimateSerializedSize() + c_maxHashBytes);
+        // The file's TOC entry — its tight bound against the entry before it — counted into the reserve by the write
+        //  that reaches its first byte (Design-TocReserve §4.2, §9.4).
+        long tocEntryBytes = TOC.CurrentSetTOC.EstimateEntryGrowth(m_tocMeter.Measure(template));
+
         var wstream = Manager.BeginPackedFile(tocEntryBytes) ??
             throw new TapeIOException(this, this, $"failed to open packed write stream for >{template.FileDescr.FullName}<");
 
@@ -860,6 +907,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             //  later via Manager.FilesCommitted, keyed by the returned token.
             Manager.EndPackedFile();
 
+            m_tocMeter.Accept();    // handed off: the next file is measured against this one
+
             m_logger.LogTrace("File >{File}< handed off to packer ok", template.FileDescr.FullName);
             return token;
         }
@@ -917,6 +966,10 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         {
             m_logger.LogInformation("{Method}: {Why} — set #{Set} starts on the next volume",
                 nameof(BackupFilesToCurrentSet), why, TOC.CurrentSetIndex);
+            
+            VolumeEndReason = m_volumeFullBeforeSetHeader
+                ? ContentStopReason.TocReserve : ContentStopReason.EndOfMedia;
+
             SetError(WIN32_ERROR.ERROR_END_OF_MEDIA, $"Volume #{TOC.Volume} is full");
             bc.prevVolumeHasFiles = false;      // nothing of THIS set is on the full volume
             bc.continuationSetParams = TOC.CurrentSetTOC.ToParams();
@@ -1285,6 +1338,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         if (eomHandled)
         {
             Debug.Assert(CanResumeToNextVolume);
+            VolumeEndReason = Manager.LastContentStopReason;
             bc.overallSuccess = false;
 
             if (freshContinuation && TOC.CurrentSetTOC.Count == 0)
@@ -1293,9 +1347,14 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 //  of this size cannot do better. End here instead of asking for volumes forever.
                 MultiVolumeContext = null;
                 TOC.ContinuedOnNextVolume = false;
-                SetError(WIN32_ERROR.ERROR_DISK_FULL,
-                    $"Volume #{TOC.Volume} holds not a single file of the set together with its table of contents " +
-                    $"(reserve {Helpers.BytesToString(Drive.EarlyWarning)}) — a volume of this size cannot continue the backup");
+                FreshVolumeTookNoFile = true;
+
+                SetError(WIN32_ERROR.ERROR_DISK_FULL, Drive.HasInitiatorPartition
+                    ? $"Volume #{TOC.Volume} takes no file of the set: the series' table of contents fills its TOC " +
+                      $"partition ({Helpers.BytesToString(Drive.InitiatorCapacity)})"
+                    : $"Volume #{TOC.Volume} takes no file of the set: the series' table of contents needs its whole " +
+                      $"room (reserve {Helpers.BytesToString(Drive.EarlyWarning)})");
+
                 LatchFailure();
                 m_logger.LogError("{Message}", LastErrorMessage);
                 return false;
@@ -1418,6 +1477,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         
         m_carriedFailure = TapeResult.OK;
         m_volumeRejected = false;
+        VolumeEndReason = ContentStopReason.None;
+        FreshVolumeTookNoFile = false;
 
         if (!EnsureSetFormat(TOC.CurrentSetTOC))
             return FailedOperationResult;

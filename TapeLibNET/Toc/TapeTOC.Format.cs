@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Reflection;
 using System.Text;
+
 using TapeLibNET.Agents;
 using TapeLibNET.Compression;
 using TapeLibNET.Encryption;
@@ -166,7 +167,7 @@ internal sealed class TocFileEntryWire
     public DateTime LastWriteTime;
     public DateTime LastAccessTime;
     public int NameShared;
-    public string NameSuffix = "";
+    public string NameSuffix = string.Empty;
     public byte[] Hash = [];
     public byte[] NameUtf16 = [];
 
@@ -208,7 +209,7 @@ internal sealed class TocFileEntryWire
         LastAccessTime = d.LastAccessTime;
         Hash = file.Hash ?? [];
 
-        string name = d.FullName ?? "";
+        string name = d.FullName ?? string.Empty;
         if (TapeTextRules.IsWellFormedUtf16(name))
         {
             NameSuffix = coder.Encode(name, out int shared).ToString();
@@ -219,7 +220,7 @@ internal sealed class TocFileEntryWire
         {
             coder.Remember(name);               // the next entry may still share this name's prefix
             NameShared = 0;
-            NameSuffix = "";
+            NameSuffix = string.Empty;
             NameUtf16 = TapeTextRules.EncodeUtf16LE(name);
         }
     }
@@ -273,9 +274,12 @@ public partial class TapeFileInfo
     /// <summary>
     /// Conservative 2.1 TOC footprint of this entry (§10.3): assumes no shared name prefix and maximum varint widths.
     /// </summary>
+    /// <remarks>
+    /// A coarse estimate — the TOC uses <see cref="TocEntrySizing"/>.
+    /// </remarks>
     public int EstimateSerializedSize()
     {
-        string name = FileDescr.FullName ?? "";
+        string name = FileDescr.FullName ?? string.Empty;
         int nameBytes = TapeTextRules.IsWellFormedUtf16(name)
             ? Encoding.UTF8.GetByteCount(name)
             : 2 * name.Length;
@@ -455,9 +459,16 @@ public partial class TapeSetTOC
     }
 
     /// <summary>
-    /// Writes this set's files as <c>TocFileBatch</c> records: at most <see cref="MaxFilesPerBatch"/> files or about
-    ///  <see cref="MaxBatchBodyBytes"/> per batch. An empty set writes no batch.
+    /// Writes this set's files as <see cref="TapeRecordKind.TocFileBatch"/> records: at most
+    ///  <see cref="MaxFilesPerBatch"/> files, or about <see cref="MaxBatchBodyBytes"/> bytes by 
+    ///  see cref="TocEntrySizing.GroupBound"/> per batch. An empty set writes no batch.
     /// </summary>
+    /// <remarks>
+    /// The byte rule counts the BOUND of each entry, not the bytes written (Design-TocReserve §9.4): the agent's
+    ///  <see cref="TocEntryMeter"/> must place every batch break — every front-coding reset — exactly where this writer
+    ///  does, and it cannot know an entry's actual bytes before the file is on tape. The bound is never below the actual
+    ///  size, so a batch body still stays within the limit plus one entry; readers accept any batching.
+    /// </remarks>
     /// <param name="entry">Reusable wire object (one per TOC).</param>
     /// <param name="coder">Reusable front coder; reset at every batch start, so batches decode on their own.</param>
     internal void WriteBatches(TapeRecordWriter writer, TocFileEntryWire entry, TapeNameFrontCoder coder)
@@ -466,18 +477,23 @@ public partial class TapeSetTOC
         while (i < m_tapeFileInfos.Count)
         {
             coder.Reset();
+            string previous = string.Empty;
+            long bound = 0;
             TapeFieldWriter body = writer.BeginRecord(TapeRecordKind.TocFileBatch);
             try
             {
                 int inBatch = 0;
                 do
                 {
-                    entry.From(m_tapeFileInfos[i++], coder);
+                    TapeFileInfo file = m_tapeFileInfos[i++];
+                    bound += TocEntrySizing.GroupBound(file, previous);
+                    previous = file.FileDescr.FullName ?? string.Empty;
+                    entry.From(file, coder);
                     TapeFieldWriter group = body.BeginGroup(BatchFileField);
                     TocFileEntryWire.Schema.Write(group, entry);
                     body.EndGroup(group);
                 }
-                while (i < m_tapeFileInfos.Count && ++inBatch < MaxFilesPerBatch && body.BytesWritten < MaxBatchBodyBytes);
+                while (i < m_tapeFileInfos.Count && ++inBatch < MaxFilesPerBatch && bound < MaxBatchBodyBytes);
             }
             catch
             {
@@ -877,28 +893,34 @@ public partial class TapeSetTOC
     /// </summary>
     /// <param name="padUnit">The pad unit an encrypted set would be sealed with (<see cref="TapeTOC.SealPadUnit"/>).</param>
     /// <remarks>
-    /// <para>
-    /// <b>Plain:</b> the set record plus every entry's <see cref="TapeFileInfo.EstimateSerializedSize"/> — which already
-    ///  carries its share of the batch prologue and assumes no front-coding gain.
-    /// </para>
-    /// <para>
-    /// <b>Locked:</b> exact — its sealed bytes are re-emitted verbatim (E7). <b>Unlocked:</b> the plain content, framed and
+    /// <list type="bullet">
+    /// <item>
+    /// <b>Plain:</b> the set record plus each entry's tight bound (<see cref="TocEntrySizing"/>), batch prologues included.
+    /// </item>
+    /// <item>
+    /// <b>Locked:</b> exact — its sealed bytes are re-emitted verbatim (E7).
+    /// </item>
+    /// <item>
+    /// <b>Unlocked:</b> the plain content, framed and
     ///  padded by a whole extra pad unit (≥ the real round-up, and additive, so a running total stays an upper bound),
     ///  plus one tag and one record per chunk; never below what it was last sealed at.
-    /// </para>
+    /// </item>
+    /// </list>
     /// </remarks>
     internal long EstimateSerializedSize(int padUnit = TapeSealedPayload.PadUnit)
     {
         if (IsLocked)
             return SealedFootprint(Sealed);
-
         long plain = c_setRecordMax
             + Math.Min(Encoding.UTF8.GetByteCount(m_description), TapeFormat.MaxStringBytes);
+        var meter = new TocEntryMeter();         // the writer's batching, entry by entry (Design-TocReserve §9.4)
         foreach (TapeFileInfo file in m_tapeFileInfos)
-            plain += file.EstimateSerializedSize();
+        {
+            plain += meter.Measure(file);
+            meter.Accept();
+        }
         if (!IsEncrypted)
             return plain;
-
         long sealedNow = SealedEstimate(plain, padUnit);
         return Sealed is { } last ? Math.Max(sealedNow, SealedFootprint(last)) : sealedNow;
     }
@@ -1010,7 +1032,7 @@ internal static class TapeTextRules
     public static string ClampWellFormed(string? text, int maxBytes)
     {
         if (string.IsNullOrEmpty(text))
-            return "";
+            return string.Empty;
         if (!IsWellFormedUtf16(text))
             text = Encoding.UTF8.GetString(Encoding.UTF8.GetBytes(text));     // non-throwing UTF8: lone surrogate → U+FFFD
         return TapePrimitives.ClampToUtf8Bytes(text, maxBytes);
