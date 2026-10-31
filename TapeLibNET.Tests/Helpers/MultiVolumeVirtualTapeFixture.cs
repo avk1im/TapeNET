@@ -70,7 +70,11 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     public const long DefaultContentCapacity = 256L * 1024;
 
     /// <summary>Default initiator partition capacity for Partitions profile.</summary>
-    public const long DefaultInitiatorCapacity = 64L * 1024;
+    /// <remarks>
+    /// Why not just 64 KiB: With a TOC budget (Design-TocReserve §9), 64 KiB leaves 48 KiB for both copies — one block each,
+    ///  ~100 entries; several existing Partitions tests write more (e.g. MixedVolumeSizes_… with 120 files).
+    /// </remarks>
+    public const long DefaultInitiatorCapacity = 256L * 1024;
 
     /// <summary>The size of one TOC copy in these tests: one header block — the test TOCs stay well below 16 KiB.</summary>
     private const long TestTocCopyBytes = 16L * 1024;
@@ -110,6 +114,8 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
 
     /// <summary>Content capacity per volume in bytes.</summary>
     public long ContentCapacity { get; }
+    /// <summary>The TOC (initiator) partition capacity of every volume, on Partitions profiles.</summary>
+    public long InitiatorCapacity { get; }
 
     /// <summary>
     /// The content capacity of each volume by number (1-based); <see langword="null"/> = every volume
@@ -276,7 +282,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
         SaveCurrentVolumeSnapshot();
         int newVolume = _volumeSnapshots.Count + 1;
         long initCap = Capabilities.SupportsInitiatorPartition
-            ? DefaultInitiatorCapacity : 0;
+            ? InitiatorCapacity : 0;
 
         // No padding: every volume has exactly its own capacity, as in a real series. The TOC reserve is the
         //  backup's business (Design-TocReserve), not the fixture's.
@@ -331,6 +337,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
         DriveProfile profile = DriveProfile.Setmarks,
         long contentCapacity = DefaultContentCapacity,
         Func<int, long>? volumeCapacity = null,
+        long initiatorCapacity = DefaultInitiatorCapacity,
         ILoggerFactory? loggerFactory = null,
         string mediaDescription = "Multi-Volume Test Media",
         VolumeHeaderMode headerMode = VolumeHeaderMode.None,
@@ -338,11 +345,12 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     {
         ContentCapacity = contentCapacity;
         VolumeCapacity = volumeCapacity;
+        InitiatorCapacity = initiatorCapacity;
         LoggerFactory = loggerFactory ?? TestLoggerFactory.Default;
         Capabilities = VirtualTapeFixture.ProfileToCapabilities(profile);
         HeaderMode = headerMode;
         long initCap = Capabilities.SupportsInitiatorPartition
-            ? DefaultInitiatorCapacity : 0;
+            ? initiatorCapacity : 0;
 
         // The following is NOT needed since we override the default (really large, 32MB) TOC capacity in Navigator,
         //  s. MultiVolumeVirtualTapeFixture.CreateBackupAgent() and .CreateRestoreAgent()

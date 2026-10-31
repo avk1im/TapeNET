@@ -255,3 +255,145 @@ default). After every backup it checks the saved TOC's structure (`TocInvariants
 | Group C | **Revision 1**: the agent raised the reserve at hand-off to the packer, with a slack. Failed on small files — the reserve outgrew a small volume before a single file committed (§4.1). |
 | Group D | **Revision 2**: the reserve is planned in the write (§4). `RaiseEarlyWarning` stays in the drive, unused by the backup. |
 | Follow-ups | The final-flush, set-header and fresh-continuation cases of §4.6; the multi-volume fixture without padded continuation volumes, with per-volume capacities; a reload clears the drive's cached content capacity (`TapeDrive.ReloadMedia` → `InvalidateContentCache`). |
+
+---
+
+## 9. The TOC reserve on partitioned media — the TOC partition budget
+
+*Increment to Design-TocReserve (toc-reserve branch, after §8). Status: implementation WIP.*
+
+### 9.0 Problem
+
+With an initiator partition the TOC has its own space, so no early-warning reserve is armed (§2: `TocReserveFor` = 0).
+That space is fixed at format: `TapeNavigator.DefaultTOCCapacity` on our own formats (≥ 32 MiB), freely chosen on pre-LTO
+drives (AIT, DAT), at least one wrap on LTO-5+ (≈ 37 GB on LTO-5). Today nothing watches it: a backup of very many small
+files writes all its content, then fails at the TOC save (`CopyWriteFailed` / `NoCopyWritten` with end-of-media,
+advice `TocPartitionFull`) — after the fact, with every file on tape and none reachable without an emergency TOC export.
+
+**Goal:** the same live guarantee as §4, against the partition instead of the content's end: a volume takes every file
+whose TOC entry still fits the TOC partition twice; when the next file's entry would not fit, the volume ends exactly as at
+end-of-media, and the backup continues on the next volume. The user is told why the volume ended early.
+
+**Not a pre-check.** What an incremental will write is unknown before it runs; the live tracking of §4 counts exactly the
+files that reach the tape.
+
+### 9.1 Invariants
+
+| # | Invariant |
+|---|---|
+| TR-1, TR-7, TR-8 | as in §0, with "the TOC partition" in place of "room ahead of EOM" |
+| TB-1 | **Budget, not reserve.** The TOC partition limit does not compete with content; content still runs to end-of-media. The check is arithmetic over TOC sizes and the partition's capacity — no drive query, no early-warning state. |
+| TB-2 | **The drive is not touched.** Its planner (§4.3) stays the TOC-in-set mechanism; the budget lives in the write sink. |
+| TB-3 | **Exact baseline, tight increments.** The TOC as it stands at set start is measured exactly, once; each file adds a tight upper bound of its own entry (§9.4). No re-serialization during a set. |
+| TB-4 | **No per-file allocation.** Measuring a file's entry allocates nothing: one meter per agent, its buffers reused for the whole operation. |
+| TB-5 | **A volume ended by the budget says so.** The reason travels with the end of the volume, not as a TOC anomaly. |
+
+### 9.2 Where the decision lives
+
+| Component | Role |
+|---|---|
+| **Navigator** | owns the layout's TOC limits: `CaptureTocLimits()` replaces `CaptureTocReserve()` and returns `TocLimits(Func<long,long> ReserveFor, long Budget)`. TOC-in-set: today's reserve function, `Budget = long.MaxValue`. `TapeNavigatorTOCInPartition`: reserve 0, `Budget = initiator capacity − TocMarkAllowance`. |
+| **Drive** | gains a cached **initiator capacity** (`InitiatorCapacity`), filled whenever media parameters are read on the initiator partition (every TOC read/write on partitioned media visits it), cleared with the content cache on (re)load. No other change. |
+| **Manager (sink)** | applies the budget: before `WriteDirect`, the largest prefix `b` with `CopiesFootprint(committed + plan.TocBytesFor(b)) ≤ Budget`. If `b` < the buffer, it writes `b` blocks and returns `EomEncountered`, and records `TocPartitionFull` as the reason. Same plan, same `committed` bookkeeping as §4.2 steps 4–5. |
+| **Agent** | arms both at set start (`ArmTocReserve`): exact baseline (§9.4), `Manager.TrackTocReserve`. On end-of-volume, exposes `VolumeEndReason`. |
+| **Service** | reads `VolumeEndReason` in its existing "volume is full" branch and words it (§9.6). |
+
+Why not a navigator virtual that the drive calls: the drive's planner weighs content against TOC on one partition; on
+partitioned media there is nothing to weigh. The navigator *supplies the numbers* (its layout), the sink *applies them*
+(it holds the plan) — and one `if` in the sink is the only new control flow.
+
+Why not the drive's `Capacity` at arm time: during a set the head is on the content partition, and `Capacity` reports the
+current partition. The cache is filled where the initiator is visited anyway; if it is empty at arm time (a session that
+never touched the TOC partition), arming hops there once — the set's positioning follows immediately, so the cost is one
+locate per such set.
+
+### 9.3 One file through the pipeline (differences to §4.2)
+
+| # | Step | Partitioned media |
+|---|---|---|
+| 0 | set start | baseline = **exact** size of the series TOC (§9.4); `TrackTocReserve(baseline)` snapshots `TocLimits` |
+| 1 | begin file | entry = **meter** measurement (§9.4), not the 120-B estimate |
+| 3 | hand-off | unchanged: the plan counts each file at its first byte |
+| 4 | write | the sink trims to the budget (§9.2); the drive writes as today (no reserve armed) |
+| 5 | after write | unchanged: `committed += plan.TocBytesFor(blocks written)` |
+| — | budget hit | `EomEncountered` → packer rollback → `HandleEom` → TOC save → next volume; reason `TocPartitionFull` |
+
+The three boundary cases of §4.6 apply unchanged: final flush complete (no continuation), set header — not affected here
+(the header goes to the content partition, which has room), fresh continuation taking no file (`ERROR_DISK_FULL`; on
+partitioned media worded "its TOC partition cannot hold the series TOC").
+
+### 9.4 Measuring instead of estimating
+
+The estimate of §1 overcounts ~2×, almost all of it in the per-file entries (no shared-prefix credit). On TOC-in-set that
+costs only reserve space; against a fixed partition it ends volumes early. Two measurements replace it:
+
+**(a) Baseline, once per set — `TapeTOC.MeasureSerializedSize()`.** Runs the real writer (`WriteRecords`) into a counting
+sink: no `LastSaveTime` stamp, no `MarkSaved`, no re-seal. A locked or unmodified sealed set counts its stored bytes; an
+unlocked *modified* sealed set (a set re-sealed on save) counts its §1 estimate — an upper bound, and re-sealing just to
+measure would burn a seal (E3) and allocate. Cost: one pass over the TOC per set; on TOC-in-set it runs only when the
+estimate would lift the reserve above the floor.
+
+**(b) Per file — `TocEntryMeter` (agent-owned, one per agent).** Mirrors the writer's per-set state: the front coder's
+previous name, the batch's file count and body bytes (batch breaks at `MaxFilesPerBatch` / `MaxBatchBodyBytes`). For each
+file at hand-off it writes the entry group into its counting sink and returns the bytes written, plus the batch prologue
+share when the entry opens a batch. Fields not known at hand-off are written at their **maximum width**: address,
+size on tape, the largest hash, the codec. Result: an upper bound about 25–30 B above a typical entry, at most 50 B
+(`TocEntrySizing.MaxSlack`).
+
+- **Why the meter is safe as an upper bound:** front coding only ever shortens an entry relative to its predecessor. A file
+  discarded mid-write is never committed as the meter's predecessor (the meter advances only on successful hand-off), so
+  the next file is measured against the name the TOC will actually encode it against. Files rolled back at end-of-media are
+  always the set's last files — they never stand between two committed files.
+- **Encrypted sets:** the entry is measured as plain, then grown by `EstimateEntryGrowth` (tags and chunk records).
+
+**Why not re-serialize the TOC near the limit (TB-3):** the TOC is appended to on the agent thread (commit harvest) while
+the sink runs on the writing thread. A mid-set re-measure would need a lock on the hot path. Exact baseline + tight
+increments is the same accuracy without it.
+
+### 9.5 Allocation discipline (TB-4)
+
+| Object | Lifetime | Per file |
+|---|---|---|
+| counting sink (a write-only `Stream` that advances a counter, stores nothing) | per agent | reset |
+| `TocFileEntryWire` | per agent | refilled in place |
+| `TapeNameFrontCoder` | per agent (meter) | advanced |
+| scratch for the name suffix / UTF-16 fallback | per agent, grown to the longest name seen | none |
+| field writer over the sink | per agent | reset |
+
+The current `TocFileEntryWire.From` allocates per entry (`NameSuffix = …ToString()`, the hash reference). The meter needs a
+span-based fill path for the name and writes the hash field from a static maximum-length buffer. The baseline measure
+(a) reuses the same sink and wire. Step 1 confirms each of these against the format sources.
+
+### 9.6 Telling the user (TB-5)
+
+Not a TOC anomaly: an anomaly records damage or a deviation that may need repair; a full TOC partition is an ordinary end
+of volume. Not a new notifiable API either.
+
+- **Manager:** `LastContentStopReason` (`None`, `EndOfMedia`, `TocReserve`, `TocPartitionFull`), set on the writing
+  thread with the trimmed write, read after `EndWriteContent` (same lifetime as `LastSetClosedByEom`).
+- **Agent:** `VolumeEndReason`, captured in `HandleEom` and in the final-flush handler.
+- **Service:** in the existing branch `"Volume #n is full - backup can continue to next volume"`:
+  `TocPartitionFull` → `LogWarn("Volume #n ends early: its TOC partition is full")` +
+  sub-line `"{content written} of {capacity} used; the TOC holds {n:N0} entries (Help: TOC space)"`.
+- **Advice `TocPartitionFull`** stays for what it now means: a TOC copy that still failed to write (e.g. a partition
+  smaller than reported).
+
+### 9.7 Tests
+
+| Suite | Proves |
+|---|---|
+| `TocMeasureTests` | `MeasureSerializedSize` equals the saved size for plain TOCs, ≥ for sealed-modified; no side effects (times, saved state, sealed bytes unchanged) |
+| `TocEntryMeterTests` | Σ meter ≥ saved TOC − baseline, within `TocEntrySizing.MaxSlack` × files; batch breaks mirrored; discarded file does not advance the coder; **zero allocations per file** (`GC.GetAllocatedBytesForCurrentThread` delta = 0 over 10 000 files, after warm-up) |
+| `TocBudgetSinkTests` | the sink trims to the budget, reports EOM and `TocPartitionFull`; never trims on TOC-in-set (`Budget = MaxValue`) |
+| `TocBudgetAgentTests` | Partitions, small initiator partition (e.g. 96 KiB), many long-named files: volumes end by budget, both TOC copies on every volume's initiator partition, no copy anomaly, the series restores; fresh volume that cannot hold the series TOC → `ERROR_DISK_FULL` |
+| Service | the "ends early: its TOC partition is full" line; no `TocPartitionFull` advice on a budget-ended volume |
+
+Fixture: `MultiVolumeVirtualTapeFixture` gains `InitiatorCapacity` (today the constant `DefaultInitiatorCapacity`, 64 KiB).
+
+### 9.8 Steps
+
+| Step | Content | Exit |
+|---|---|---|
+| 1 | `MeasureSerializedSize`, `TocEntryMeter`; agent arms with the exact baseline (both layouts) and passes meter entries | all tests green; TOC-in-set volumes take more files (less slack) |
+| 2 | `TocLimits`, initiator capacity cache, sink budget, stop reason, agent `VolumeEndReason` | `TocBudgetSinkTests`, `TocBudgetAgentTests` |
+| 3 | service wording, fixture knob, design §6/§8 updates | service tests; PR |
