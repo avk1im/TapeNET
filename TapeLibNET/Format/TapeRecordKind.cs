@@ -18,6 +18,15 @@ public enum TapeRecordKind : ushort
     /// <summary>TOC end - TOC stream.</summary>
     TocEnd = 0x0104,
 
+    /// <summary>
+    /// TOC sealed set - TOC stream: the plaintext stub of an encrypted set (Design-Encryption §5.3). Non-skippable on
+    ///  purpose (E1): a build that skipped it would drop the set on its next TOC write.
+    /// </summary>
+    TocSealedSet = 0x0105,
+
+    /// <summary>TOC sealed chunk - TOC stream: one stored chunk of an encrypted set's sealed metadata (§5.4).</summary>
+    TocSealedChunk = 0x0106,
+
     /// <summary>File header - inline frame before each file body.</summary>
     FileHeader = 0x0201,
 

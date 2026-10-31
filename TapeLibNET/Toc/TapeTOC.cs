@@ -1,12 +1,15 @@
 ﻿using System.Collections;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using System.Runtime.CompilerServices;
+
 using TapeLibNET.Agents;
 using TapeLibNET.Compression;
 using TapeLibNET.Drive;
 using TapeLibNET.Headers;
 using TapeLibNET.Legacy;
 using TapeLibNET.Media;
+using TapeLibNET.Encryption;
 
 namespace TapeLibNET.Toc;
 
@@ -178,6 +181,8 @@ public partial class TapeFileInfo(ulong fileId, TapeAddress address, TapeFileDes
 /// <para><paramref name="SetId"/> and <paramref name="NextFileId"/> are carried over because a
 ///  multi-volume continuation is ONE logical set: it keeps the identity and the file-id sequence.
 ///  A default (empty) <paramref name="SetId"/> means "mint a fresh one".</para>
+/// <para>An encrypted set carries its scheme, its envelope (the continuation stores the SAME envelope) and its key
+///  (the key ring's instance) — Design-Encryption §8.3.</para>
 /// </summary>
 public record TapeSetTOCParams(
     string Description,
@@ -188,29 +193,70 @@ public record TapeSetTOCParams(
     TapeCompression Compression = TapeCompression.None,
     int CompressionLevel = ZstdLevel.Default,
     Guid SetId = default,
-    ulong NextFileId = 1UL);
+    ulong NextFileId = 1UL,
+    TapeEncryption Encryption = TapeEncryption.None,
+    TapeKeyEnvelope? Envelope = null,
+    TapeSetKey? Key = null);
+
 
 /// <summary>
 /// Table of contents for a single backup set — an <see cref="IReadOnlyList{TapeFileInfo}"/>
 ///  with per-set metadata (description, hash algorithm, block size, incremental flag, volume).
 /// <para>New instances are created only via <see cref="TapeTOC.AddNewSetTOC"/>.</para>
+/// <para>
+/// <b>Locked sets (Design-Encryption §6.1, E6).</b> An encrypted set whose key has not been applied knows only its stub:
+///  identity, volume, data format, scheme, size on tape and the volume traits. Every other member throws
+///  <see cref="TapeSetLockedException"/> — fail fast, never a plausible 0. Library internals that must work on locked
+///  sets (copying, saving, sizing, locking, unlocking) use the backing fields.
+/// </para>
 /// </summary>
 public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
 {
     private readonly List<TapeFileInfo> m_tapeFileInfos;
+
+    #region *** Hidden metadata (E6) ***
+
+    // Backing fields of everything an encrypted set hides while LOCKED. Read through the public accessors only when
+    //  the set may be locked — they throw then; internals read the fields.
+    private string m_description = string.Empty;
+    private DateTime m_creationTime = DateTime.UtcNow;
+    private DateTime m_lastSaveTime = DateTime.UtcNow;
+    private uint m_blockSize = 0;
+    private TapeHashAlgorithm m_hashAlgorithm = TapeHashAlgorithm.Crc32;
+    private TapeCompression m_compression = TapeCompression.None;
+    private int m_compressionLevel = ZstdLevel.Default;
+    private bool m_incremental = false;
+    private ulong m_nextFileId = 1UL;
+
+    /// <summary>Returns <paramref name="value"/>, or throws when the set is locked.</summary>
+    private T Hidden<T>(T value, [CallerMemberName] string member = "")
+        => IsLocked ? throw new TapeSetLockedException(SetId, member) : value;
+
+    /// <summary>Throws when the set is locked.</summary>
+    private void ThrowIfLocked([CallerMemberName] string member = "")
+    {
+        if (IsLocked)
+            throw new TapeSetLockedException(SetId, member);
+    }
+
+    #endregion
 
     // for public access, new instances only created via class TapeTOC.AddNewSetTOC()
     internal TapeSetTOC(int volume, int capacity = 0, bool incremental = false)
     {
         Volume = volume;
         m_tapeFileInfos = new(capacity);
-        Incremental = incremental;
+        m_incremental = incremental;
     }
-    internal TapeSetTOC(TapeSetTOC setTOC) : this(setTOC.Volume, setTOC.Capacity, setTOC.Incremental)
+
+    internal TapeSetTOC(TapeSetTOC setTOC) : this(setTOC.Volume, setTOC.m_tapeFileInfos.Capacity, setTOC.m_incremental)
     {
         CopyFrom(setTOC);
         ContinuedFromPrevVolume = setTOC.ContinuedFromPrevVolume;
     }
+
+    // IsVacant, DisplayName, DisplayCount are in TapeTOC.Encryption.cs
+
     /// <summary>Deserialization constructor -- used by the legacy readers.</summary>
     /// <param name="fileInfos"></param>
     internal TapeSetTOC(List<TapeFileInfo> fileInfos) => m_tapeFileInfos = fileInfos;
@@ -226,32 +272,119 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
     public TapeDataFormat DataFormat { get; internal set; } = TapeDataFormat.V2;
 
     /// <summary>The next <see cref="TapeFileInfo.FileId"/> to be handed out; starts at 1 (0 means "not set").</summary>
-    public ulong NextFileId { get; internal set; } = 1UL;
+    public ulong NextFileId
+    {
+        get => Hidden(m_nextFileId);
+        internal set
+        {
+            ThrowIfLocked();
+            m_nextFileId = value;
+        }
+    }
 
     /// <summary>
     /// Allocates a <see cref="TapeFileInfo.FileId"/> for a new file attempt in this set. Ids are never
     ///  reused: retries, skips and EOM rollbacks burn numbers, so an orphaned attempt still on tape can
     ///  never collide with the committed file. Gaps are harmless.
     /// </summary>
-    internal ulong GenerateFileId() => NextFileId++;
+    internal ulong GenerateFileId()
+    {
+        ThrowIfLocked();
+        return m_nextFileId++;
+    }
 
-    public string Description { get; set; } = string.Empty;
-    public DateTime CreationTime { get; internal set; } = DateTime.UtcNow;
-    public uint BlockSize { get; set; } = 0;
-    public DateTime LastSaveTime { get; internal set; } = DateTime.UtcNow;
-    public TapeHashAlgorithm HashAlgorithm { get; set; } = TapeHashAlgorithm.Crc32;
+    public string Description
+    {
+        get => Hidden(m_description);
+        set
+        {
+            ThrowIfLocked();
+            m_description = value;
+        }
+    }
+
+    public DateTime CreationTime
+    {
+        get => Hidden(m_creationTime);
+        internal set
+        {
+            ThrowIfLocked();
+            m_creationTime = value;
+        }
+    }
+
+    public uint BlockSize
+    {
+        get => Hidden(m_blockSize);
+        set
+        {
+            ThrowIfLocked();
+            m_blockSize = value;
+        }
+    }
+
+    public DateTime LastSaveTime
+    {
+        get => Hidden(m_lastSaveTime);
+        internal set
+        {
+            ThrowIfLocked();
+            m_lastSaveTime = value;
+        }
+    }
+
+    public TapeHashAlgorithm HashAlgorithm
+    {
+        get => Hidden(m_hashAlgorithm);
+        set
+        {
+            ThrowIfLocked();
+            m_hashAlgorithm = value;
+        }
+    }
+
     /// <summary>Per-set compression mode. Mirrors <see cref="HashAlgorithm"/> in lifecycle and UI placement.</summary>
-    public TapeCompression Compression { get; set; } = TapeCompression.None;
+    public TapeCompression Compression
+    {
+        get => Hidden(m_compression);
+        set
+        {
+            ThrowIfLocked();
+            m_compression = value;
+        }
+    }
+
     /// <summary>ZSTD compression level (1–19). Only used when <see cref="Compression"/> is <see cref="TapeCompression.Software"/>.</summary>
-    public int CompressionLevel { get; set; } = ZstdLevel.Default;
-    public bool Incremental { get; internal set; } = false;
+    public int CompressionLevel
+    {
+        get => Hidden(m_compressionLevel);
+        set
+        {
+            ThrowIfLocked();
+            m_compressionLevel = value;
+        }
+    }
+
+    public bool Incremental
+    {
+        get => Hidden(m_incremental);
+        internal set
+        {
+            ThrowIfLocked();
+            m_incremental = value;
+        }
+    }
+
     internal bool MarkIncremental(bool incremental = true) // can only change Incremental if the set is empty
     {
-        if (Count == 0)
-            Incremental = incremental;
-        return Incremental;
+        ThrowIfLocked();
+        if (m_tapeFileInfos.Count == 0)
+            m_incremental = incremental;
+        return m_incremental;
     }
+
     public int Volume { get; internal set; } = 0;
+
     public bool ContinuedFromPrevVolume { get; init; } = false;
 
     /// <summary>
@@ -266,75 +399,105 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
     public bool ClosedByEom { get; internal set; } = false;
 
     /// <summary>
-    /// Snapshots this set's metadata (description, hash, block size, incremental, capacity)
-    ///  into a <see cref="TapeSetTOCParams"/> bundle suitable for seeding a continuation
-    ///  set on the next volume via <see cref="TapeTOC.AddContinuationSetTOC"/>.
+    /// The first block after this set's closing mark — where the next set, or the TOC, begins (Design-TocLocation §6).
+    ///  −1 when unknown: a set closed by end-of-media (F32) or by a failed mark, a legacy set, or one written before the
+    ///  field existed. Same block numbering as every <see cref="TapeAddress"/>, partition-relative.
     /// </summary>
+    /// <remarks>
+    /// Never hidden by encryption: it travels in the plain stub, because the per-volume lookup must work on a TOC whose
+    ///  encrypted sets are locked. It reveals nothing <see cref="SizeOnTapeTotal"/> does not already.
+    /// </remarks>
+    public long FirstBlockAfterSet { get; internal set; } = -1;
+
+    /// <summary>
+    /// Snapshots this set's metadata (description, hash, block size, incremental, capacity — and its encryption)
+    ///  into a <see cref="TapeSetTOCParams"/> bundle suitable for seeding a continuation
+    ///  set on the next volume via <see cref="TapeTOC.AddContinuationSetTOC"/>. Throws on a locked set.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately does NOT carry <see cref="FirstBlockAfterSet"/>: a continuation part starts at −1 and
+    ///  gets its own value on its own volume.
+    /// </remarks>
     public TapeSetTOCParams ToParams() =>
         new(Description, HashAlgorithm, BlockSize, Incremental, Capacity, Compression, CompressionLevel,
-            SetId, NextFileId);
+            SetId, NextFileId, m_encryption, Envelope, Key);
 
-    public int Count => m_tapeFileInfos.Count;
-    public int IndexOf(TapeFileInfo item) => m_tapeFileInfos.IndexOf(item);
-    public int IndexOf(TapeFileInfo item, int fromIndex) => m_tapeFileInfos.IndexOf(item, fromIndex);
+    public int Count => Hidden(m_tapeFileInfos.Count);
+
+    public int IndexOf(TapeFileInfo item) => Hidden(m_tapeFileInfos).IndexOf(item);
+
+    public int IndexOf(TapeFileInfo item, int fromIndex) => Hidden(m_tapeFileInfos).IndexOf(item, fromIndex);
+
     internal int Capacity
     {
-        get => m_tapeFileInfos.Capacity;
+        get => Hidden(m_tapeFileInfos.Capacity);
         set
         {
+            ThrowIfLocked();
             // only set if new capacity is greater than current count
             if (value > m_tapeFileInfos.Count)
                 m_tapeFileInfos.Capacity = value;
         }
     }
+
     internal void Append(TapeFileInfo tfi)
     {
+        ThrowIfLocked();
         m_tapeFileInfos.Add(tfi);
         // A newly appended file may flip the layout from aligned to packed
         //  (or remain aligned), so the cached detection must be re-evaluated.
         if (m_isPackedLayout == false && tfi.Address.Offset != 0)
             m_isPackedLayout = true;
     }
-    internal void CopyFrom(TapeSetTOC toc)
+
+    /// <summary>
+    /// Copies everything from <paramref name="set"/> — locked or not — field by field. A copy is in exactly the source's
+    ///  state: locked, unlocked or plain, and as persisted.
+    /// </summary>
+    internal void CopyFrom(TapeSetTOC set)
     {
         m_tapeFileInfos.Clear();
-        m_tapeFileInfos.AddRange(toc.m_tapeFileInfos);
-
-        Description = toc.Description;
-        CreationTime = toc.CreationTime;
-        BlockSize = toc.BlockSize;
-        LastSaveTime = toc.LastSaveTime;
-        HashAlgorithm = toc.HashAlgorithm;
-        Incremental = toc.Incremental;
-        Volume = toc.Volume;
-        Compression = toc.Compression;
-        CompressionLevel = toc.CompressionLevel;
-        SetId = toc.SetId;
-        NextFileId = toc.NextFileId;
-        DataFormat = toc.DataFormat;
-        ClosedByEom = toc.ClosedByEom;
+        m_tapeFileInfos.AddRange(set.m_tapeFileInfos);
+        m_description = set.m_description;
+        m_creationTime = set.m_creationTime;
+        m_blockSize = set.m_blockSize;
+        m_lastSaveTime = set.m_lastSaveTime;
+        m_hashAlgorithm = set.m_hashAlgorithm;
+        m_incremental = set.m_incremental;
+        m_compression = set.m_compression;
+        m_compressionLevel = set.m_compressionLevel;
+        m_nextFileId = set.m_nextFileId;
+        Volume = set.Volume;
+        SetId = set.SetId;
+        DataFormat = set.DataFormat;
+        ClosedByEom = set.ClosedByEom;
+        FirstBlockAfterSet = set.FirstBlockAfterSet;
         // ContinuedFromPrevVolume is init-only: the copy constructor carries it
-        m_isPackedLayout = toc.m_isPackedLayout;
+        m_isPackedLayout = set.m_isPackedLayout;
+
+        // Encryption (Design-Encryption §6.3). The key is shared by reference — the key ring owns it; the envelope and
+        //  the sealed bytes are immutable, so sharing them keeps a locked copy byte-identical on its next save (E7).
+        m_encryption = set.m_encryption;
+        Envelope = set.Envelope;
+        Key = set.Key;
+        Sealed = set.Sealed;
+        m_sealedSizeOnTape = set.m_sealedSizeOnTape;
+        m_acceptsFiles = set.m_acceptsFiles;
 
         // A copy is exactly as persisted as its source: a set loaded from tape and copied into the live TOC
         //  (TapeTOC.CopyFrom) must not count as modified, or its LastSaveTime would be restamped on the next save.
-        m_savedState = toc.m_savedState;
+        m_savedState = set.m_savedState;
     }
 
     // IReadOnlyList<TapeFileInfo> {
-    public TapeFileInfo this[int index] => m_tapeFileInfos[index];
+    public TapeFileInfo this[int index] => Hidden(m_tapeFileInfos, "Item")[index];
     // } IReadOnlyList<TapeFileInfo>
 
     // IEnumerable<TapeFileInfo> {
     public IEnumerator<TapeFileInfo> GetEnumerator()
     {
+        ThrowIfLocked();
         return m_tapeFileInfos.GetEnumerator();
-        /*
-        foreach (var entry in m_fileInfos)
-        {
-            yield return entry;
-        }
-        */
     }
 
     // Explicit implementation of the non-generic IEnumerable interface
@@ -342,9 +505,8 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
     {
         return GetEnumerator(); // Just call the generic version
     }
-    // } IEnumerable<TapeFileInfo>
+    // } IEnumerable<TapeFileInfo>    
 
-    
     public List<int> RefsToIndexes(IEnumerable<TapeFileInfo> tfis)
     {
         List<int> indexes = [];
@@ -414,35 +576,37 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
     /// <summary>
     /// Returns a list of <see cref="TapeFileInfo"/> objects that pass the given filter.
     /// A <c>null</c> filter means select all files.
-    /// Returns <c>null</c> when all files in the set match ("null means all" convention).
+    /// Returns <c>null</c> when all files in the set match ("null means all" convention). Throws on a locked set.
     /// </summary>
     public List<TapeFileInfo>? SelectFiles(ITapeFileFilter? filter)
     {
+        ThrowIfLocked();
         if (filter == null)
             return null; // null means all files in set
 
         List<TapeFileInfo> filesSelected = [];
-        foreach (var tfi in this)
+        foreach (var tfi in m_tapeFileInfos)
         {
             if (filter.Matches(tfi.FileDescr))
                 filesSelected.Add(tfi);
         }
 
-        return (filesSelected.Count == Count) ? null /* null means all files in set */ : filesSelected;
+        return (filesSelected.Count == m_tapeFileInfos.Count) ? null /* null means all files in set */ : filesSelected;
     }
 
     /// <summary>
     /// Returns a linked list of <see cref="TapeFileInfo"/> objects that pass the given filter.
     /// A <c>null</c> filter means select all files.
-    /// Doesn't return "null means all files" shortcut since the list might need editing.
+    /// Doesn't return "null means all files" shortcut since the list might need editing. Throws on a locked set.
     /// </summary>
     internal LinkedList<TapeFileInfo> SelectFilesAsLinkedList(ITapeFileFilter? filter)
     {
+        ThrowIfLocked();
         if (filter == null)
             return new(m_tapeFileInfos); // list all files -- don't use "null means all files" shortcut
 
         LinkedList<TapeFileInfo> filesSelected = [];
-        foreach (var tfi in this)
+        foreach (var tfi in m_tapeFileInfos)
         {
             if (filter.Matches(tfi.FileDescr))
                 filesSelected.AddLast(tfi);
@@ -452,17 +616,22 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
     }
 
     /// <summary>
-    /// Returns the total source size of all files in the set -- NOT the size on tape.
+    /// Returns the total source size of all files in the set -- NOT the size on tape. Throws on a locked set.
     /// </summary>
-    public long TotalFileSize => m_tapeFileInfos.Sum(tfi => tfi.FileDescr.Length);
+    public long TotalFileSize => Hidden(m_tapeFileInfos).Sum(tfi => tfi.FileDescr.Length);
 
     /// <summary>
-    /// What a file of this set occupies on tape in front of its body, for size estimates when
-    ///  <see cref="TapeFileInfo.SizeOnTape"/> is unknown: the legacy 12-byte header, or a 2.1 header frame plus codec byte.
+    /// What a file of this set occupies on tape beyond its body, for size estimates when
+    ///  <see cref="TapeFileInfo.SizeOnTape"/> is unknown: the legacy 12-byte header, or a 2.1 header frame plus codec byte —
+    ///  plus what the set's encryption scheme adds to the record (Design-Encryption §5.7).
     /// </summary>
-    internal long EstimateFileOverhead(TapeFileInfo tfi) => DataFormat == TapeDataFormat.Legacy
-        ? LegacyFileHeader.Size
-        : TapeFileHeader.EstimateOverhead(tfi.FileDescr.FullName);
+    internal long EstimateFileOverhead(TapeFileInfo tfi)
+    {
+        if (DataFormat == TapeDataFormat.Legacy)
+            return LegacyFileHeader.Size;
+        long header = TapeFileHeader.EstimateOverhead(tfi.FileDescr.FullName);
+        return header + TapeSetCiphers.RecordOverhead(m_encryption, header + tfi.FileDescr.Length);
+    }
 
     // Cached dynamic detection of packed vs aligned layout, derived from file addresses.
     //  null = not yet determined; true = at least one file has Address.Offset != 0;
@@ -476,6 +645,10 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
     /// Computes the total size of all files in the set on tape, considering the block size
     ///  and file block alignment or packing, plus the set header block when present (SH-12).
     /// <para>Works properly for both packed and aligned (legacy) layouts, and for both data formats.
+    /// </para>
+    /// <para>
+    /// <b>Never throws on a locked set</b> (Design-Encryption §6.1): it answers from the stub's size on tape — capacity,
+    ///  <c>Used</c> and the overwrite anchor depend on it.
     /// </para>
     /// </summary>
     /// <param name="defaultBlockSize">Block size to assume when the set's own <see cref="BlockSize"/> is 0.
@@ -493,11 +666,10 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
     public long ComputeTotalFileSizeOnTape(uint defaultBlockSize = 0, bool withSetHeader = false)
     {
         // -- Local helpers ---
-
         long SumRawFileSizes()
         {
             long sum = 0L;
-            foreach (var tfi in this)
+            foreach (var tfi in m_tapeFileInfos)
                 sum += RawFileSize(tfi);
             return sum;
         }
@@ -509,13 +681,17 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
 
         static long RoundUpToBlock(long size, uint blockSize)
             => (blockSize <= 1) ? size : (size + blockSize - 1) / blockSize * blockSize;
-
         // --- End local helpers ---
 
-        if (Count == 0)
+        // A locked set knows only its stub: the files' size on tape, without the set header (§5.3). A vacant one
+        //  counts nothing, exactly like an empty plain set below.
+        if (IsLocked)
+            return m_sealedSizeOnTape == 0 ? 0L : m_sealedSizeOnTape + (withSetHeader ? TapeHeaderBlock.Size : 0);
+
+        if (m_tapeFileInfos.Count == 0)
             return 0L;
 
-        uint blockSize = (BlockSize > 0) ? BlockSize : defaultBlockSize;
+        uint blockSize = (m_blockSize > 0) ? m_blockSize : defaultBlockSize;
 
         // If we already know the set is packed, sum raw and round once.
         if (m_isPackedLayout == true)
@@ -526,16 +702,20 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
         long alignedTotal = 0L;
         long rawTotal = 0L;
         bool packed = false;
-        foreach (var tfi in this)
+        foreach (var tfi in m_tapeFileInfos)
         {
             long raw = RawFileSize(tfi);
             rawTotal += raw;
+
             if (!packed && tfi.Address.Offset != 0)
                 packed = true;
+
             if (!packed)
                 alignedTotal += RoundUpToBlock(raw, blockSize);
         }
+
         m_isPackedLayout = packed;
+
         long total = packed ? RoundUpToBlock(rawTotal, blockSize) : alignedTotal;
 
         // The set header is one fixed block at the head of the set's data, written BEFORE the first
@@ -543,6 +723,7 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
         //  content: it draws on the same capacity the files do, and the early-warning reserve must see it.
         if (withSetHeader)
             total += TapeHeaderBlock.Size;
+
         return total;
     }
 
@@ -607,6 +788,20 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     /// </summary>
     public string WrittenBy { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Pad unit for sealing encrypted sets (Design-Encryption §5.4): <see cref="TapeSealedPayload.PadUnit"/>. TEST_HOOKS
+    ///  builds may lower it — to 1 = no padding — so that small virtual volumes hold encrypted TOCs. Production cannot.
+    /// </summary>
+    internal int SealPadUnit
+    {
+        get;
+#if TEST_HOOKS
+        set;
+#else
+        private set;
+#endif
+    } = TapeSealedPayload.PadUnit;
+
     public string Description { get; set; } = string.Empty;
     /// <summary>
     /// Stable identity of the media — or, for a multi-volume backup, of the whole volume
@@ -667,9 +862,10 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
         }
     }
     /// <summary>
-    /// Returns true if the TOC is empty (no sets) OR contains a single set with NO files.
+    /// Returns true if the TOC is empty (no sets) OR contains a single set with NO files — a vacant locked set
+    ///  included (<see cref="TapeSetTOC.IsVacant"/>).
     /// </summary>
-    public bool IsEmpty => Count == 0 || Count == 1 && CurrentSetTOC.Count == 0;
+    public bool IsEmpty => Count == 0 || Count == 1 && CurrentSetTOC.IsVacant;
 
     /// <summary>
     /// Builds the immutable <see cref="TapeMediaHeader"/> for this medium — the sole authority for
@@ -690,7 +886,6 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     ///  agent's <see cref="TapeAgentBase.WritesSetHeaders"/> — the TOC cannot know it, exactly as it
     ///  cannot know its own <paramref name="tapeTocPlacement"/>.
     /// </param>
-
     public TapeMediaHeader CreateHeader(uint tocBlockSize,
             TapeTocPlacement tapeTocPlacement,
             MediaPartition headerPartition = MediaPartition.Content,
@@ -721,6 +916,11 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     /// Carries <b>a-priori facts only</b> (SH-5): every value is known before the set's first file is
     ///  written. Nothing post-hoc — no file count, no totals — may ever be added.
     /// </para>
+    /// <para>
+    /// <b>An encrypted set's header carries identity and position only</b> (Design-Encryption §5.6): no description,
+    ///  creation time at <c>MinUtc</c>, block size 0, and the scheme. Built from stub fields alone, so it works on a
+    ///  locked set too.
+    /// </para>
     /// </remarks>
     /// <param name="setIndex">
     /// Index of the set to describe, in standard (1..N) or alternative (≤ 0) form — normalized
@@ -737,16 +937,19 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
                 $"Set index {setIndex} is outside {MinSetIndex}..{MaxSetIndex}");
 
         var setTOC = m_setTOCs[setInternal];
+        bool encrypted = setTOC.IsEncrypted;
         return new TapeSetHeader
         {
             MediaId = EnsureMediaId(),         // idempotent — the same id the media header carries
             SetId = setTOC.SetId,              // the set's own identity — the same id its file headers carry
-            CreatedUtc = setTOC.CreationTime,  // the SET's own creation moment
-            SetBlockSize = setTOC.BlockSize,   // advisory (SH-11); the TOC stays authoritative
+            // the SET's own creation moment — hidden for an encrypted set
+            CreatedUtc = encrypted ? Format.TapePrimitives.MinUtc : setTOC.CreationTime,
+            SetBlockSize = encrypted ? 0 : setTOC.BlockSize,   // advisory (SH-11); the TOC stays authoritative
             Volume = setTOC.Volume,
             VolumeSetIndex = setInternal - FirstSetInternalOfVolume(setTOC.Volume),
             GlobalSetIndex = InternalToSetIndex(setInternal),   // ALWAYS standard, whatever form came in
-            Description = TapeSetHeader.ClampName(setTOC.Description),
+            Encryption = setTOC.Encryption,
+            Description = encrypted ? null : TapeSetHeader.ClampName(setTOC.Description),
         };
     }
 
@@ -876,6 +1079,38 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     }
     public int FirstSetOnVolume => InternalToSetIndex(FirstSetInternalOnVolume);
     public int LastSetOnVolume => InternalToSetIndex(LastSetInternalOnVolume);
+
+    /// <summary>
+    /// Where content ends on <paramref name="volume"/> — the <see cref="TapeSetTOC.FirstBlockAfterSet"/> of its last set
+    ///  (Design-TocLocation §6, TL-10).
+    /// </summary>
+    /// <param name="volume">
+    /// The volume IDENTIFIED on the loaded cartridge — never <see cref="Volume"/> by assumption: a series TOC held in
+    ///  memory describes every volume, and the cartridge in the drive may be any of them.
+    /// </param>
+    /// <param name="beginOfContent">What to answer for a volume holding no set: its begin-of-content, which only the
+    ///  caller (the navigator) knows; −1 when it does not either.</param>
+    /// <returns>The block, or −1 when the record does not tell.</returns>
+    /// <remarks>
+    /// A trailing VACANT set with no recorded end never reached the tape (a backup refused before moving) and is looked
+    ///  past. A set that holds files and records no end makes the answer unknown — it is never guessed from an earlier
+    ///  set.
+    /// </remarks>
+    public long FirstBlockAfterContentOnVolume(int volume, long beginOfContent = -1)
+    {
+        for (int i = m_setTOCs.Count - 1; i >= 0; i--)
+        {
+            TapeSetTOC set = m_setTOCs[i];
+            if (set.Volume != volume)
+                continue;
+            if (set.FirstBlockAfterSet >= 0)
+                return set.FirstBlockAfterSet;
+            if (!set.IsVacant)
+                return -1;
+        }
+        return beginOfContent;
+    }
+
     public bool IsCurrentSetOnVolume => CurrentSetTOC.Volume == Volume;
     public bool IsCurrentSetLast => CurrentSetIndex == MaxSetIndex;
     public bool IsCurrentSetContOnNextVolume => IsCurrentSetLast ? ContinuedOnNextVolume :
@@ -898,24 +1133,30 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     }
 
     /// <summary>
-    /// Appends a new <see cref="TapeSetTOC"/> — or replaces a trailing EMPTY one — and makes it current.
+    /// Appends a new <see cref="TapeSetTOC"/> — or replaces a trailing VACANT one — and makes it current.
     /// <para>The first set in a TOC is never marked incremental, regardless of the parameter.</para>
     /// </summary>
     /// <remarks>
-    /// A trailing empty set (e.g. left by an aborted backup) is REPLACED by a fresh instance, not recycled: the new
+    /// <para>
+    /// A trailing vacant set (e.g. left by an aborted backup) is REPLACED by a fresh instance, not recycled: the new
     ///  set starts with every attribute at its default — a fresh <see cref="TapeSetTOC.SetId"/>, FileIds from 1,
-    ///  the current <see cref="TapeDataFormat"/>, and no description, hash, compression or block size inherited from
-    ///  the abandoned attempt. Replacing rather than resetting field by field means a future attribute can never be
-    ///  forgotten. The new object identity also lets consumers detect the replacement, as with
+    ///  the current <see cref="TapeDataFormat"/>, and no description, hash, compression, block size or encryption
+    ///  inherited from the abandoned attempt. Replacing rather than resetting field by field means a future attribute
+    ///  can never be forgotten. The new object identity also lets consumers detect the replacement, as with
     ///  <see cref="ReplaceCurrentSetTOC"/>.
+    /// </para>
+    /// <para>
+    /// <b>Vacant, not "Count == 0"</b>: a LOCKED trailing set is vacant only when its stub records no size on tape — an
+    ///  encrypted set that holds files is never replaced (Design-Encryption §6.2).
+    /// </para>
     /// </remarks>
     public void AddNewSetTOC(int capacity = 0, bool incremental = false)
     {
         // Do NOT use CurrentSetTOC here: it calls AddNewSetTOC() itself when the TOC is empty.
-        if (m_setTOCs.Count > 0 && m_setTOCs[^1].Count == 0)
+        if (m_setTOCs.Count > 0 && m_setTOCs[^1].IsVacant)
         {
-            // Count > 1 means "there's at least one other set before this empty one."
-            //  If Count == 1, the empty set IS the first set → not incremental.
+            // Count > 1 means "there's at least one other set before this vacant one."
+            //  If Count == 1, the vacant set IS the first set → not incremental.
             m_setTOCs[^1] = new TapeSetTOC(Volume, capacity, incremental && m_setTOCs.Count > 1);
         }
         else
@@ -936,24 +1177,33 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     ///  referenced — only its metadata is carried over via <see cref="TapeSetTOCParams"/>.
     ///  This is robust against the policy of removing the trailing empty set from the
     ///  full volume's TOC before saving (which would leave nothing valid to clone).</para>
+    /// <para>An encrypted set continues encrypted: same scheme, the SAME envelope, the same key (Design-Encryption
+    ///  §8.3) — one prompt per logical set, however many volumes.</para>
     /// </summary>
+    /// <exception cref="ArgumentException">An encryption scheme without an envelope or a key.</exception>
     public void AddContinuationSetTOC(TapeSetTOCParams setParams, bool contFromPrevVolume = false)
     {
-        m_setTOCs.Add(
-            new TapeSetTOC(Volume, setParams.Capacity, setParams.Incremental) // notice: use *current* volume
-            {
-                HashAlgorithm = setParams.HashAlgorithm,
-                Description = setParams.Description,
-                BlockSize = setParams.BlockSize,
-                Compression = setParams.Compression,
-                CompressionLevel = setParams.CompressionLevel,
-                // one logical set across volumes: same SetId and FileId sequence (empty SetId -> fresh one)
-                SetId = (setParams.SetId != Guid.Empty) ? setParams.SetId : Guid.NewGuid(),
-                NextFileId = Math.Max(1UL, setParams.NextFileId),
-                ContinuedFromPrevVolume = contFromPrevVolume
-            }
-        );
+        var set = new TapeSetTOC(Volume, setParams.Capacity, setParams.Incremental) // notice: use *current* volume
+        {
+            HashAlgorithm = setParams.HashAlgorithm,
+            Description = setParams.Description,
+            BlockSize = setParams.BlockSize,
+            Compression = setParams.Compression,
+            CompressionLevel = setParams.CompressionLevel,
+            // one logical set across volumes: same SetId and FileId sequence (empty SetId -> fresh one)
+            SetId = (setParams.SetId != Guid.Empty) ? setParams.SetId : Guid.NewGuid(),
+            NextFileId = Math.Max(1UL, setParams.NextFileId),
+            ContinuedFromPrevVolume = contFromPrevVolume
+        };
 
+        if (setParams.Encryption != TapeEncryption.None)
+        {
+            if (setParams.Envelope is null || setParams.Key is null)
+                throw new ArgumentException("An encrypted continuation needs its envelope and key", nameof(setParams));
+            set.EnableEncryption(setParams.Encryption, setParams.Envelope, setParams.Key);
+        }
+
+        m_setTOCs.Add(set);
         MakeLastSetCurrent();
     }
 
@@ -964,11 +1214,12 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     public void CopyFrom(TapeTOC toc) // Replaces the whole content -> use with CAUTION!
     {
         m_setTOCs.Clear();
-        foreach (var setTOC in toc) // deep copy the sets, so that modifications to the original toc don't affect this toc
+        foreach (var setTOC in toc) // deep copy the sets, so that modifications to the original set don't affect this set
             m_setTOCs.Add(new TapeSetTOC(setTOC));
 
         LoadedFromLegacy = toc.LoadedFromLegacy;
         WrittenBy = toc.WrittenBy;
+        SealPadUnit = toc.SealPadUnit;
 
         // Preserve the series identity: every TOC load copies a
         // freshly deserialized TOC into the live one via CopyFrom, so dropping this line would
@@ -985,26 +1236,33 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     }
 
     /// <summary>
-    /// Replaces the current set with a fresh empty <see cref="TapeSetTOC"/>, preserving the volume assignment. Guarantees a
-    ///  new object identity so that consumers can detect the replacement via reference equality.
+    /// Replaces the current set with a fresh empty <see cref="TapeSetTOC"/>, preserving the volume assignment.
+    ///  Guarantees a new object identity so that consumers can detect the replacement via reference equality.
     /// </summary>
     /// <remarks>
-    /// Keeps <see cref="TapeSetTOC.ClosedByEom"/>: until the replacement is written, the TAPE still ends inside the old
-    ///  set, and the overwrite's own positioning must count marks as the tape stands (F32).
+    /// Keeps <see cref="TapeSetTOC.ClosedByEom"/> and <see cref="TapeSetTOC.FirstBlockAfterSet"/>: until
+    ///  the replacement is written, the TAPE still ends inside the old set, and the overwrite's own
+    ///  positioning must count marks as the tape stands (F32).
     /// </remarks>
     public void ReplaceCurrentSetTOC(int capacity = 0, bool incremental = false)
     {
-        bool closedByEom = m_setTOCs[m_currSetInternal].ClosedByEom;
+        // Until the replacement is written, the TAPE still ends as the old set left it — keep both traits.
+        TapeSetTOC old = m_setTOCs[m_currSetInternal];
         m_setTOCs[m_currSetInternal] = new TapeSetTOC(Volume, capacity,
             incremental && m_setTOCs.Count > 1)     // the very first set shouldn't be incremental
         {
-            ClosedByEom = closedByEom,
+            ClosedByEom = old.ClosedByEom,
+            FirstBlockAfterSet = old.FirstBlockAfterSet,
         };
     }
 
-    public bool RemoveLastEmptySet() // can only remove the last set, and only if it's empty
+    /// <summary>
+    /// Removes the last set if it is vacant — empty, or a locked set whose stub records no size on tape
+    ///  (<see cref="TapeSetTOC.IsVacant"/>). Only ever the last set.
+    /// </summary>
+    public bool RemoveLastEmptySet()
     {
-        if (m_setTOCs.Count > 0 && m_setTOCs.Last().Count == 0)
+        if (m_setTOCs.Count > 0 && m_setTOCs[^1].IsVacant)
         {
             m_setTOCs.RemoveAt(m_setTOCs.Count - 1);
             MakeLastSetCurrent();
@@ -1035,7 +1293,8 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     public bool MarkCurrentSetIncremental(bool incremental = true) =>
         CurrentSetTOC.MarkIncremental(incremental && m_setTOCs.Count > 1); // the very first set shouldn't be incremental
 
-    // serialization constructor
+    /// <summary>Serialization constructor.</summary>
+    /// <param name="setTOCs">Previously loaded set TOCs.</param>
     internal TapeTOC(List<TapeSetTOC> setTOCs) => m_setTOCs = setTOCs;
 
     #region IEnumerable<TapeSetTOC> 
@@ -1057,14 +1316,22 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     {
         return GetEnumerator(); // Just call the generic version
     }
-    
+
     #endregion IEnumerable<TapeSetTOC>
 
     #region *** File selection methods ***
 
-    // Find the latest non-incremental set -- returns internal index.
-    //  Walks back through the entire ContinuedFromPrevVolume chain so that
-    //  a full backup spanning 3+ volumes is fully included.
+    /// <summary>
+    /// Gets the internal index of the most recent non-incremental or locked tape set, walking back through any
+    /// ContinuedFromPrevVolume chain so a multi-volume full backup is fully included.Find the latest non-incremental set -- returns internal index.
+    /// </summary>
+    /// <remarks>
+    ///  Walks back through the entire <see cref="TapeSetTOC.ContinuedFromPrevVolume"/> chain so that
+    ///  e.g. a full backup spanning 3+ volumes is fully included.
+    ///  A LOCKED set counts as its own chain start (Design-Encryption §6.2): its <see cref="TapeSetTOC.Incremental"/>
+    ///  flag is hidden, and the key ring unlocks whole chains at once (E13), so a live chain is never split here.
+    ///  Never throws — <see langword="this"/> TOC is the input.
+    /// </remarks>
     private int LastNonIncSetInternal
     {
         get
@@ -1072,7 +1339,8 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
             // check starting from current down to oldest
             for (int i = m_currSetInternal; i >= 0; i--)
             {
-                if (!m_setTOCs[i].Incremental)
+                TapeSetTOC set = m_setTOCs[i];
+                if (set.IsLocked || !set.Incremental)
                 {
                     // Walk back through the entire continuation chain (may span multiple volumes)
                     while (i > 0 && m_setTOCs[i].ContinuedFromPrevVolume)
@@ -1080,8 +1348,29 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
                     return i;
                 }
             }
-
             return 0; // if all sets are marked incremental, use the oldest set
+        }
+    }
+
+    /// <summary>
+    /// Whether the current set is incremental and a set of its chain — down to its base — is LOCKED. The up-to-date
+    ///  check cannot read such a chain; a backup refuses before moving the tape (Design-Encryption §8.2).
+    /// </summary>
+    internal bool IsIncrementalBaseLocked
+    {
+        get
+        {
+            if (m_setTOCs.Count == 0 || !m_setTOCs[m_currSetInternal].Incremental)
+                return false;
+            for (int i = m_currSetInternal - 1; i >= 0; i--)
+            {
+                TapeSetTOC set = m_setTOCs[i];
+                if (set.IsLocked)
+                    return true;
+                if (!set.Incremental)
+                    return false;
+            }
+            return false;
         }
     }
 

@@ -1,3 +1,5 @@
+using Windows.Win32.System.SystemServices; // Helpers.BytesToString
+
 using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
 using TapeLibNET.Drive;
@@ -5,8 +7,6 @@ using TapeLibNET.Headers;
 using TapeLibNET.Media;
 using TapeLibNET.Scan;
 using TapeLibNET.Toc;
-using Windows.Win32.Foundation;
-using Windows.Win32.System.SystemServices; // Helpers.BytesToString
 
 namespace TapeLibNET.Services;
 
@@ -76,8 +76,15 @@ public abstract class ServiceOperationProgressHandler(
         FilesFailed    = stats.FilesFailed;
         FilesSkipped   = stats.FilesSkipped;
         BytesProcessed = stats.FileBytesProcessed;
-        SetStats       = stats.Sets; // ← ensure the set-level counters ride along
+        SetStats       = stats.SetStats; // ← ensure the set-level counters ride along
+        TocStats       = stats.TocStats;  // ← and the TOC-level ones
     }
+
+    /// <summary>
+    /// Brings the public statistics up to date from <paramref name="stats"/> outside any agent callback — after the
+    ///  service skipped a volume, whose files never pass through a file callback.
+    /// </summary>
+    internal void SyncStatistics(in TapeFileStatistics stats) => Sync(stats);
 
     /// <summary>Reports current progress to the host. Override to add custom progress display.</summary>
     protected virtual void ReportProgress(in TapeFileStatistics stats, string? currentFile = null) { }
@@ -159,8 +166,7 @@ public abstract class ServiceOperationProgressHandler(
         ThrowIfAbortRequested();
 
         // End-of-media errors are handled by the multi-volume loop; always skip silently.
-        if (result.ErrorCode == (uint)WIN32_ERROR.ERROR_END_OF_MEDIA ||
-            result.ErrorCode == (uint)WIN32_ERROR.ERROR_NO_DATA_DETECTED)
+        if (ErrorManageableBase.IsEOMorEOD(result.ErrorCode))
         {
             return FileFailedAction.Skip;
         }
@@ -341,6 +347,65 @@ public abstract class ServiceOperationProgressHandler(
     }
 
 
+    // ── TOC-level anomalies (Design-TocLocation §5) ──────────────────────────
+
+    /// <summary>TOC-level statistics for the operation, refreshed by <see cref="Sync"/>.</summary>
+    public TapeTocStatistics TocStats { get; private set; }
+
+    /// <summary>TOC anomalies reported to this handler, in order — once per volume, as the agent raises them.</summary>
+    public IReadOnlyList<TapeTocAnomaly> TocAnomalies => _tocAnomalies;
+    private readonly List<TapeTocAnomaly> _tocAnomalies = [];
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Reported, never asked: the agent has already done what can be done cheaply. The advice comes once, at the end of
+    ///  the operation, from <see cref="TapeServiceBase.ReportTocAnomalyOutcome(TapeAgentBase)"/>.
+    /// </remarks>
+    public virtual void OnTocAnomaly(in TapeTocAnomaly anomaly, in TapeFileStatistics stats)
+    {
+        Sync(stats);
+        _tocAnomalies.Add(anomaly);
+
+        var level = anomaly.CanAttemptRecovery
+            ? ServiceReportLevel.Warning
+            : anomaly.Kind is TapeTocAnomalyKind.NoCopyWritten or TapeTocAnomalyKind.NoReadableCopy
+                or TapeTocAnomalyKind.NotFoundNatively
+                    ? ServiceReportLevel.Failed
+                    : ServiceReportLevel.Warning;
+
+        _host.Report(level, $"{DescribeTocVolume(anomaly.Volume)}: {anomaly.Summary}");
+        if (!anomaly.Diagnosis.Success && !string.IsNullOrWhiteSpace(anomaly.Diagnosis.ErrorMessage))
+            _host.Report(ServiceReportLevel.Warning, anomaly.Diagnosis.ErrorMessage, isSubEntry: true);
+        ReportProgress(stats);
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>At Warning, never Info — like a recovered set: the cartridge needed help, and the user should know.</remarks>
+    public virtual void OnTocAnomalyRecovered(in TapeTocAnomaly anomaly, in TapeFileStatistics stats)
+    {
+        Sync(stats);
+        _tocAnomalies.Add(anomaly);
+        _host.Report(ServiceReportLevel.Warning, $"{DescribeTocVolume(anomaly.Volume)}: {anomaly.RecoverySummary}");
+        ReportProgress(stats);
+    }
+
+    /// <summary>
+    /// Answers <see cref="OnTocFullWalkConfirm"/>; set by the service (<c>TapeServiceBase.ConfirmFullWalk</c>). Unset:
+    ///  proceed — the walk only reads.
+    /// </summary>
+    public Func<int, bool>? FullWalkConfirm { get; set; }
+
+    /// <inheritdoc/>
+    public virtual bool OnTocFullWalkConfirm(int volume) => FullWalkConfirm?.Invoke(volume) ?? true;
+
+    /// <inheritdoc/>
+    public void OnTocSearchProgress(in TapeScanProgress progress) => ReportTocSearchProgress(progress);
+
+    /// <summary>Hook for app-specific display of the full-media TOC search. No-op in the base.</summary>
+    protected virtual void ReportTocSearchProgress(TapeScanProgress progress) { }
+
+    private static string DescribeTocVolume(int volume) => volume > 0 ? $"Volume #{volume}" : "Loaded volume";
+
     /// <summary>
     /// Renders a set in the standard TapeNET notation — <c>#std | alt &gt;description&lt;</c>.
     /// </summary>
@@ -400,6 +465,50 @@ public class ServiceSetProgressHandler(
     bool skipAllErrors,
     string operationName)
     : ServiceOperationProgressHandler(host, agent, skipAllErrors, operationName);
+
+// ── TOC reads the service starts on its own ──────────────────────────────────
+
+/// <summary>
+/// The notifiable of a TOC read the service starts on its own — <c>RestoreTOCAsync</c>, <c>IdentifyMediaAsync</c>, the
+///  restore's initial read: answers the full-media search question (S4) and receives its progress. TOC anomalies are
+///  reported after the read, from the agent's records.
+/// </summary>
+/// <remarks>
+/// Cancellation needs nothing here: the walk polls the agent's abort flag, which the host's Cancel already sets
+///  (<c>TapeServiceBase.AbortTOCLoad</c>, or the operation token).
+/// </remarks>
+public class ServiceTocProgressHandler(ITapeServiceHost host, TapeAgentBase agent) : ITapeTocNotifiable
+{
+    /// <summary>The host — for subclasses that report more.</summary>
+    protected ITapeServiceHost Host { get; } = host;
+
+    /// <summary>The agent reading the TOC.</summary>
+    protected TapeAgentBase Agent { get; } = agent;
+
+    /// <summary>Answers the question; set by the service. Unset: proceed — the walk only reads.</summary>
+    public Func<int, bool>? FullWalkConfirm { get; set; }
+
+    /// <summary>Where the search stands.</summary>
+    public long CurrentBlock { get; private set; }
+
+    /// <summary>TOC copies met so far.</summary>
+    public int TocCopiesFound { get; private set; }
+
+    /// <inheritdoc/>
+    public bool OnTocFullWalkConfirm(int volume) => FullWalkConfirm?.Invoke(volume) ?? true;
+
+    /// <inheritdoc/>
+    public void OnTocSearchProgress(in TapeScanProgress progress)
+    {
+        CurrentBlock = progress.CurrentBlock;
+        if (progress.Fragment is { Kind: FragmentKind.TOC })
+            TocCopiesFound++;
+        ReportProgress(progress);
+    }
+
+    /// <summary>Hook for app-specific progress display. No-op in the base.</summary>
+    protected virtual void ReportProgress(TapeScanProgress progress) { }
+}
 
 // ── Backup ───────────────────────────────────────────────────────────────────
 
@@ -468,13 +577,13 @@ public class ServiceRestoreProgressHandler(
     protected int TotalFilesToProcess { get; } = totalFilesToProcess;
     /// <summary>
     /// Per-set dictionary of successfully processed files, accumulated during the operation.
-    /// Key = standard set index; Value = list of <see cref="TapeFileInfo"/> records.
+    ///  Key = standard set index; Value = list of <see cref="TapeFileInfo"/> records.
     /// </summary>
     public Dictionary<int, List<TapeFileInfo>> ProcessedFiles { get; } = [];
 
     /// <summary>
     /// Builds a <see cref="RestoreResult"/> from the accumulated statistics.
-    /// Called by the service after the operation completes.
+    ///  Called by the service after the operation completes.
     /// </summary>
     public RestoreResult GenerateResult() => new()
     {
@@ -490,7 +599,12 @@ public class ServiceRestoreProgressHandler(
                        : FilesSkipped > 0 ? ServiceReportLevel.Warning
                        :                    ServiceReportLevel.Completed,
         ProcessedFiles = ProcessedFiles,
-        Sets           = SetStats,
+
+        // Set stats only here: they change inside callbacks, so Sync() keeps them final.
+        //  TOC stats come from the agent — the service sets them (s. ExecuteRestoreCore),
+        //  since they can change without a callback.
+        SetStats           = SetStats,
+        // We don't set TocStats = TocStats here -- s. the comment above
     };
 
     /// <inheritdoc/>

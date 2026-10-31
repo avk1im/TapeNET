@@ -124,9 +124,32 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                 : 0.0;
 
             _viewModel.ScanProgressText =
-                $"Block {currentBlock:N0} · {setsFound:N0} set(s) · {tocCopiesFound:N0} TOC copy(ies) found";
+                $"Block {currentBlock:N0} · {fragmentsFound:N0} fragment(s) · {setsFound:N0} set(s)"
+                    + $" · {tocCopiesFound:N0} TOC cop{(tocCopiesFound == 1 ? "y" : "ies")} found";
         });
     }
+
+    /// <summary>
+    /// Shows the progress of a full-media TOC search in the TOC load overlay's message. Safe to call from any thread.
+    /// </summary>
+    /// <param name="estimatedBlocks">Media capacity in blocks; 0 when unknown (no percentage).</param>
+    public void UpdateTocSearchProgress(long currentBlock, long estimatedBlocks, int tocCopiesFound)
+    {
+        _dispatcher.Invoke(() =>
+        {
+            string where = estimatedBlocks > 0
+                ? $"{Math.Clamp(currentBlock * 100.0 / estimatedBlocks, 0.0, 99.0):F0}% (block {currentBlock:N0})"
+                : $"block {currentBlock:N0}";
+            _viewModel.BusyMessage = $"Searching the whole medium for a TOC — {where}" +
+                (tocCopiesFound > 0 ? $", {tocCopiesFound:N0} cop{(tocCopiesFound == 1 ? "y" : "ies")} found" : string.Empty);
+        });
+    }
+
+    /// <summary>
+    /// Restores the overlay's message after a TOC search inside an operation. Safe to call from any thread.
+    /// </summary>
+    public void EndTocSearchProgress(string message)
+        => _dispatcher.Invoke(() => _viewModel.BusyMessage = message);
 
     /// <summary>
     /// Shared implementation for <see cref="UpdateBackupProgress"/> and
@@ -378,21 +401,71 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
     public TapeServiceBase? ServiceRef { get; set; }
 
     /// <inheritdoc/>
-    public bool OnVolumeContinueConfirm(int volumeNeeded, RestoreMode mode)
+    public VolumeAction OnVolumeContinueSelect(int volumeNeeded, RestoreMode mode)
     {
-        bool result = false;
+        string name = mode.ToDisplayName();
+        return ShowVolumePrompt(
+            title: $"{name}: Volume Change Required",
+            headline: $"{name} requires Volume #{volumeNeeded}",
+            message: null,
+            detail: $"Click Insert to eject the current media and insert Volume #{volumeNeeded}.\n\n" +
+                    $"If that volume is not available, skip it: its files will not be processed, and the " +
+                    $"{name.ToLowerInvariant()} goes on with the next volume.",
+            notice: null,
+            severity: WarningLevel.Info,
+            code: null,
+            insertLabel: $"Insert Volume #{volumeNeeded}",
+            insertIsDefault: true,
+            skipLabel: $"Skip Volume #{volumeNeeded}",
+            endLabel: $"End {name}");
+    }
+
+    /// <inheritdoc/>
+    public VolumeAction OnVolumeErrorSelect(int volume, string errorMessage, string operationName, bool allowSkip)
+        => ShowVolumePrompt(
+            title: "Volume Cannot Be Used",
+            headline: $"Volume #{volume} cannot be used",
+            message: "The volume was loaded and identified, but it cannot be used:",
+            detail: null,
+            notice: allowSkip
+                ? $"Insert it again (or another copy), skip it — its files are then reported as failed — " +
+                  $"or end the {operationName.ToLowerInvariant()}."
+                : "Nothing was written to it. Insert another volume, or end the backup: the volumes written so far " +
+                  "and their tables of contents stay intact.",
+            severity: WarningLevel.Warning,
+            code: errorMessage,
+            insertLabel: allowSkip ? $"Insert Volume #{volume} again" : "Insert another volume",
+            insertIsDefault: false,     // a blind Enter must not loop on a failing cartridge
+            skipLabel: allowSkip ? $"Skip Volume #{volume}" : null,
+            endLabel: $"End {operationName}");
+
+    /// <summary>
+    /// Shows a volume prompt — Insert, optional Skip, End — and maps the button to a <see cref="VolumeAction"/>.
+    ///  Closing the window answers End.
+    /// </summary>
+    private VolumeAction ShowVolumePrompt(string title, string headline, string? message, string? detail,
+        string? notice, WarningLevel severity, string? code,
+        string insertLabel, bool insertIsDefault, string? skipLabel, string endLabel)
+    {
+        var buttons = new List<MediaPromptButton> { new(insertLabel, IsDefault: insertIsDefault, MinWidth: 170) };
+        var actions = new List<VolumeAction> { VolumeAction.Insert };
+        if (skipLabel is not null)
+        {
+            buttons.Add(new MediaPromptButton(skipLabel));
+            actions.Add(VolumeAction.Skip);
+        }
+        buttons.Add(new MediaPromptButton(endLabel, IsCancel: true, MinWidth: 100));
+        actions.Add(VolumeAction.End);
+
+        VolumeAction result = VolumeAction.End;
         _dispatcher.Invoke(() =>
         {
-            var dialog = new MediaChangeDialog(
-                $"{mode.ToDisplayName()}: Volume Change Required",
-                $"{mode.ToDisplayName()} requires Volume #{volumeNeeded} to continue.",
-                $"Click Continue to eject the current media and insert Volume #{volumeNeeded}.",
-                $"Continue {mode.ToDisplayName()}")
+            var dialog = new MediaChangeDialog(title, headline, message, detail, buttons, notice, severity, code)
             {
-                Owner = Application.Current.MainWindow
+                Owner = Application.Current.MainWindow,
             };
-            if (dialog.ShowDialog() == true)
-                result = dialog.ContinueBackup;
+            if (dialog.ShowDialog() == true && dialog.SelectedIndex >= 0)
+                result = actions[dialog.SelectedIndex];
         });
         return result;
     }
@@ -509,10 +582,11 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                     $"Please insert the media containing Volume #{volumeNeeded}.\n\n" +
                     $"Click Continue when the media is in the drive.",
                     $"Continue {mode.ToDisplayName()}",
-                    showWarning: true)
+                    endButtonText: $"End {mode.ToDisplayName()}")
                 {
                     Owner = Application.Current.MainWindow
                 };
+
                 if (dialog.ShowDialog() == true)
                     mediaReady = dialog.ContinueBackup;
             }
@@ -592,7 +666,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
 
     /// <summary>The fully-composed strings + severity for a given verdict/context.</summary>
     private readonly record struct MismatchPresentation(
-        string Title, string Headline, string Detail, string ProceedLabel, MediaMismatchSeverity Severity);
+        string Title, string Headline, string Detail, string ProceedLabel, WarningLevel Severity);
 
     /// <summary>
     /// Maps (<paramref name="verdict"/>, <paramref name="context"/>) to user-facing wording and severity.
@@ -605,12 +679,12 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
             or MediaPromptContext.CalibrateScratch;
 
         // Severity: wrong kind and destructive mismatches are stern; a wrong volume / verify mismatch is a warning.
-        MediaMismatchSeverity severity = verdict switch
+        WarningLevel severity = verdict switch
         {
-            TapeMediaVerdict.WrongKind => MediaMismatchSeverity.Error,
-            TapeMediaVerdict.MediaInconsistent => MediaMismatchSeverity.Error,
-            TapeMediaVerdict.MediaIdMismatch => destructive ? MediaMismatchSeverity.Error : MediaMismatchSeverity.Warning,
-            _ => MediaMismatchSeverity.Warning,   // WrongVolume, others
+            TapeMediaVerdict.WrongKind => WarningLevel.Error,
+            TapeMediaVerdict.MediaInconsistent => WarningLevel.Error,
+            TapeMediaVerdict.MediaIdMismatch => destructive ? WarningLevel.Error : WarningLevel.Warning,
+            _ => WarningLevel.Warning,   // WrongVolume, others
         };
 
         string proceedLabel = destructive ? "Proceed & overwrite" : "Proceed";
@@ -635,7 +709,16 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                         + "have a table of contents) or unrelated / blank media. Searching reads to the end of the "
                         + "media, which can take a while and may find nothing.",
                 ProceedLabel: "Search",
-                Severity: MediaMismatchSeverity.Warning),
+                Severity: WarningLevel.Warning),
+
+            MediaPromptContext.FullWalkForTOC => new(
+                Title: "Search the whole medium?",
+                Headline: "The table of contents was not found where it should be",
+                Detail: "Its usual place, and the area around it, hold no readable copy. A copy may still stand elsewhere "
+                        + "on the medium — e.g. behind data written later. Searching reads the whole medium, which can take "
+                        + "a long time; it changes nothing on the tape and can be cancelled.",
+                ProceedLabel: "Search",
+                Severity: WarningLevel.Warning),
 
             MediaPromptContext.OverwriteBackup => new(
                 Title: "Overwrite media?",
@@ -760,7 +843,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                 headerDescription: string.IsNullOrWhiteSpace(errorMessage)
                     ? $"Set: {actualSet}"
                     : errorMessage,
-                severity: isDestructive ? MediaMismatchSeverity.Error : MediaMismatchSeverity.Warning,
+                severity: isDestructive ? WarningLevel.Error : WarningLevel.Warning,
                 proceedLabel: isDestructive ? "Attempt recovery" : "Recover and continue",
                 allowRetry: false,
                 allowProceedAlways: false)
@@ -806,18 +889,51 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
 
     /// <inheritdoc/>
     /// <remarks>
-    /// For remote virtual drives, opens <see cref="OpenRemoteVirtualDriveWindow"/> forced to
-    ///  Create-new mode; calls <see cref="TapeServiceBase.InsertRemoteVirtualMedia"/> via
-    ///  <see cref="ServiceRef"/>.
-    /// For local virtual drives, opens <see cref="OpenVirtualDriveWindow"/> in file-creation
-    ///  mode; calls <see cref="TapeServiceBase.InsertVirtualMedia"/> via
-    ///  <see cref="ServiceRef"/>. For physical drives, shows the generic insert dialog.
+    /// Virtual drives (local or remote) get the media-creation dialog, pre-populated with the next volume's file name;
+    ///  physical drives the generic insert prompt.
     /// </remarks>
     public bool OnInsertNewMediaConfirm(int nextVolume)
+        => InsertFreshMedia(
+            suggestPath: last => OpenVirtualDriveViewModel.BuildVolumeFilePath(last, nextVolume),
+            physicalPrompt: () => new MediaChangeDialog(
+                "Insert New Media",
+                "The current volume has been ejected.",
+                $"Please insert a formatted media for Volume #{nextVolume}.\n\n" +
+                "Click Continue when the new media is in the drive.",
+                "Continue Backup",
+                showWarning: true));
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Virtual drives get the media-creation dialog under a NEW name (<c>…_scratch</c>) — never the file just ejected,
+    ///  which Create mode would erase. Physical drives get an error-level prompt that says the cartridge will be erased.
+    /// </remarks>
+    public bool OnInsertScratchMediaConfirm()
+        => InsertFreshMedia(
+            suggestPath: ScratchFilePath,
+            physicalPrompt: () => new MediaChangeDialog(
+                title: "Insert Scratch Media",
+                headline: "Insert a scratch cartridge",
+                message: "The cartridge holding a backup has been ejected.",
+                detail: "Insert a cartridge you can spare for calibration, then click Continue.",
+                buttons:
+                [
+                    new MediaPromptButton("Continue Calibration", MinWidth: 180),
+                    new MediaPromptButton("End Calibration", IsCancel: true, MinWidth: 120),
+                ],
+                notice: "Calibration permanently erases everything on the inserted cartridge.",
+                severity: WarningLevel.Error));
+
+    /// <summary>
+    /// Shared body of the "insert fresh media" prompts: the remote / local media-creation dialog, or
+    ///  <paramref name="physicalPrompt"/> for a physical drive.
+    /// </summary>
+    /// <param name="suggestPath">Maps the last media's content path to the one to suggest.</param>
+    /// <param name="physicalPrompt">Builds the physical-drive prompt — called on the UI thread.</param>
+    private bool InsertFreshMedia(Func<string, string> suggestPath, Func<MediaChangeDialog> physicalPrompt)
     {
         bool mediaReady = false;
         var svc = ServiceRef;
-
         _dispatcher.Invoke(() =>
         {
             if (svc?.IsRemoteDrive == true)
@@ -826,39 +942,24 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                 var settings = _viewModel.RemoteHostSettings;
                 if (settings is null) return;
 
-                var currentCaps = new VirtualTapeDriveCapabilities
-                {
-                    MinBlockSize               = svc.MinimumBlockSize,
-                    MaxBlockSize               = svc.MaximumBlockSize,
-                    DefaultBlockSize           = svc.DefaultBlockSize,
-                    SupportsSetmarks           = svc.SupportsSetmarks,
-                    SupportsSeqFilemarks       = svc.SupportsSeqFilemarks,
-                    SupportsInitiatorPartition = svc.SupportsInitiatorPartition,
-                    SupportsCompression        = false,
-                };
-
+                var currentCaps = CurrentCapabilities(svc);
                 var vm = new OpenRemoteVirtualDriveViewModel(settings);
 
-                // Pre-populate the content filename from the last VMD (vol01 → vol02 etc.)
                 var lastVmd = svc.LastVMD;
                 if (lastVmd != null)
                 {
                     vm.IsNamed = true;
-                    vm.ContentFilePath = System.IO.Path.GetFileNameWithoutExtension(
-                        OpenVirtualDriveViewModel.BuildVolumeFilePath(lastVmd.ContentPath, nextVolume));
+                    vm.ContentFilePath = System.IO.Path.GetFileNameWithoutExtension(suggestPath(lastVmd.ContentPath));
                 }
 
                 vm.ForceCreateMode();
-                // Lock capabilities to the current drive's settings: the replacement volume must
-                //  be compatible with the volumes already written (same block sizes, features, etc.)
+                // Lock capabilities to the current drive's settings: the new media must be compatible
                 vm.LockCapabilitiesFrom(currentCaps);
-
-                // Pre-populate capacity from the previous volume (not locked — user may choose a
-                //  different size for the continuation volume, mirroring local virtual drive behaviour)
+                // Pre-populate capacity from the previous media (not locked)
                 if (lastVmd != null && lastVmd.ContentCapacity > 0)
                     VirtualDriveConfigViewModelBase.SetCapacityFromBytes(lastVmd.ContentCapacity,
                         v => vm.ContentCapacityValue = v,
-                        u => vm.ContentCapacityUnit  = u);
+                        u => vm.ContentCapacityUnit = u);
 
                 var window = new OpenRemoteVirtualDriveWindow(vm) { Owner = Application.Current.MainWindow };
                 if (window.ShowDialog() == true && vm.Result is { } request)
@@ -866,32 +967,10 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
             }
             else if (svc?.IsVirtualDrive == true)
             {
-                var currentCaps = new VirtualTapeDriveCapabilities
-                {
-                    MinBlockSize               = svc.MinimumBlockSize,
-                    MaxBlockSize               = svc.MaximumBlockSize,
-                    DefaultBlockSize           = svc.DefaultBlockSize,
-                    SupportsSetmarks           = svc.SupportsSetmarks,
-                    SupportsSeqFilemarks       = svc.SupportsSeqFilemarks,
-                    SupportsInitiatorPartition = svc.SupportsInitiatorPartition,
-                    SupportsCompression        = false,
-                };
-
+                var currentCaps = CurrentCapabilities(svc);
                 var lastVmd = svc.LastVMD;
-                VirtualMediaDescriptor? prePopulate = null;
-                if (lastVmd != null)
-                {
-                    prePopulate = lastVmd with
-                    {
-                        ContentPath = OpenVirtualDriveViewModel.BuildVolumeFilePath(
-                            lastVmd.ContentPath, nextVolume)
-                    };
-                }
-
-
-
-                // IoSpeed: read from ViewModel
-                IoRateOption? ioSpeed = _viewModel.SelectedIoSpeed;
+                VirtualMediaDescriptor? prePopulate = lastVmd is null ? null
+                    : lastVmd with { ContentPath = suggestPath(lastVmd.ContentPath) };
 
                 var vm = new OpenVirtualDriveViewModel(
                     request =>
@@ -907,7 +986,7 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
                     prePopulate: prePopulate,
                     mediaMode: System.IO.FileMode.Create,
                     currentCapabilities: currentCaps,
-                    currentIoRate: ioSpeed,
+                    currentIoRate: _viewModel.SelectedIoSpeed,
                     calibrations: App.Settings.Calibrations.LoadAll());
 
                 var window = new OpenVirtualDriveWindow(vm) { Owner = Application.Current.MainWindow };
@@ -915,22 +994,32 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
             }
             else
             {
-                var dialog = new MediaChangeDialog(
-                    "Insert New Media",
-                    "The current volume has been ejected.",
-                    $"Please insert a formatted media for Volume #{nextVolume}.\n\n" +
-                    "Click Continue when the new media is in the drive.",
-                    "Continue Backup",
-                    showWarning: true)
-                {
-                    Owner = Application.Current.MainWindow
-                };
+                var dialog = physicalPrompt();
+                dialog.Owner = Application.Current.MainWindow;
                 if (dialog.ShowDialog() == true)
                     mediaReady = dialog.ContinueBackup;
             }
         });
         return mediaReady;
     }
+
+    /// <summary>The current drive's capabilities, for media dialogs that must stay compatible with it.</summary>
+    private static VirtualTapeDriveCapabilities CurrentCapabilities(TapeServiceBase svc) => new()
+    {
+        MinBlockSize = svc.MinimumBlockSize,
+        MaxBlockSize = svc.MaximumBlockSize,
+        DefaultBlockSize = svc.DefaultBlockSize,
+        SupportsSetmarks = svc.SupportsSetmarks,
+        SupportsSeqFilemarks = svc.SupportsSeqFilemarks,
+        SupportsInitiatorPartition = svc.SupportsInitiatorPartition,
+        SupportsCompression = false,
+    };
+
+    /// <summary><c>dir\name.ext</c> → <c>dir\name_scratch.ext</c>: a scratch file next to the ejected one, never it.</summary>
+    private static string ScratchFilePath(string contentPath)
+        => System.IO.Path.Combine(
+            System.IO.Path.GetDirectoryName(contentPath) ?? string.Empty,
+            System.IO.Path.GetFileNameWithoutExtension(contentPath) + "_scratch" + System.IO.Path.GetExtension(contentPath));
 
     /// <inheritdoc/>
     /// <remarks>

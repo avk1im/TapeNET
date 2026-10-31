@@ -16,7 +16,7 @@ namespace TapeLibNET.Packer;
 /// <para>
 /// Single-threaded usage: the packer's public methods are not safe to call concurrently.
 /// Concurrency with the underlying tape is hidden inside the backend; from the agent's
-/// point of view <see cref="TapeWriteStream.Write"/> is synchronous.
+/// point of view <see cref="Streams.TapeWriteStream.Write"/> is synchronous.
 /// </para>
 /// <para>
 /// At most one file is "open" at any time (between <see cref="BeginFile"/> and
@@ -78,6 +78,8 @@ internal sealed class TapeFileWritePacker : IDisposable
         public long StartAbsByte;
         public long Length;     // updated by stream.Write while open; final at EndFile
         public bool IsOpen;
+        public long TocBytes;   // the file's TOC entry estimate (Design-TocReserve §4.2); 0 = not tracked
+        public bool TocCounted; // already in a buffer's commit plan
     }
 
     // Insertion-ordered list of pending entries. List is small (≤ ~blockMultiplier
@@ -151,7 +153,7 @@ internal sealed class TapeFileWritePacker : IDisposable
     // -----------------------------------------------------------------------
     /// <summary>
     /// Fired (synchronously, on the calling thread) whenever one or more files cross the
-    /// commit boundary as a side effect of <see cref="TapeWriteStream.Write"/>,
+    /// commit boundary as a side effect of <see cref="Streams.TapeWriteStream.Write"/>,
     /// <see cref="EndFile"/>, <see cref="Flush"/>, or <see cref="Dispose"/>.
     /// </summary>
     public event Action<IReadOnlyList<CommittedFile>>? FilesCommitted;
@@ -167,11 +169,18 @@ internal sealed class TapeFileWritePacker : IDisposable
     // -----------------------------------------------------------------------
     /// <summary>
     /// Open a logical write slot for one file. Returns a stream the caller writes the
-    /// source bytes into. The file's <see cref="TapeAddress"/> is not known yet; it is
-    /// reported via <see cref="FilesCommitted"/> after the file's tail block is on tape.
+    ///  source bytes into. The file's <see cref="TapeAddress"/> is not known yet; it is
+    ///  reported via <see cref="FilesCommitted"/> after the file's tail block is on tape.
     /// <para>May throw <see cref="TapePackerEndOfMediaException"/> since attempts to harvest!</para>
     /// </summary>
-    public TapeWriteStreamFacade BeginFile()
+    /// <param name="tocEntryBytes">
+    /// The file's TOC entry estimate, counted into the reserve by the write that reaches the file's first byte
+    ///  (Design-TocReserve §4.2). 0 = not tracked.
+    /// </param>
+    /// <exception cref="TapePackerEndOfMediaException">
+    /// Thrown when the tape drive reaches end of media during proactive harvest.
+    /// </exception>
+    public TapeWriteStreamFacade BeginFile(long tocEntryBytes = 0)
     {
         ThrowIfDisposed();
         if (_openEntry is not null)
@@ -186,7 +195,8 @@ internal sealed class TapeFileWritePacker : IDisposable
             Token = new CommitToken(_nextSequence++),
             StartAbsByte = _baseAbsByteOfFill + _fillPos,
             Length = 0,
-            IsOpen = true
+            IsOpen = true,
+            TocBytes = Math.Max(0L, tocEntryBytes),
         };
         _pending.Add(entry);
         _openEntry = entry;
@@ -196,7 +206,7 @@ internal sealed class TapeFileWritePacker : IDisposable
 
     /// <summary>
     /// Close the open file. Returns its <see cref="CommitToken"/> for correlation with
-    /// the eventual <see cref="FilesCommitted"/> notification.
+    ///  the eventual <see cref="FilesCommitted"/> notification.
     /// <para>Does NOT throw <see cref="TapePackerEndOfMediaException"/> since doesn't attempt to harvest.</para>
     /// </summary>
     public CommitToken EndFile()
@@ -396,8 +406,11 @@ internal sealed class TapeFileWritePacker : IDisposable
     // -----------------------------------------------------------------------
     //  Buffer handoff & harvesting
     // -----------------------------------------------------------------------
-    // Hands off the block-aligned prefix of _fillBuffer to the backend and rotates in
-    //  a fresh fill buffer with the trailing sub-block bytes carried over.
+    /// <summary>
+    /// Hands off the block-aligned prefix of _fillBuffer to the backend and rotates in
+    ///  a fresh fill buffer with the trailing sub-block bytes carried over. The buffer
+    ///  travels with its TOC commit plan (Design-TocReserve §4.2).
+    /// </summary>
     private void DoFlushFillBuffer()
     {
         int validBytes = (_fillPos / _blockSize) * _blockSize;
@@ -408,20 +421,47 @@ internal sealed class TapeFileWritePacker : IDisposable
         //  internally too, but we want the result harvested into our state machine).
         HarvestNow();
 
+        TocCommitPlan? plan = BuildTocCommitPlan(_baseAbsByteOfFill, validBytes);
+
         int leftover = _fillPos - validBytes;
         var newFill = _pool.Rent(_bufferCapacity);
         if (leftover > 0)
             _fillBuffer.CopyRegionTo(newFill, validBytes, leftover);
 
         // Hand off; ownership of the old buffer transfers to the backend until harvest.
-        _backend.StartWriting(_fillBuffer, validBytes);
+        _backend.StartWriting(_fillBuffer, validBytes, plan);
         _inflightValidBytes = validBytes;
+
         _fillBuffer = newFill;
         _fillPos = leftover;
         _baseAbsByteOfFill += validBytes;
     }
 
-    // Cheap, non-blocking "if idle, harvest result" used by BeginFile.
+    /// <summary>
+    /// The TOC entries the write of <paramref name="validBytes"/> from <paramref name="bufferStartAbs"/> puts on tape:
+    ///  every tracked file not yet counted whose FIRST byte lies before the buffer's end, keyed by the number of blocks
+    ///  needed to reach that byte (0 when it lies before the buffer). Each file is counted once (Design-TocReserve §4.2).
+    /// </summary>
+    private TocCommitPlan? BuildTocCommitPlan(long bufferStartAbs, int validBytes)
+    {
+        long bufferEndAbs = bufferStartAbs + validBytes;
+        List<(int, long)>? items = null;
+        foreach (PendingEntry e in _pending)
+        {
+            if (e.TocCounted || e.TocBytes <= 0 || e.StartAbsByte >= bufferEndAbs)
+                continue;
+            int blocks = e.StartAbsByte < bufferStartAbs
+                ? 0
+                : (int)((e.StartAbsByte - bufferStartAbs) / _blockSize) + 1;
+            (items ??= []).Add((blocks, e.TocBytes));
+            e.TocCounted = true;
+        }
+        return items is null ? null : TocCommitPlan.Build(items);
+    }
+
+    /// <summary>
+    /// Cheap, non-blocking "if idle, harvest result" used by BeginFile.
+    /// </summary>
     private void TryProactiveHarvest()
     {
         if (_backend.PollStatus() == WriteBackendStatus.Idle)

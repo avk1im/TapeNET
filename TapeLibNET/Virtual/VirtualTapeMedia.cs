@@ -149,12 +149,17 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
     private readonly uint m_minBlockSize;
     private readonly uint m_maxBlockSize;
     private readonly uint m_defaultBlockSize;
+
+#if TEST_HOOKS
+    private long m_capacity; // needs to be adjustable for surgeries, s. VirtualTapeMedia.Surgery.cs
+#else
     private readonly long m_capacity;
+#endif
     private long m_bytesWritten = 0;
     private readonly string m_name;
     private bool m_stateDirty = false;
 
-    #endregion
+#endregion
 
     #region *** Constructors ***
 
@@ -629,10 +634,12 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
 #if TEST_HOOKS
         // After the EOD check, so an injected read fault is a MEDIUM fault, never a disguised EOD.
         if (ReadFaults is { } rf && rf.ShouldInjectNow())
-            return ApplyInjectedReadFault(rf, buffer, offset, count);
+            return ApplyInjectedReadFault(rf, buffer, offset, count, out markEncountered);
 #endif
 
         int totalRead = 0;
+        bool blockSizeMismatch = false;
+        long correctSize = 0L;
 
         try
         {
@@ -660,6 +667,12 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
                 // Read logical blocks from this virtual data block
                 while (count >= m_blockSize && vb.ContainsBlock(m_currentBlock))
                 {
+                    if (vb.BlockSize != m_blockSize)
+                    {
+                        blockSizeMismatch = true;      // read at another size than written (Design-TocLocation §12.4)
+                        correctSize = vb.BlockSize;
+                    }
+
                     long streamPos = vb.GetStreamOffsetForBlock(m_currentBlock);
                     m_stream.Position = streamPos;
 
@@ -697,6 +710,10 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
             LogErrorAsDebug("Stream read failed");
         }
 
+        // As a real drive: the data is delivered, the head is past the block — and the size mismatch is reported.
+        if (blockSizeMismatch && WentOK)
+            SetError(WIN32_ERROR.ERROR_INVALID_BLOCK_LENGTH,
+                $"Block size mismatch: read with {m_blockSize} B vs. block on tape size {correctSize} B");
         return totalRead;
     }
 

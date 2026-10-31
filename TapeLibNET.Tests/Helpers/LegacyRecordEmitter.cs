@@ -35,8 +35,8 @@ internal sealed class LegacyRecordEmitter : ITapeRecordEmitter
     public void WriteFileHeader(Stream stream, TapeSetTOC set, TapeFileInfo file)
         => stream.Write(LegacyFileHeaderWriter.Bytes(file.FileId));
 
-    public void WriteToc(TapeTOC toc, Stream stream)
-        => stream.Write(LegacyTocWriter.TocBytes(toc));
+    public void WriteTOC(TapeTOC toc, Stream stream, byte copyIndex = 0, byte copyCount = 0)
+        => stream.Write(LegacyTocWriter.TocBytes(toc));     // the legacy format has no copy marker
 
     public byte[]? FrameHeaderBlock(TapeHeader header) => header switch
     {

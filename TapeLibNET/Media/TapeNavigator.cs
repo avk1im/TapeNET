@@ -1,8 +1,9 @@
-﻿using System.Diagnostics;
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 using TapeLibNET.Agents;
 using TapeLibNET.Drive;
 using TapeLibNET.Headers;
+using TapeLibNET.Toc;
 using Windows.Win32.Foundation;
 
 namespace TapeLibNET.Media;
@@ -28,6 +29,34 @@ public enum TapeHeaderPresence
 
     // /// <summary>This layout carries no content-BOM header (initiator-partition navigator).</summary>
     // NotNeeded, // indeed not needed anymore since we write content header also for TOC-in-partition
+}
+
+/// <summary>What the tape says about the end of content the TOC recorded (Design-TocLocation §8.1).</summary>
+internal enum RecordedEndOfContent
+{
+    /// <summary>No recorded end, or a layout that needs none (TOC in partition).</summary>
+    NotApplicable,
+    /// <summary>The layout's closing mark right before it, the TOC area right at it. The navigator stands there.</summary>
+    Confirmed,
+    /// <summary>A transport fault prevented the check: no evidence either way.</summary>
+    Unverifiable,
+    /// <summary>The tape contradicts the record: no closing mark there, or not the TOC area.</summary>
+    Disputed,
+}
+
+/// <summary>
+/// What the TOC of a set may take, by layout (Design-TocReserve §2, §9.2): the content reserve for a TOC of a given size
+///  (TOC in set), and the budget of the TOC partition (TOC in partition). Snapshotted at set start for the writing thread.
+/// </summary>
+/// <param name="ReserveFor">The early-warning reserve for a TOC of the given size (one copy); 0 with a TOC partition.</param>
+/// <param name="Budget">Bytes both copies may take in the TOC partition; <see cref="long.MaxValue"/> = unlimited.</param>
+internal readonly record struct TocLimits(Func<long, long> ReserveFor, long Budget)
+{
+    /// <summary>Whether a budget applies.</summary>
+    public bool HasBudget => Budget < long.MaxValue;
+
+    /// <summary>Whether both copies of a TOC of <paramref name="tocBytes"/> fit the budget.</summary>
+    public bool Fits(long tocBytes) => !HasBudget || TapeNavigator.CopiesFootprint(tocBytes) <= Budget;
 }
 
 /// <summary>
@@ -84,23 +113,115 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
         };
     }
 
+    // ── TOC reserve (Design-TocReserve §2) ──────────────────────────────────
+    #region *** TOC reserve ***
+
+    /// <summary>Smallest TOC reserve on LTO drives: one SCSI direct-I/O content buffer.</summary>
+    public const long TocReserveFloorLto = 16L * 1024 * 1024;
+
+    /// <summary>Smallest TOC reserve on other drives (pre-LTO, virtual).</summary>
+    public const long TocReserveFloor = 4L * 1024 * 1024;
+
     /// <summary>
-    /// Maximum space reserved for the TOC area on this tape.
-    /// Instance-level so that concurrent tape operations (or tests) don't interfere.
+    /// Room for the marks around the TOC area — the set's closing mark, the TOC mark, the copies' closing filemarks. One
+    ///  header block: enough on every layout, the virtual one included (the 5d parity test ran with exactly this).
+    /// </summary>
+    internal const long TocMarkAllowance = TapeHeader.FixedHeaderBlockSize;
+
+    /// <summary>
+    /// A fixed TOC reserve replacing the computed one (<see cref="TocReserveFor"/>) — tests, diagnostics.
+    ///  <see langword="null"/> (default) = computed from the TOC's size.
+    /// </summary>
+    public long? TocReserveOverride { get; set; }
+
+    /// <summary>
+    /// The reserve for an EMPTY TOC — the computed floor, or the override. Kept for existing callers; setting it sets
+    ///  <see cref="TocReserveOverride"/>. New code asks <see cref="TocReserveFor"/> with the TOC's size.
     /// </summary>
     public long TOCCapacity
     {
-        get => m_tocCapacityOverride ?? DefaultTOCCapacity(Drive);
-        set => m_tocCapacityOverride = value;
+        get => TocReserveFor(0L);
+        set => TocReserveOverride = value;
     }
 
-    private long? m_tocCapacityOverride = null;
+    /// <summary>
+    /// The early-warning reserve this layout needs for a TOC of <paramref name="tocBytes"/> (one copy): both copies, the
+    ///  layout's extra structure and the marks — never below the floor (TR-6). The override, when set, instead.
+    /// </summary>
+    public virtual long TocReserveFor(long tocBytes)
+        => TocReserveOverride ?? TocReserveCore(Drive, TOCFootprint(tocBytes));
+
+    /// <summary>
+    /// <see cref="TocReserveFor"/> without a navigator — for the service, which reports the reserve the NEXT backup would
+    ///  start with. Same layout decision as <see cref="ProduceNavigator"/>; 0 without media or with a TOC partition.
+    /// </summary>
+    public static long PredictTocReserve(TapeDrive drive, long tocBytes)
+    {
+        if (!drive.IsMediaLoaded)
+            return 0L;
+        string kind = TapeMediaLayout.Predict(drive, useTOCMark: true).NavigatorKind;
+        if (kind == nameof(TapeNavigatorTOCInPartition))
+            return 0L;
+        long footprint = CopiesFootprint(tocBytes)
+            + (kind == nameof(TapeNavigatorTOCInSetWithFmksAndTOCMark) ? drive.GapFileLength : 0L);
+        return TocReserveCore(drive, footprint);
+    }
+
+    /// <summary>The floor (TR-6) — capped at 1/32 of the medium, so small (virtual) media lose little to it.</summary>
+    private static long TocReserveFloorFor(TapeDrive? drive)
+    {
+        long floor = (drive?.LtoGeneration ?? -1) >= 1 ? TocReserveFloorLto : TocReserveFloor;
+        long capacity = drive?.Capacity ?? 0L;
+        if (capacity > 0L)
+            floor = Math.Min(floor, capacity / 32);
+        return floor;
+    }
+
+    private static long TocReserveCore(TapeDrive? drive, long footprint)
+        => Math.Max(TocReserveFloorFor(drive), footprint + TocMarkAllowance);
+
+    /// <summary>
+    /// This layout's TOC limits, snapshotted now: the floor and the override are read once. For the writing thread, which
+    ///  evaluates them many times per buffer (Design-TocReserve §4.3, §9.2) — <see cref="TapeDrive.Capacity"/> would query
+    ///  the device after every write. TOC in set: the reserve function, no budget.
+    /// </summary>
+    internal virtual TocLimits CaptureTocLimits()
+    {
+        if (TocReserveOverride is long fixedReserve)
+            return new(_ => fixedReserve, long.MaxValue);
+        long floor = TocReserveFloorFor(Drive);
+        return new(tocBytes => Math.Max(floor, TOCFootprint(tocBytes) + TocMarkAllowance), long.MaxValue);
+    }
+
+    /// <summary>Two copies of <paramref name="tocBytes"/>, each rounded up to whole TOC blocks.</summary>
+    internal static long CopiesFootprint(long tocBytes)
+    {
+        const long block = TapeHeader.FixedHeaderBlockSize;     // TOC and headers share one block size
+        long perCopy = Math.Max(1L, (tocBytes + block - 1) / block) * block;
+        return 2 * perCopy;
+    }
+
+    /// <summary>
+    /// Size on tape a TOC of <paramref name="tocBytes"/> occupies in this layout when written in full:
+    ///  two copies, each rounded up to whole TOC blocks. Marks are not counted. Layouts with extra structure add it.
+    /// </summary>
+    /// <remarks>Compared against the reserve armed after each TOC save (Design-TocLocation F4).</remarks>
+    public virtual long TOCFootprint(long tocBytes) => CopiesFootprint(tocBytes);
+
+    #endregion // TOC Reserve
 
     /// <summary>
     /// Whether the navigator knows for sure that TOC exists on the tape.
     ///  <see langword="true"/> = TOC is UNlocated, <see langword="false"/> = TOC is located.
     /// </summary>
     public virtual bool TOCUnlocated { get; protected set; } = false;
+
+    /// <summary>
+    /// Set when end-of-content had to be located on a volume that carries NO TOC
+    ///  (e.g. the TOC-mark layout found no mark). The agent reports it as a TOC
+    ///  anomaly; a new navigator — media change — starts clear.
+    /// </summary>
+    internal bool TOCMissing { get; private protected set; }
 
     /// <summary>
     /// Content set to navigate to on the next <see cref="MoveToTargetContentSet"/> call.
@@ -262,8 +383,10 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     #region *** Media header ***
 
     /// <summary>
-    /// Resets presence to <see cref="TapeHeaderPresence.Unknown"/> so the agent re-resolves it — call on
-    ///  every media (re)load (INV-10)./>.
+    /// Forgets what is known about the media header, so it can be resolved afresh. Called by
+    ///  <see cref="TapeAgentBase.ReadBomHeader(out int, out byte[])"/> — the one verb that resolves
+    ///  resence, and that must re-read even when a previous cartridge left
+    ///  <see cref="TapeHeaderPresence.Absent"/> behind.
     /// </summary>
     internal void InvalidateMediaHeaderPresence()
     {
@@ -483,15 +606,7 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
     /// </remarks>
     protected virtual bool MoveToTOCCopyAtCore(long block, MediaPartition partition)
     {
-        if (Drive.HasInitiatorPartition)
-            Drive.MoveToPartition(partition, block);
-        else if (partition == MediaPartition.Content)
-            Drive.MoveToBlock(block);
-        else
-        {
-            LastErrorWin32 = WIN32_ERROR.ERROR_INVALID_PARAMETER;   // no such partition on this medium
-            return false;
-        }
+        Drive.MoveToBlock(partition, block);
         return WentOK;
     }
 
@@ -604,6 +719,21 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
             DriveNumber, TargetContentSet);
         return true;   // early: the tail bookkeeping would overwrite the 0 with the target
     }
+
+    /// <summary>
+    /// Checks <paramref name="block"/>, the end of content the TOC recorded, against the tape
+    ///  (Design-TocLocation §8.1). Only <see cref="RecordedEndOfContent.Confirmed"/> leaves
+    ///  a believed position (−1); every other outcome leaves none.
+    /// </summary>
+    internal virtual RecordedEndOfContent CheckRecordedEndOfContent(long block, out TapeResult evidence)
+    {
+        evidence = TapeResult.OK;
+        return RecordedEndOfContent.NotApplicable;
+    }
+
+    #endregion
+
+    #region *** Content set navigation ***
 
     /// <summary>
     /// Navigates to <see cref="TargetContentSet"/> using bidirectional setmark traversal.
@@ -1015,6 +1145,34 @@ public class TapeNavigatorTOCInPartition : TapeNavigator
     #endregion // Constants
 
 
+    #region *** TOC reserve ***
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// The TOC has its own partition: content may run to the end of medium — no reserve, whatever the override.
+    /// </remarks>
+    public override long TocReserveFor(long tocBytes) => 0L;
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// No reserve: content runs to end-of-media. The budget is the TOC partition, less room for the copies' filemarks
+    ///  (Design-TocReserve §9.2). Unknown capacity — the partition not seen since the load — means no budget, logged.
+    /// </remarks>
+    internal override TocLimits CaptureTocLimits()
+    {
+        long capacity = Drive.InitiatorCapacity;
+        if (capacity <= 0)
+        {
+            m_logger.LogWarning("Drive #{Drive}: TOC partition capacity unknown — its budget is not enforced for this set",
+                DriveNumber);
+            return new(static _ => 0L, long.MaxValue);
+        }
+        return new(static _ => 0L, Math.Max(0L, capacity - TocMarkAllowance));
+    }
+
+    #endregion
+
+
     #region *** Constructors ***
 
     internal TapeNavigatorTOCInPartition(TapeDrive drive) : base(drive) { }
@@ -1047,6 +1205,7 @@ public class TapeNavigatorTOCInPartition : TapeNavigator
     protected override MediaPartition DefaultTocPartition => MediaPartition.Initiator;
 
     #endregion // TOC positioning
+
 
     #region *** Content positioning ***
 
@@ -1202,8 +1361,25 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
         base.OnMediaHeaderWritten(setHeadersExpected);
         TOCUnlocated = true;
     }
-    
+
     #endregion  // Notifications
+
+
+    #region *** TOC positioning ***
+
+    /// <summary>
+    /// Whether the block at the head is a TOC copy's first block — identified by the one dispatcher. Reads it and
+    ///  returns to it; on a failed return the drive carries the error.
+    /// </summary>
+    protected bool IsTOCAtCurrentBlock()
+    {
+        long block = Drive.CurrentBlock;
+        IdentifiedBlock id = TapeHeaderBlock.ReadAndIdentify(Drive, out _, out _, out _, out _);
+        ResetError();
+        return Drive.MoveToBlock(block) && id.Kind == HeaderBlockIdentity.TocCopy;
+    }
+
+    #endregion
 
 
     #region *** Content positioning ***
@@ -1229,6 +1405,138 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
     }
 
     // MoveToBeginOfTOCCore() and MoveToEndOfContentCore(`) remain up to descendants to implement
+
+    /// <inheritdoc/>
+    internal override RecordedEndOfContent CheckRecordedEndOfContent(long block, out TapeResult evidence)
+    {
+        if (block < 0)
+            return base.CheckRecordedEndOfContent(block, out evidence);
+
+        ResetError();
+        RecordedEndOfContent verdict = ProbeRecordedEndOfContent(block);
+        if (verdict == RecordedEndOfContent.Confirmed && !Drive.MoveToBlock(block))
+            verdict = RecordedEndOfContent.Unverifiable;
+        evidence = verdict switch
+        {
+            RecordedEndOfContent.Unverifiable => TapeResult.Fail(this),     // the drive's own error
+            RecordedEndOfContent.Disputed => TapeResult.Fail((uint)WIN32_ERROR.ERROR_INVALID_DATA,
+                $"Block {block}, the recorded end of content, does not hold the TOC area"),
+            _ => TapeResult.OK,
+        };
+        ResetError();
+
+        if (verdict == RecordedEndOfContent.Confirmed)
+        {
+            CurrentContentSet = -1;
+            m_logger.LogTrace("Drive #{Drive}: At the recorded end of content, block {Block}", DriveNumber, block);
+        }
+        else
+        {
+            ResetContentSet();
+            m_logger.LogWarning("Drive #{Drive}: Recorded end of content (block {Block}) {Verdict} — locating it by marks",
+                DriveNumber, block, verdict == RecordedEndOfContent.Disputed ? "disputed by the tape" : "could not be checked");
+        }
+        return verdict;
+    }
+
+    /// <summary>A move ran out of marks or medium, rather than the drive failing.</summary>
+    private protected static bool IsPositional(WIN32_ERROR error) => error is
+        WIN32_ERROR.ERROR_NO_DATA_DETECTED or WIN32_ERROR.ERROR_END_OF_MEDIA or WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA
+        or WIN32_ERROR.ERROR_FILEMARK_DETECTED or WIN32_ERROR.ERROR_SETMARK_DETECTED;
+    
+    /// <summary>The layout's closing mark right before <paramref name="block"/>, then the TOC area at it. Moves the head.</summary>
+    private RecordedEndOfContent ProbeRecordedEndOfContent(long block)
+    {
+        if (!Drive.MoveToBlock(block))
+            return RecordedEndOfContent.Unverifiable;
+        bool closed = UseSmks
+            ? Drive.MoveToNextSetmark(-1) && Drive.MoveToNextSetmark(1)
+            : Drive.MoveToNextFilemark(-1) && Drive.MoveToNextFilemark(1);
+        if (!closed)
+            return IsPositional(Drive.LastErrorWin32) ? RecordedEndOfContent.Disputed : RecordedEndOfContent.Unverifiable;
+        return Drive.CurrentBlock == block ? ProbeTocAreaAt() : RecordedEndOfContent.Disputed;
+    }
+
+    /// <summary>Whether the TOC area starts at the head: a TOC copy, or end-of-data. Moves the head.</summary>
+    private protected virtual RecordedEndOfContent ProbeTocAreaAt()
+    {
+        IdentifiedBlock id = TapeHeaderBlock.ReadAndIdentify(Drive, out _, out int read, out bool tapemark, out bool eod);
+        if (eod || id.Kind == HeaderBlockIdentity.TocCopy)
+            return RecordedEndOfContent.Confirmed;
+        return read <= 0 && !tapemark ? RecordedEndOfContent.Unverifiable : RecordedEndOfContent.Disputed;
+    }
+
+    /// <summary>
+    /// The fallback when end-of-content could not be located by marks: settles at begin-of-content ONLY on positive
+    ///  evidence that the content area is EMPTY — either end-of-data at begin-of-content (blank media), or a TOC copy
+    ///  standing at begin-of-content (a volume with zero content sets: the TOC follows no closing mark). Otherwise fails
+    ///  with <c>ERROR_INVALID_DATA</c>: content without the marks this layout writes is a damaged tape, and "assume empty"
+    ///  would read the media header as a TOC or write a new set over set 0 (Design-TocLocation R2, TL-1).
+    /// </summary>
+    /// <remarks>
+    /// The TOC check reads one block at begin-of-content and returns there. Phase 1 replaces the direct
+    ///  <see cref="TapeTOC.TryPeek"/> with the shared classifier.
+    /// </remarks>
+    /// <param name="knownEod">End-of-data as the caller just measured it; <c>-1</c> = measure here.</param>
+    private protected bool SettleAtBeginOfContentIfBlank(long knownEod = -1)
+    {
+        WIN32_ERROR locateError = LastErrorWin32;
+        ResetError();
+
+        long eodBlock;
+        if (knownEod >= 0)
+            eodBlock = knownEod;
+        else if (Drive.FastforwardToEnd(partition: MediaPartition.Content))
+            eodBlock = Drive.CurrentBlock;
+        else if (Drive.RanToEOMorEOD)
+            eodBlock = -1;
+        else
+            return false;
+
+        ResetError();
+        if (!Drive.Rewind())
+            return false;
+
+        // Begin-of-content by EVIDENCE. The read leaves the head past a header block — in front of its filemark — so a
+        //  headed tape needs one forward space, no second rewind; only a header-less one goes back to BOM.
+        bool headed = TapeHeaderBlock.ReadAndIdentify(Drive, out _, out _, out _, out _)
+            .TryGetHeader<TapeMediaHeader>(out _);
+        ResetError();
+        if (headed ? !Drive.MoveToNextFilemark(1) : !Drive.Rewind())
+            return false;
+        long bocBlock = Drive.CurrentBlock;
+
+        // (1) Blank: nothing at or beyond begin-of-content.
+        if (eodBlock <= bocBlock)
+        {
+            m_logger.LogTrace("Drive #{Drive}: No content marks, and end-of-data at begin-of-content — blank media",
+                DriveNumber);
+            return true;
+        }
+
+        // (2) Zero content sets: the TOC itself stands at begin-of-content.
+        bool tocAtBoc = IsTOCAtCurrentBlock();
+        if (!tocAtBoc && WentBad)
+            return false;                       // could not return to begin-of-content
+        if (tocAtBoc)
+        {
+            m_logger.LogTrace("Drive #{Drive}: No content marks, and a TOC copy at begin-of-content — no content sets",
+                DriveNumber);
+            return true;
+        }
+
+        bool positional = locateError is WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA
+            || IsEOMorEOD(locateError);
+        SetError(positional ? locateError : WIN32_ERROR.ERROR_INVALID_DATA,
+            $"End of content not found: data runs to block {eodBlock}, but neither the marks this layout writes nor a " +
+            "TOC copy stand where content should end — refusing to assume an empty content area");
+        m_logger.LogWarning("Drive #{Drive}: {Message}", DriveNumber, LastErrorMessage);
+        return false;
+    }
+
+    #endregion
+
+    #region *** Content set navigation ***
 
     /// <summary>
     /// Oprtimized path for forward navigation on a FILEMARK-delimited layout: the media header's trailing
@@ -1269,8 +1577,6 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
                 "Drive #{Drive}: Moving to target content set {Set}; optimized case 'from-beginning, merged header filemark'",
                 DriveNumber, TargetContentSet);
 
-            ResetError();
-
             // AtBomHeader needs no rewind: the head sits either at BOM (before the header block) or just
             //  after that block having read it — and the header block carries no marks, so ONE forward
             //  filemark space reaches begin-of-content from either sub-position.
@@ -1306,6 +1612,7 @@ public abstract class TapeNavigatorTOCInSet(TapeDrive drive) : TapeNavigator(dri
     }
 
     #endregion // Content positioning
+
 }
 
 
@@ -1330,7 +1637,7 @@ public class TapeNavigatorTOCInSetWithSmks : TapeNavigatorTOCInSet
     /// <inheritdoc/>
     protected override bool MoveToBeginOfTOCCore()
     {
-        // The TOC is in the last set of the only partion [content][SM][toc1][FM][toc1][FM]
+        // The TOC is in the last set of the only partion [content][SM][toc1][FM][toc2][FM]
 
         m_logger.LogTrace("Drive #{Drive}: Moving to the beginning of TOC in set with setmarks", DriveNumber);
 
@@ -1351,19 +1658,15 @@ public class TapeNavigatorTOCInSetWithSmks : TapeNavigatorTOCInSet
     {
         // First move to the end of the data in the partition. Notice this will fail if TOC hasn't been written yet
         Drive.FastforwardToEnd(partition: MediaPartition.Content); // CommonPartition
+        long eodBlock = WentOK ? Drive.CurrentBlock : -1;
 
-        // The TOC is in the last set of the only partion [content][SM][toc1][FM][toc1][FM] -> next move to before the last setmark (indicating end of content)
+        // The TOC is in the last set of the only partion [content][SM][toc1][FM][toc2][FM] -> next move to before the last setmark (indicating end of content)
         if (WentOK)
             MoveToNextContentSetmark(-1); // this will bring us to right before the last setmark
-
         if (WentOK)
             MoveToNextContentSetmark(1); // Finally go 1 setmark forward to after the setmark -- the beginning of TOC data == of the to-be-written content data
         else
-        {
-            // no setmarks found -> assume no content yet on media, just rewind to the begin of media // FIXME: too optimistic? should examine the error code!
-            ResetError();
-            MoveToBeginOfContentFromBom();
-        }
+            SettleAtBeginOfContentIfBlank(knownEod: eodBlock);    // R2: blank only on positive evidence; pass the known EOD block
     }
 
     /// <inheritdoc/>
@@ -1477,11 +1780,12 @@ public class TapeNavigatorTOCInSetWithFmks : TapeNavigatorTOCInSet
     private void MoveToEndOfContentInternal()
     {
         // QUIRK in DLT-V4: it seems necessary to rewind before going to the end of the data
-        if (!Drive.IsLtoDrive && Drive.LtoGeneration < 1)
+        if (!Drive.IsLtoDrive || Drive.LtoGeneration < 1)
             Drive.Rewind();
 
         // First move to the end of the data in the partition. Notice the following will produce an error if TOC hasn't been written yet
         Drive.FastforwardToEnd(partition: MediaPartition.Content); // CommonPartition
+        long eodBlock = WentOK ? Drive.CurrentBlock : -1;
 
         // Next move to before the filemark before first TOC file
         if (WentOK)
@@ -1489,12 +1793,45 @@ public class TapeNavigatorTOCInSetWithFmks : TapeNavigatorTOCInSet
         // Finally advance 1 filemark forward to after the filemark -- the beginning of TOC data == of the to-be-written content data
         if (WentOK)
             Drive.MoveToNextFilemark(1);
-        else
+        else if (eodBlock < 0 || !LocateTOCByIdentification(eodBlock))
+            SettleAtBeginOfContentIfBlank(knownEod: eodBlock);    // R2: blank only on positive evidence
+    }
+
+    /// <summary>
+    /// The fallback when counting 3 filemarks back from end-of-data failed. Two tapes do that:
+    /// <list type="bullet">
+    /// <item>a COMPLETE tail with too few filemarks — zero content sets, <c>[toc1][FM][toc2][FM]</c>: left to
+    ///  <see cref="TapeNavigatorTOCInSet.SettleAtBeginOfContentIfBlank"/>, which identifies the TOC at begin-of-content;</item>
+    /// <item>a tail WITHOUT its closing filemark — the TOC write ran into end-of-media (TL-W1),
+    ///  <c>[..][FM][toc1][FM][toc2]</c> or <c>[..][FM][toc1]</c>: copy 1 starts after the 2nd or the 1st filemark back;
+    ///  accept only a position that IS a TOC copy.</item>
+    /// </list>
+    /// </summary>
+    /// <remarks>Runs only on a tape the regular count could not read, so a healthy tape pays nothing.</remarks>
+    private bool LocateTOCByIdentification(long eodBlock)
+    {
+        // Does end-of-data directly follow a filemark? Then the tail is complete: not this fallback's case.
+        ResetError();
+        if (!Drive.MoveToBlock(eodBlock))
+            return false;
+        if (Drive.MoveToNextFilemark(-1) && Drive.MoveToNextFilemark(1) && Drive.CurrentBlock == eodBlock)
+            return false;                               // complete tail, too few marks: zero sets, or damage
+
+        foreach (int back in (ReadOnlySpan<int>)[2, 1])
         {
-            // No filemarks found — assume no content/TOC on media yet, rewind to beginning
             ResetError();
-            MoveToBeginOfContentFromBom(rewindFirst: true); // do rewind to make sure we're at BOM
+            if (!Drive.MoveToBlock(eodBlock) || !Drive.MoveToNextFilemark(-back))
+                continue;                               // fewer marks than this candidate needs
+            if (!Drive.MoveToNextFilemark(1))
+                return false;
+            if (IsTOCAtCurrentBlock())
+            {
+                m_logger.LogWarning("Drive #{Drive}: The tail lacks its closing filemark — TOC copy 1 identified at " +
+                    "block {Block}", DriveNumber, Drive.CurrentBlock);
+                return true;
+            }
         }
+        return false;
     }
 
     /// <inheritdoc/>
@@ -1606,25 +1943,28 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
                             //  since the header bears no multiple filemarks
             if (WentOK)
                 SeekForwardPastTOCMark();
-
-            /*
-            // The following doesn't work on DLT-V4 -- FIXME: reevaluate on occasion
-            // First go to the end. Notice this will fail on an empty tape
-            FastforwardToEnd(partition: 1);
-            if (WentOK)
-                SeekBackwardBeforeTOCMark();
-            if (WentOK)
-                SeekForwardPastTOCMark();
-            */
+            SettleIfNoTocMarkAhead();
         }
-        else // we're somewhere in the content
+        else // we're somewhere in the content — e.g. at begin-of-content right after writing the media header
         {
             SeekForwardPastTOCMark();
+            SettleIfNoTocMarkAhead();
         }
 
         return WentOK;
     }
 
+    /// <summary>
+    /// After a forward search for the TOC mark ran into end-of-data: no TOC mark anywhere ahead. Legitimate ONLY on an
+    ///  empty content area — never-written, or header-only media (e.g. right after formatting). Settle there on positive
+    ///  evidence (R2); <see cref="OnBeginWriteTOC"/> then writes the mark. Damaged content without a mark is refused by the
+    ///  helper. No-op unless the search failed positionally.
+    /// </summary>
+    private void SettleIfNoTocMarkAhead()
+    {
+        if (WentBad && Drive.RanToEOMorEOD && SettleAtBeginOfContentIfBlank())
+            m_tocMarkInvalidated = true;
+    }
 
     #endregion // TOC positioning
 
@@ -1635,34 +1975,101 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
     protected override bool MoveToEndOfContentCore()
     {
         // The TOC is in the last two files, separated by additional c_fmksAsTOCMark filemarks ("TOC marker"):
-        //  [content][FM][gap][FM][FM][toc1][FM][toc2][FM]
-
+        //  [content][FM][gap][FM][FM][FM][toc1][FM][toc2][FM]
         m_logger.LogTrace("Drive #{Drive}: Moving to the end of content in set with filemarks and TOC mark", DriveNumber);
 
-        if (CurrentContentSet == UnknownSet)
-            Drive.FastforwardToEnd(partition: MediaPartition.Content); // CommonPartition
-        else if (CurrentContentSet != InTOCSet)
-            SeekForwardPastTOCMark();
-        // else we're in TOC area, that is already past the TOC marker
+        // Locate the TOC mark: from where we believe we are (cheap) — then, failing that, backward from end-of-data
+        //  (robust: a wrong belief about the position, e.g. a miscount, leaves the head PAST the mark).
+        bool found = false;
+        if (CurrentContentSet == InTOCSet)
+            found = SeekBackwardBeforeTOCMark();             // inside the TOC area: already past the mark
+        else if (CurrentContentSet != UnknownSet)
+            found = SeekForwardPastTOCMark() && SeekBackwardBeforeTOCMark();
 
-        if (WentOK)
-            SeekBackwardBeforeTOCMark();
-
-        if (WentOK)
+        if (!found)
         {
-            Drive.MoveToNextFilemark(-1); // move to before the last content FM
-            if (WentOK)
-                Drive.MoveToNextFilemark(1); // move to after the last FM
-        }
-        else
-        {
-            // No TOC mark ⇒ no content/TOC yet. Go to begin-of-content past the header (INV-12),
-            //  not raw BOM which would clobber the header on the next write.
             ResetError();
-            MoveToBeginOfContentFromBom(rewindFirst: true); // do rewind to make sure we're at BOM
+            found = Drive.FastforwardToEnd(partition: MediaPartition.Content) && SeekBackwardBeforeTOCMark();
+        }
+
+        if (!found)
+        {
+            MoveToEndOfContentWithoutTOCMark();
+            return WentOK;
+        }
+
+        // The TOC mark was found: [content][FM][gap][FM][FM][FM]. Content ends after the filemark before the gap.
+        Drive.MoveToNextFilemark(-1); // move to before the last content FM
+        if (WentOK)
+            Drive.MoveToNextFilemark(1); // move to after the last FM
+        else if (Drive.LastErrorWin32 == WIN32_ERROR.ERROR_BEGINNING_OF_MEDIA)
+        {
+            // No filemark precedes the gap: it is the FIRST file — zero content sets and no media header (a header
+            //  would bring its own filemark). Begin-of-content is BOM.
+            ResetError();
+            Drive.Rewind();
         }
 
         return WentOK;
+    }
+
+    /// <summary>
+    /// End of content when the tape carries NO TOC mark — hence no TOC at all, since the mark precedes every copy
+    ///  (e.g. a backup interrupted before its TOC was saved). Content then ends at end-of-data, PROVIDED the last
+    ///  thing on tape is a set's closing filemark: positive evidence, and appending there destroys nothing. Anything
+    ///  else — no mark at all, or data after the last one — is left to
+    ///  <see cref="TapeNavigatorTOCInSet.SettleAtBeginOfContentIfBlank"/>.
+    /// </summary>
+    /// <remarks>
+    /// The backward search for the mark that precedes this call scans to BOM on a tape without one — slow on a real
+    ///  drive, but only ever on a damaged or TOC-less volume.
+    /// </remarks>
+    private void MoveToEndOfContentWithoutTOCMark()
+    {
+        ResetError();
+
+        if (!Drive.FastforwardToEnd(partition: MediaPartition.Content))
+        {
+            SettleAtBeginOfContentIfBlank(knownEod: -1);   // blank media, or a transport error the helper reports
+            return;
+        }
+
+        long eodBlock = Drive.CurrentBlock;
+
+        // Does a closing filemark stand right before end-of-data? Step back over the last mark and forward again.
+        if (Drive.MoveToNextFilemark(-1) && Drive.MoveToNextFilemark(1) && Drive.CurrentBlock == eodBlock)
+        {
+            m_tocMarkInvalidated = true;                // the next TOC write lays a fresh mark
+            TOCMissing = true;
+
+            m_logger.LogWarning("Drive #{Drive}: No TOC mark on tape — content ends at end-of-data (block {Block}) " +
+                "after a closing filemark; this volume carries no TOC", DriveNumber, eodBlock);
+            
+            return;
+        }
+
+        // No mark at all (BOM hit), or data after the last one: only an empty content area is acceptable.
+        SettleAtBeginOfContentIfBlank(knownEod: eodBlock);
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>Here the TOC area starts with the TOC mark: <c>[gap][FM][FM][FM][toc1]</c> — one forward pass.</remarks>
+    private protected override RecordedEndOfContent ProbeTocAreaAt()
+    {
+        IdentifiedBlock id = TapeHeaderBlock.ReadAndIdentify(Drive, out _, out int read, out bool tapemark, out bool eod);
+        if (eod)
+            return RecordedEndOfContent.Confirmed;                  // no TOC written yet: content ends here
+        if (read <= 0)
+            return tapemark ? RecordedEndOfContent.Disputed : RecordedEndOfContent.Unverifiable;
+        if (id.Kind == HeaderBlockIdentity.TocCopy)
+            return RecordedEndOfContent.Disputed;                   // a copy without its mark
+        if (!Drive.MoveToNextFilemark(FmksAsTOCMark))
+            return IsPositional(Drive.LastErrorWin32) ? RecordedEndOfContent.Disputed : RecordedEndOfContent.Unverifiable;
+
+        id = TapeHeaderBlock.ReadAndIdentify(Drive, out _, out read, out tapemark, out eod);
+        if (id.Kind == HeaderBlockIdentity.TocCopy)
+            return RecordedEndOfContent.Confirmed;
+        return read <= 0 && !tapemark && !eod ? RecordedEndOfContent.Unverifiable : RecordedEndOfContent.Disputed;
     }
 
     #endregion // Content positioning
@@ -1680,6 +2087,8 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
         if (WentOK)
         {
             m_tocMarkInvalidated = false;
+            TOCMissing = false;
+
             m_logger.LogTrace("Drive #{Drive}: Wrote TOC mark", DriveNumber);
         }
         else
@@ -1697,6 +2106,8 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
         if (WentOK)
         {
             m_tocMarkInvalidated = false; // mark confirmed present on tape
+            TOCMissing = false;
+
             m_logger.LogTrace("Drive #{Drive}: Moved forward past TOC mark", DriveNumber);
         }
         else
@@ -1714,6 +2125,8 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
         if (WentOK)
         {
             m_tocMarkInvalidated = false; // mark confirmed present on tape
+            TOCMissing = false;
+
             m_logger.LogTrace("Drive #{Drive}: Moved backward before TOC mark", DriveNumber);
         }
         else
@@ -1721,6 +2134,10 @@ public class TapeNavigatorTOCInSetWithFmksAndTOCMark : TapeNavigatorTOCInSet
 
         return WentOK;
     }
+
+    /// <inheritdoc/>
+    /// <remarks>Plus the gap file in front of the TOC mark.</remarks>
+    public override long TOCFootprint(long tocBytes) => base.TOCFootprint(tocBytes) + Drive.GapFileLength;
 
     #endregion // TOC mark handling
 

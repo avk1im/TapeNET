@@ -86,6 +86,11 @@ public partial class TapeAgentBase
     /// </remarks>
     public TapeHeader? ReadBomHeader(out int bytesRead, out byte[] block)
     {
+        // We want to FIND OUT: hence must forget anything about a previous cartridge —
+        //  otherwise Navigator.MoveToBomHeader refuses a read if the presence was set to
+        //  TapeHeaderPresence.Absent!
+        Navigator.InvalidateMediaHeaderPresence();
+
         var buffer = new byte[TapeHeaderBlock.Size];
         bytesRead = Manager.ReadBomHeaderBlock(buffer, out TapeHeader? header);
         if (bytesRead <= 0)

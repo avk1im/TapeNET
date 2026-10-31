@@ -935,7 +935,7 @@
                 </GroupBox>
             </Grid>
 
-            <!-- TOC Load Overlay - shown while reading TOC, cancellable for blank/new media.
+            <!-- TOC Load Overlay - shown while reading TOC, cancellable by requesting service cancel.
                     Covers tree + splitter + content (not the log pane), same as the Operation
                     overlay below, so the TreeView selection cannot be changed mid-read. -->
             <Grid Grid.Column="0" Grid.ColumnSpan="3"

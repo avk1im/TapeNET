@@ -166,7 +166,7 @@ internal static class RestoreCommand
 
             var result = await service.ExecuteRestoreAsync(options);
             return (int)VerbHost.ToExitCode(result.WasAborted, result.HasFailed || result.FilesFailed > 0,
-                result.Sets.SetWriteBlocked);
+                result.SetStats.SetWriteBlocked);
         });
 
         return cmd;

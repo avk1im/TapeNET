@@ -1,6 +1,9 @@
 ﻿using System.Diagnostics;
 using System.IO.Hashing;
+
 using Microsoft.Extensions.Logging;
+using Windows.Win32.Foundation;
+
 using TapeLibNET.Compression;
 using TapeLibNET.Drive;
 using TapeLibNET.Format;
@@ -9,7 +12,7 @@ using TapeLibNET.Legacy;
 using TapeLibNET.Media;
 using TapeLibNET.Streams;
 using TapeLibNET.Toc;
-using Windows.Win32.Foundation;
+using TapeLibNET.Encryption;
 
 namespace TapeLibNET.Agents;
 
@@ -103,7 +106,13 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         // Hardware compression interlock: match the drive's HW compression state to what was
         //  used when this set was written. HW sets need compression on; SW/None sets must have
         //  it off so the drive doesn't attempt to decompress already-decompressed bytes.
-        Drive.SetHardwareCompression(TOC.CurrentSetTOC.Compression == TapeCompression.Hardware);
+        Drive.SetHardwareCompression(TOC.CurrentSetTOC.Compression == TapeCompression.Hardware
+            && CipherFor(TOC.CurrentSetTOC).AllowsHardwareCompression);
+
+        // The set's encryption session (Design-Encryption §9.1, E16): AFTER the set header was read — it is never
+        //  encrypted — and before the first file byte. Closed at the end of the set.
+        if (!BeginSetEncryption(forWrite: false))
+            return false;   // set and latched
 
         // Success
         ResetError();
@@ -166,10 +175,15 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             }
 
             TapeSetTOC setTOC = TOC.CurrentSetTOC;
+            ITapeSetCipher cipher = ActiveSetCipher;
 
             // The packer needs the file's exact tape position and length to bound its
             //  read window. Use SizeOnTape (set during packed backup) when available;
-            //  fall back to an estimate in the set's own data format otherwise.
+            //  fall back to an estimate in the set's own data format otherwise — unless the scheme needs the exact
+            //  end of the record (software encryption: the final chunk, Design-Encryption §5.7).
+            if (tfi.SizeOnTape <= 0 && !cipher.AllowsEstimatedSize)
+                throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
+                    $"No recorded size on tape for encrypted file >{tfi.FileDescr.FullName}< — it cannot be bounded");
             long totalBytes = (tfi.SizeOnTape > 0)
                 ? tfi.SizeOnTape
                 : setTOC.EstimateFileOverhead(tfi) + tfi.FileDescr.Length;
@@ -190,65 +204,85 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 return false;
             }
 
-            // Validate the file header (per data format) and read the body's codec, before delivering the body.
-            CheckFileHeader(rstream, setTOC, tfi);
-            TapeFileCodec codec = ReadBodyCodec(rstream, setTOC, tfi);
+            // The record as written: the façade itself, or the cipher's decrypting stream over it.
+            Stream src = cipher.OpenRead(rstream, setTOC, tfi);
+            using (ReferenceEquals(src, rstream) ? null : src)      // dispose only what the cipher created
+            {
+                // Validate the file header (per data format) and read the body's codec, before delivering the body.
+                CheckFileHeader(src, setTOC, tfi);
+                TapeFileCodec codec = ReadBodyCodec(src, setTOC, tfi);
 
 #if TEST_HOOKS
-            if (SimulateFileFailures.ShouldFailNow())
-            {
-                throw new TapeIOException((uint)WIN32_ERROR.ERROR_UNHANDLED_EXCEPTION,
-                    $"Simulated restore failure for file >{tfi.FileDescr.FullName}< (#{SimulateFileFailures.Counter})");
-            }
-#endif
-
-            var hasher = CreateHasher(setTOC.HashAlgorithm);
-            var fileDescr = tfi.FileDescr;
-            if (!PreProcessFileInternal(ref fileDescr) || !NotifyPreProcessFile(fileNotify, tfi))
-            {
-                FileSkippedInternal(tfi.FileDescr);
-                NotifyFileSkipped(fileNotify, tfi);
-                m_logger.LogTrace("Skipping (packed) file >{File}< per pre-processor request", tfi.FileDescr.FullName);
-                return true;
-            }
-
-            FileInfo fileInfo = fileDescr.CreateFileInfo();
-
-            // Wrap rstream with a decompressor when the file was ZSTD-compressed at backup time.
-            //  The hasher inside RestoreFileCore always sees decompressed bytes (codec-independent hash).
-            //  For Stored files, bodyStream == rstream (no allocation, no copy).
-            ZstdCodec? zstdCodec = codec == TapeFileCodec.Zstd ? new ZstdCodec() : null;
-            using (zstdCodec)
-            {
-                Stream bodyStream = zstdCodec != null
-                    ? new DecompressionFilterStream(rstream)
-                    : rstream;
-                using (zstdCodec != null ? bodyStream : null) // only dispose when we own it
+                if (SimulateFileFailures.ShouldFailNow())
                 {
-                    if (!RestoreFileCore(fileInfo, bodyStream, hasher))
+                    throw new TapeIOException((uint)WIN32_ERROR.ERROR_UNHANDLED_EXCEPTION,
+                        $"Simulated restore failure for file >{tfi.FileDescr.FullName}< (#{SimulateFileFailures.Counter})");
+                }
+#endif
+                var hasher = CreateHasher(setTOC.HashAlgorithm);
+                var fileDescr = tfi.FileDescr;
+
+                if (!PreProcessFileInternal(ref fileDescr) || !NotifyPreProcessFile(fileNotify, tfi))
+                {
+                    FileSkippedInternal(tfi.FileDescr);
+                    NotifyFileSkipped(fileNotify, tfi);
+                    m_logger.LogTrace("Skipping (packed) file >{File}< per pre-processor request", tfi.FileDescr.FullName);
+                    return true;
+                }
+
+                FileInfo fileInfo = fileDescr.CreateFileInfo();
+
+                // Wrap src with a decompressor when the file was ZSTD-compressed at backup time.
+                //  The hasher inside RestoreFileCore always sees decompressed bytes (codec-independent hash).
+                //  For Stored files, bodyStream == src (no allocation, no copy).
+                ZstdCodec? zstdCodec = codec == TapeFileCodec.Zstd ? new ZstdCodec() : null;
+                using (zstdCodec)
+                {
+                    Stream bodyStream = zstdCodec != null
+                        ? new DecompressionFilterStream(src)
+                        : src;
+                    using (zstdCodec != null ? bodyStream : null) // only dispose when we own it
                     {
-                        throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
-                            $"Processing failed for file >{tfi.FileDescr.FullName}<");
+                        if (!RestoreFileCore(fileInfo, bodyStream, hasher))
+                        {
+                            throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
+                                $"Processing failed for file >{tfi.FileDescr.FullName}<");
+                        }
+
+                        // E5: ZSTD stops at its frame end, Verify stops when the disk file ends — authenticate the rest
+                        //  of the record, up to and including its final chunk, while the streams are still open.
+                        try
+                        {
+                            cipher.CompleteRead(src);
+                        }
+                        catch (TapeIOException ex)
+                        {
+                            throw new TapeIOException(ex.Error,
+                                $"Authentication failed for file >{tfi.FileDescr.FullName}<: {ex.ErrorMessage}", ex);
+                        }
                     }
                 }
-            }
 
-            if (hasher != null)
-            {
-                if (tfi.Hash == null)
-                    throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
-                        $"Hash missing in file info for file >{tfi.FileDescr.FullName}<");
-                if (!tfi.Hash.SequenceEqual(hasher.GetCurrentHash()))
+                if (hasher != null)
                 {
-                    throw new TapeIOException((uint)WIN32_ERROR.ERROR_CRC,
-                        $"CRC check failed for file >{tfi.FileDescr.FullName}<. Hasher: {setTOC.HashAlgorithm}");
-                }
-            }
+                    if (tfi.Hash == null)
+                        throw new TapeIOException((uint)WIN32_ERROR.ERROR_INVALID_DATA,
+                            $"Hash missing in file info for file >{tfi.FileDescr.FullName}<");
 
-            BytesRestored += tfi.FileDescr.Length;
-            if (NotifyPostProcessFile(fileNotify, tfi))
-                return PostProcessFileInternal(fileDescr, fileInfo);
-            return true;
+                    if (!tfi.Hash.SequenceEqual(hasher.GetCurrentHash()))
+                    {
+                        throw new TapeIOException((uint)WIN32_ERROR.ERROR_CRC,
+                            $"CRC check failed for file >{tfi.FileDescr.FullName}<. Hasher: {setTOC.HashAlgorithm}");
+                    }
+                }
+
+                BytesRestored += tfi.FileDescr.Length;
+
+                if (NotifyPostProcessFile(fileNotify, tfi))
+                    return PostProcessFileInternal(fileDescr, fileInfo);
+
+                return true;
+            }
         }
         catch (TapeAbortRequestedException)
         {
@@ -423,6 +457,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 break;
         }
 
+        EndSetEncryption();     // E16
         NotifySetEnd(fileNotify);
 
         m_logger.LogTrace("RestoreFilesFromCurrentSet(tfis) exiting: overallSuccess={Success}", overallSuccess);
@@ -496,44 +531,12 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 break;
         }
 
+        EndSetEncryption();     // E16
         NotifySetEnd(fileNotify);
 
         m_logger.LogTrace("RestoreAllFilesFromCurrentSetCore exiting: overallSuccess={Success}", overallSuccess);
         return overallSuccess;
-    } // RestoreAllFilesFromCurrentSet()
-
-
-    /// <summary>
-    ///  Routes content reads through the shared-block read packer; supports multi-volume continuation.
-    /// </summary>
-    public TapeResult RestoreFilesFromCurrentSet(ITapeFileFilter? fileFilter,
-        bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
-    {
-        m_logger.LogTrace("Starting restoring (packed) files from current set #{Set}",
-            TOC.CurrentSetIndex);
-
-        _stats.Reset();
-        _setAnomalies.Clear();
-        ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, fileFilter), ignoreFailures, fileNotify)
-            ? TapeResult.OK : FailedOperationResult;
-    }
-
-    /// <summary>
-    ///  Supports multi-volume continuation.
-    /// </summary>
-    public TapeResult RestoreAllFilesFromCurrentSet(
-        bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
-    {
-        m_logger.LogTrace("Starting restoring (packed) all files from current set #{Set}",
-            TOC.CurrentSetIndex);
-
-        _stats.Reset();
-        _setAnomalies.Clear();
-        ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: false, filter: null), ignoreFailures, fileNotify)
-            ? TapeResult.OK : FailedOperationResult;
-    }
+    } // RestoreAllFilesFromCurrentSetCore()
 
 
     // The context with which we can resume restore on the previous volume
@@ -542,97 +545,406 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         internal List<TapeFileInfo>[] filesSelected = filesSelected;
         internal readonly bool ignoreFailures = ignoreFailures;
         internal readonly ITapeFileNotifiable? fileNotify = fileNotify;
-
         internal int initialCurrSetIdx = currSetIdx;
         internal int filesSelectedIdx = filesSelected.Length - 1; // we'll be counting down
-
         internal bool overallSuccess = true;
     }
+
     private TapeRestoreContext? MultiVolumeContext { get; set; } = null;
-    /// <summary>Whether a multi-volume continuation context is pending (earlier volume needed).</summary>
-    public bool CanResumeFromAnotherVolume => MultiVolumeContext is not null;
-    /// <summary>Volume number to load next; valid only when <see cref="CanResumeFromAnotherVolume"/> is <see langword="true"/>.</summary>
+
+    // The volume loaded for the pending continuation cannot be used — see IsVolumeRejected.
+    private bool m_volumeRejected;
+
+    // Why not; carried into the diagnosis when the caller skips the volume.
+    private TapeResult m_volumeRejection = TapeResult.OK;
+
+    /// <summary>
+    /// Whether the agent ASKS for another volume: load <see cref="VolumeToResumeFrom"/>, then call
+    ///  <see cref="ResumeRestoreFromAnotherVolume"/> — or give it up with <see cref="SkipRequestedVolume"/>.
+    ///  <see langword="false"/> while the loaded volume is rejected — so a caller looping on this property ends instead
+    ///  of re-offering the same cartridge forever.
+    /// </summary>
+    public bool CanResumeFromAnotherVolume => MultiVolumeContext is not null && !m_volumeRejected;
+
+    /// <summary>
+    /// Whether the volume loaded for the continuation CANNOT be used: nothing identifies it as the requested volume of
+    ///  this series (Design-TocLocation §7 — media header, own TOC, the set's first block, a search of the whole medium),
+    ///  or something identifies it as another — another series, another volume number, a set that does not match. A
+    ///  cartridge whose own TOC merely does not read is NOT rejected when its header or its set identifies it. The
+    ///  restore is still pending (<see cref="VolumeToResumeFrom"/> is still needed).
+    /// <para>
+    /// The caller decides: load a cartridge and call <see cref="ResumeRestoreFromAnotherVolume"/> again,
+    ///  <see cref="SkipRequestedVolume"/>, or end.
+    /// </para> 
+    /// </summary>
+    public bool IsVolumeRejected => MultiVolumeContext is not null && m_volumeRejected;
+
+    /// <summary>Whether a multi-volume restore is pending — asking for a volume, or with a rejected one.</summary>
+    public bool IsMultiVolumePending => MultiVolumeContext is not null;
+
+    /// <summary>Volume number needed next; valid while <see cref="IsMultiVolumePending"/>.</summary>
     public int VolumeToResumeFrom { get; private set; } = -1;
 
     /// <summary>
+    /// Whether <paramref name="onVolume"/> (freshly loaded — encrypted sets locked) describes the same set as
+    ///  <paramref name="expected"/>: by file count for plain sets, by identity, scheme and size on tape for encrypted ones.
+    /// </summary>
+    private static bool SameSetOnTape(TapeSetTOC onVolume, TapeSetTOC expected)
+        => onVolume.IsEncrypted || expected.IsEncrypted
+            ? onVolume.SetId == expected.SetId
+              && onVolume.Encryption == expected.Encryption
+              && onVolume.SizeOnTapeTotal == expected.SizeOnTapeTotal
+            : onVolume.Count == expected.Count;
+
+    /// <summary>
     /// Continues the restore from a different volume after the caller has loaded the requested media.
-    /// <para>Validates the new volume's TOC (volume number and set sizes) before proceeding.
-    ///  Preserves the original TOC for consistent file addressing across volumes.</para>
+    /// <para>
+    /// Identifies the cartridge first (<see cref="CheckVolumeToResumeFrom"/>, Design-TocLocation §7): by its media header,
+    ///  its own TOC, its set's first block, or — asked first — a search of the whole medium. A cartridge nothing
+    ///  identifies, or one identified as another, is REJECTED (<see cref="IsVolumeRejected"/>): nothing has been restored
+    ///  from it, and the caller may retry, skip the volume, or end.
+    /// </para>
+    /// <para>The original TOC is kept: it addresses the whole series.</para>
     /// </summary>
     public TapeResult ResumeRestoreFromAnotherVolume()
     {
-        if (!CanResumeFromAnotherVolume)
+        if (MultiVolumeContext is not { } context)
             return FailedOperationResult;
 
-        m_logger.LogTrace("Resuming multi-volume restore from new volume #{Volume}", VolumeToResumeFrom);
+        int volume = VolumeToResumeFrom;
+        m_volumeRejected = false;
+        m_logger.LogTrace("Resuming multi-volume restore from new volume #{Volume}", volume);
 
-        Debug.Assert(MultiVolumeContext != null);
-        Debug.Assert(VolumeToResumeFrom >= 0);
+        // The live error that brought us here — END_OF_MEDIA, or the previous attempt's rejection — was a signal TO THE
+        //  CALLER, and the caller has acted on it by calling us. Consume it: unlike restore, nothing on a successful
+        //  backup resume clears the live error again, so it would otherwise outlive the retry and surface in LastResult.
+        //  Only the latched failure crosses the volume boundary (next code block).
+        ResetError();
 
+        // Identifying the cartridge reads its TOC through RestoreTOC(), a public verb that resets the failure latch:
+        //  save the latch and put it back afterwards. Only the LATCH — NOT the live error, which here is the previous
+        //  attempt's volume request or rejection. So a genuine failure from an earlier volume survives the check, while a
+        //  rejected cartridge that this retry replaces leaves no trace.
+        TapeResult earliest = LatchedFailure;
+        TapeResult check = CheckVolumeToResumeFrom(volume);
+        RestoreLatchedFailure(earliest);
+
+        if (!check)
+        {
+            if (IsAbortRequested)
+            {
+                MultiVolumeContext = null;      // an abort ends the operation: no volume is pending any more
+                VolumeToResumeFrom = -1;
+                return FailedOperationResult;
+            }
+
+            m_volumeRejected = true;
+            m_volumeRejection = check;
+            m_logger.LogWarning("Volume #{Volume} rejected for the continuation: {Reason}", volume, check.ErrorMessage);
+            return check;
+        }
+
+        // update the volume
+        TOC.Volume = volume;
+
+        // Ok to proceed with the new volume. Notice: Keep our current TOC, since we're restoring the whole file series using it
+        return RestoreFilesFromCurrentSetDownCore(null, context.ignoreFailures, context.fileNotify)
+            ? TapeResult.OK : FailedOperationResult;
+    } // ResumeRestoreFromAnotherVolume()
+
+    /// <summary>
+    /// Identifies the loaded cartridge as <paramref name="volume"/> of this series, holding the next set to restore.
+    ///  Leaves <see cref="TapeAgentBase.TOC"/> as it was. Identifies first by the cartridge's media header, its own TOC,
+    ///  its set's first block, or (after asking) a search of the whole medium.
+    /// </summary>
+    /// <remarks>
+    /// <para>Four steps, by the strength — and the cost — of their evidence (Design-TocLocation §7):</para>
+    /// <list type="number">
+    ///  <item><b>The media header</b> at BOM: series and volume. A mismatch rejects the cartridge.</item>
+    ///  <item><b>Its own TOC</b>, through the ladder S0–S3 with the series TOC at hand. Read: the set it holds must be the one
+    ///   the series describes. Unreadable, but step 1 identified the cartridge: restore anyway — the series TOC addresses
+    ///   every file, and each file's header still guards it.</item>
+    ///  <item><b>The set's first block</b>, when neither the header nor the TOC speaks: a set header or a 2.1 file header with
+    ///   the expected SetId.</item>
+    ///  <item><b>The whole medium</b> (S4), asked first — the last resort before rejecting: header and set header damaged, the
+    ///   TOC beyond S0–S3. A copy found must pass step 2's checks.</item>
+    /// </list>
+    /// <para>The TOC anomalies of the reads belong to THIS restore, on THAT volume (§5.3).</para>
+    /// </remarks>
+    private TapeResult CheckVolumeToResumeFrom(int volume)
+    {
         // since we're on the new media volume, renew Navigator
         if (!Manager.RenewNavigator())
         {
-            LogErrorAsDebug("Failed to renew Navigator");
-            return FailedOperationResult;
+            SyncErrorFrom(Manager);
+            return RejectVolume($"Volume #{volume}: the drive could not be prepared for the cartridge ({LastErrorMessage})");
         }
 
-        // Check if the newly provided volume is the right one by analyzing its TOC
-        //  Save the current TOC as it contains more sets than the one we're restoring
+        // Read the cartridge's own TOC to identify it — then put ours back: it contains more sets than this volume's
         var orgTOC = new TapeTOC(TOC);
+        ITapeTocNotifiable? notify = MultiVolumeContext!.Value.fileNotify;
+        int setIdx = MultiVolumeContext!.Value.initialCurrSetIdx - MultiVolumeContext.Value.filesSelectedIdx;
+
+        // The cartridge's own TOC, just read into TOC: this series, the requested volume, the set as the series describes it.
+        TapeResult OwnTocMatches()
+        {
+            if (orgTOC.MediaId != Guid.Empty && TOC.MediaId != Guid.Empty && TOC.MediaId != orgTOC.MediaId)
+                return RejectVolume("The inserted cartridge belongs to another backup series", WIN32_ERROR.ERROR_WRONG_DISK);
+            if (TOC.Volume != volume)
+                return RejectVolume($"The inserted cartridge is volume #{TOC.Volume}, not volume #{volume}",
+                    WIN32_ERROR.ERROR_WRONG_DISK);
+            // The freshly loaded TOC has its encrypted sets LOCKED — compare what a stub can tell (Design-Encryption §9.5).
+            if (setIdx > TOC.Count || !SameSetOnTape(TOC[setIdx], orgTOC[setIdx]))
+                return RejectVolume($"Volume #{volume} does not hold set #{setIdx} as the table of contents describes it",
+                    WIN32_ERROR.ERROR_WRONG_DISK);
+            return TapeResult.OK;
+        }
+
         try
-        {           
-            if (!RestoreTOC())
+        {
+            // ── 1. The media header ──
+            TapeMediaHeader? media = ReadBomHeader() as TapeMediaHeader;
+            ResetError();
+            if (media is not null)
             {
-                LogErrorAsWarning("Failed to restore TOC for new volume");
-                return FailedOperationResult;
+                if (orgTOC.MediaId != Guid.Empty && media.MediaId != Guid.Empty && media.MediaId != orgTOC.MediaId)
+                    return RejectVolume("The inserted cartridge belongs to another backup series", WIN32_ERROR.ERROR_WRONG_DISK);
+                if (media.Volume != volume)
+                    return RejectVolume($"The inserted cartridge is volume #{media.Volume}, not volume #{volume}",
+                        WIN32_ERROR.ERROR_WRONG_DISK);
             }
-            // Check if the new volume has the right volume number
-            if (TOC.Volume != VolumeToResumeFrom)
+
+            // ── 2. Its own TOC, S0–S3 ──
+            if (RestoreTOCFromMedia(expectedVolume: volume, notify, seriesToc: orgTOC))
+                return OwnTocMatches();
+            if (IsAbortRequested)
+                return FailedOperationResult;
+
+            string tocError = LastErrorMessage;
+            if (media is not null)
             {
-                LogErrorAsWarning("Volume mismatch for new volume");
-                return FailedOperationResult;
+                m_logger.LogWarning("Volume #{Volume}: its table of contents is unreadable ({Error}); identified by its " +
+                    "media header — restoring with the series TOC", volume, tocError);
+                ResetError();
+                return TapeResult.OK;
             }
-            // As the final test, check the size of the next backup set to restore
-            int setIdx = MultiVolumeContext.Value.initialCurrSetIdx - MultiVolumeContext.Value.filesSelectedIdx;
-            if (TOC[setIdx].Count != orgTOC[setIdx].Count)
+
+            // ── 3. The set's first block ──
+            if (IdentifySetOnVolume(orgTOC, setIdx, volume))
             {
-                LogErrorAsWarning($"Set size mismatch on new volume for set #{setIdx}");
-                return FailedOperationResult;
+                m_logger.LogWarning("Volume #{Volume}: its table of contents is unreadable ({Error}); identified by the " +
+                    "first block of set #{Set} — restoring with the series TOC", volume, tocError, setIdx);
+                ResetError();
+                return TapeResult.OK;
             }
+
+            // ── 4. The whole medium, asked first — the last resort before rejecting ──
+            if (RestoreTOCFromMedia(expectedVolume: volume, notify, seriesToc: orgTOC, fullWalkOnly: true))
+            {
+                m_logger.LogWarning("Volume #{Volume}: identified by its table of contents, found by searching the whole medium",
+                    volume);
+                return OwnTocMatches();
+            }
+            if (IsAbortRequested)
+                return FailedOperationResult;
+
+            return RejectVolume($"Volume #{volume}: its table of contents could not be read ({tocError}), neither a " +
+                $"media header nor the first block of set #{setIdx} identifies it — and {LastErrorMessage}");
         }
         finally
         {
             TOC.CopyFrom(orgTOC); // restore the original TOC
+            Manager.EndReadWrite();
+            Navigator.ResetContentSet();
         }
-        // update the volume
-        TOC.Volume = VolumeToResumeFrom;
-        // Ok to proceed with the new volume. Notice: Keep our current TOC, since we're restoring the whole file series using it
+    }
 
-        return RestoreFilesFromCurrentSetDownInt(null, MultiVolumeContext.Value.ignoreFailures, MultiVolumeContext.Value.fileNotify)
-            ? TapeResult.OK : FailedOperationResult;
-    } // ResumeRestoreFromAnotherVolume()
+    /// <summary>
+    /// Step 3 of the identification: whether the first block of set <paramref name="setIdx"/> on this cartridge carries the
+    ///  series' SetId — in its set header, or in its first file's 2.1 header.
+    /// </summary>
+    /// <remarks>
+    /// Located by the previous set's <see cref="TapeSetTOC.FirstBlockAfterSet"/> when recorded, else by counting marks from
+    ///  begin-of-content. A legacy set carries no SetId, and an encrypted set's file headers are sealed: neither can be
+    ///  identified this way.
+    /// </remarks>
+    private bool IdentifySetOnVolume(TapeTOC series, int setIdx, int volume)
+    {
+        if (setIdx < 1 || setIdx > series.Count)
+            return false;
+        TapeSetTOC set = series[setIdx];
+        if (set.SetId == Guid.Empty)
+            return false;
 
-    private bool RestoreFilesFromCurrentSetDownInt(List<TapeFileInfo>?[]? filesSelected, bool ignoreFailures, ITapeFileNotifiable? fileNotify)
+        int onVolume = 0;
+        long start = -1;
+        for (int i = 1; i < setIdx; i++)
+        {
+            if (series[i].Volume != volume)
+                continue;
+            onVolume++;
+            start = series[i].FirstBlockAfterSet;
+        }
+
+        if (onVolume == 0)
+        {
+            // Begin-of-content by EVIDENCE: a media header that did not read still left its filemark. The set's first
+            //  block stands at BOM or just past the first filemark — try both.
+            foreach (bool pastHeaderMark in (ReadOnlySpan<bool>)[false, true])
+            {
+                ResetError();
+                if (!Drive.MoveToBlock(MediaPartition.Content, 0) || (pastHeaderMark && !Drive.MoveToNextFilemark(1)))
+                    break;
+                if (IsFirstBlockOfSet(series, set, out bool bySetHeader))
+                {
+                    // A block stands at BOM with its filemark: a damaged media header. Content starts past it.
+                    if (pastHeaderMark)
+                        Navigator.ResolveMediaHeaderPresence(TapeHeaderPresence.Present, setHeadersExpected: bySetHeader);
+                    return true;
+                }
+            }
+            ResetError();
+            return false;
+        }
+
+        bool located = start >= 0
+            ? Drive.MoveToBlock(MediaPartition.Content, start)
+            : LocateByCount(onVolume);
+        if (!located)
+        {
+            ResetError();
+            return false;
+        }
+        bool identified = IsFirstBlockOfSet(series, set, out _); // located by block → no need to distinguish set header vs. file header
+        ResetError();
+        return identified;
+    }
+
+    /// <summary>Navigates to on-volume set <paramref name="onVolume"/> by counting marks.</summary>
+    private bool LocateByCount(int onVolume)
+    {
+        Navigator.ResetContentSet();
+        Navigator.TargetContentSet = onVolume;
+        return Navigator.MoveToTargetContentSet();
+    }
+
+    /// <summary>Whether the block at the head carries <paramref name="set"/>'s SetId —
+    ///  set header (in which case we set <paramref name="bySetHeader"/> to <see langword="true"/>)
+    ///  or V2.1 file header.</summary>
+    private bool IsFirstBlockOfSet(TapeTOC series, TapeSetTOC set, out bool bySetHeader)
+    {
+        IdentifiedBlock id = TapeHeaderBlock.ReadAndIdentify(Drive, out _, out _, out _, out _);
+        bySetHeader = id.TryGetHeader(out TapeSetHeader? header) && header.SetId == set.SetId
+            && (series.MediaId == Guid.Empty || header.MediaId == series.MediaId);
+        return bySetHeader || (id.TryGetFile(out TapeFilePeek file) && file.SetId == set.SetId);
+    }
+
+
+    /// <summary>Sets and returns a rejection: <paramref name="error"/>, else the current error, else invalid data.</summary>
+    private TapeResult RejectVolume(string message, WIN32_ERROR? error = null)
+    {
+        uint code = error is { } e ? (uint)e : WentBad ? LastError : (uint)WIN32_ERROR.ERROR_INVALID_DATA;
+        SetError(code, message);
+        return TapeResult.Fail(code, message);
+    }
+
+    /// <summary>
+    /// Gives up the sets on <see cref="VolumeToResumeFrom"/> — after a rejection (the user puts up with the loss) or
+    ///  voluntarily (the cartridge is not at hand). Their selected files are not processed.
+    /// </summary>
+    /// <param name="setsSkipped">How many sets of the work package were given up.</param>
+    /// <param name="filesSkipped">How many selected files they hold (a locked set counts none — it was never readable).</param>
+    /// <returns>
+    /// Afterwards the agent either asks for the next volume (<see cref="CanResumeFromAnotherVolume"/>, result: failure, as
+    ///  on any volume request) or is done (result: the operation's outcome).
+    /// </returns>
+    /// <remarks>
+    /// <b>Voluntary vs. after an error.</b> A voluntary skip counts the files as SKIPPED and is no fault. A skip after a
+    ///  rejection counts them as FAILED and latches the rejection, named with the volume — the error did happen.
+    /// </remarks>
+    public TapeResult SkipRequestedVolume(out int setsSkipped, out int filesSkipped)
+    {
+        setsSkipped = 0;
+        filesSkipped = 0;
+        if (MultiVolumeContext is not { } rc)
+            return FailedOperationResult;
+
+        int skipped = VolumeToResumeFrom;
+        bool afterError = m_volumeRejected;
+
+        while (rc.filesSelectedIdx >= 0)
+        {
+            List<TapeFileInfo>? selected = rc.filesSelected[rc.filesSelectedIdx];
+            TapeSetTOC set = TOC[rc.initialCurrSetIdx - rc.filesSelectedIdx];
+            if (selected?.Count != 0)       // null = all files of the set
+            {
+                if (set.Volume != skipped)
+                    break;                  // the first set beyond the skipped volume
+                setsSkipped++;
+                filesSkipped += selected?.Count ?? (set.IsLocked ? 0 : set.Count);
+            }
+            rc.filesSelectedIdx--;
+        }
+
+        StatsAddUnprocessed(filesSkipped, asFailed: afterError);
+        if (afterError)
+        {
+            uint code = m_volumeRejection.Success ? (uint)WIN32_ERROR.ERROR_WRONG_DISK : m_volumeRejection.ErrorCode;
+            SetError(code, $"Volume #{skipped} skipped — {setsSkipped} set(s), {filesSkipped} file(s) not processed: " +
+                m_volumeRejection.ErrorMessage);
+            LatchFailure();
+            rc.overallSuccess = false;
+        }
+        m_logger.LogWarning("Volume #{Volume} skipped ({How}): {Sets} set(s), {Files} file(s) not processed",
+            skipped, afterError ? "after an error" : "on request", setsSkipped, filesSkipped);
+
+        m_volumeRejected = false;
+        m_volumeRejection = TapeResult.OK;
+
+        if (rc.filesSelectedIdx < 0)
+        {
+            MultiVolumeContext = null;      // nothing left — the operation is over
+            VolumeToResumeFrom = -1;
+            TOC.CurrentSetIndex = rc.initialCurrSetIdx;
+            return rc.overallSuccess ? TapeResult.OK : FailedOperationResult;
+        }
+
+        // Ask for the volume of the next set — even if it is the one the TOC believes loaded: what is in the drive is
+        //  not to be trusted after a skip (a rejected cartridge, or none the user meant to use).
+        MultiVolumeContext = rc;
+        VolumeToResumeFrom = TOC[rc.initialCurrSetIdx - rc.filesSelectedIdx].Volume;
+        return FailedOperationResult;
+    }
+
+    private bool RestoreFilesFromCurrentSetDownCore(List<TapeFileInfo>?[]? filesSelected, bool ignoreFailures, ITapeFileNotifiable? fileNotify)
     {
         m_logger.LogTrace("Starting restoring files from current set #{Set} down", TOC.CurrentSetIndex);
 
-        Debug.Assert(CanResumeFromAnotherVolume || filesSelected != null); // either resuming or restoring from a specified list
+        bool resuming = MultiVolumeContext is not null;
+        Debug.Assert(resuming || filesSelected != null); // either resuming or restoring from a specified list
 
-        TapeRestoreContext rc = CanResumeFromAnotherVolume ? MultiVolumeContext!.Value :
+        TapeRestoreContext rc = resuming ? MultiVolumeContext!.Value :
             new(filesSelected!, TOC.CurrentSetIndex, ignoreFailures, fileNotify);
+
+        // From here on THIS call owns the context: no volume is pending while it runs. A volume request below
+        //  re-establishes it; every other exit — the end, an abort, a failure with !ignoreFailures — leaves none.
+        //  (It also makes the failure latch below work on resumed volumes: it used to be gated on "no context".)
+        MultiVolumeContext = null;
+        VolumeToResumeFrom = -1;
+        m_volumeRejected = false;
 
         // Total file size is fully known upfront from the TOC (unlike backup, where source
         //  files must be scanned in the background) — compute it synchronously, once, on a
         //  fresh start. Resumes reuse the estimate already stored in _stats.
-        if (!CanResumeFromAnotherVolume)
-            _stats.BytesTotal = TOC.GetTotalFileSize(filesSelected!, TOC.CurrentSetIndex);
+        //  Locked sets count nothing: they are refused below, before they start.
+        if (!resuming)
+            _stats.BytesTotal = SelectedBytesTotal(filesSelected!, TOC.CurrentSetIndex);
 
         m_logger.LogTrace("{Method}: incoming rc.overallSuccess={Success}, filesSelectedIdx={Idx}, initialCurrSetIdx={Init}, isResume={Resume}",
-            nameof(RestoreFilesFromCurrentSetDownInt), rc.overallSuccess, rc.filesSelectedIdx, rc.initialCurrSetIdx, CanResumeFromAnotherVolume);
-
-        for (int s = 0; s < TOC.Count; s++)
+            nameof(RestoreFilesFromCurrentSetDownCore), rc.overallSuccess, rc.filesSelectedIdx, rc.initialCurrSetIdx, resuming);
+        for (int s = 1; s <= TOC.Count; s++)
             m_logger.LogTrace("  TOC set #{Idx}: Volume={Vol}, ContFromPrev={CFP}, Count={Count}",
-                s, TOC[s].Volume, TOC[s].ContinuedFromPrevVolume, TOC[s].Count);
+                s, TOC[s].Volume, TOC[s].ContinuedFromPrevVolume, TOC[s].DisplayCount);
 
         // start from the oldest set, so that we only move tape forward
         for (; rc.filesSelectedIdx >= 0; rc.filesSelectedIdx--)
@@ -641,6 +953,7 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 continue; // optimization: don't bother with sets from which we restore no files
 
             TOC.CurrentSetIndex = rc.initialCurrSetIdx - rc.filesSelectedIdx;
+
             // check if the current set is present on this volume
             if (!TOC.IsCurrentSetOnVolume)
             {
@@ -657,38 +970,59 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
                 return false;
             }
 
+            // E9: a locked set, or a scheme this build / drive cannot read, fails HERE — before NotifySetStart, before
+            //  the tape moves. The other sets of the selection carry on as ignoreFailures says.
+            if (!ValidateSetEncryption(forWrite: false))
+            {
+                rc.overallSuccess = false;      // set and latched
+                if (!ignoreFailures || IsAbortRequested)
+                    break;
+                continue;
+            }
+
             bool result = rc.filesSelected[rc.filesSelectedIdx] != null
                 ? RestoreFilesFromCurrentSet(rc.filesSelected[rc.filesSelectedIdx], ignoreFailures, fileNotify)
                 : RestoreAllFilesFromCurrentSetCore(ignoreFailures, fileNotify); // null means restore all files
+
             if (!result)
             {
                 m_logger.LogWarning("{Method}: Inner restore returned false: filesSelectedIdx={Idx}, set #{Set}",
-                    nameof(RestoreFilesFromCurrentSetDownInt), rc.filesSelectedIdx, TOC.CurrentSetIndex);
-
+                    nameof(RestoreFilesFromCurrentSetDownCore), rc.filesSelectedIdx, TOC.CurrentSetIndex);
                 rc.overallSuccess = false;
-                // Latch only a REAL fault.
-                //  A media-full-please-swap isn't a failure, nor is a user-requested abort.
-                //  Latching is indempotent, hence it won't hurt if the original error has already been latched.
-                if (!CanResumeFromAnotherVolume && WentBad)
+                // Latch only a REAL fault — a user-requested abort is none. Latching is idempotent, hence it won't hurt
+                //  if the original error has already been latched. (No volume request can be pending here: that path
+                //  returns above.)
+                if (WentBad)
                     LatchFailure(); // latch on the ORIGINAL error if one occured
-
                 if (!ignoreFailures || IsAbortRequested)
                     break;
             }
         }
 
-        if (rc.filesSelectedIdx < 0)
-        {
-            MultiVolumeContext = null; // we're done with [multi-volume] restore -> clear multi-volume context
-            VolumeToResumeFrom = -1;
-        }
-
         TOC.CurrentSetIndex = rc.initialCurrSetIdx; // restore the initial current set index
 
-        m_logger.LogTrace("{Method} exiting: overallSuccess={Success}, filesSelectedIdx={Idx}, MultiVolumeContext set={Pending}",
-            nameof(RestoreFilesFromCurrentSetDownInt), rc.overallSuccess, rc.filesSelectedIdx, MultiVolumeContext != null);
+        m_logger.LogTrace("{Method} exiting: overallSuccess={Success}, filesSelectedIdx={Idx}",
+            nameof(RestoreFilesFromCurrentSetDownCore), rc.overallSuccess, rc.filesSelectedIdx);
+
         return rc.overallSuccess;
-    } // RestoreFilesFromCurrentSetDownInt(List<string>)
+    } // RestoreFilesFromCurrentSetDownCore(List<string>)
+
+    /// <summary>
+    /// <see cref="TapeTOC.GetTotalFileSize"/> that skips LOCKED sets instead of throwing: they contribute nothing, and
+    ///  are refused before they start.
+    /// </summary>
+    private long SelectedBytesTotal(List<TapeFileInfo>?[] combined, int newestSetIndex)
+    {
+        long total = 0;
+        for (int i = 0; i < combined.Length; i++)
+        {
+            TapeSetTOC set = TOC[newestSetIndex - i];
+            if (set.IsLocked)
+                continue;
+            total += combined[i]?.Sum(f => f.FileDescr.Length) ?? set.TotalFileSize;
+        }
+        return total;
+    }
 
 
     /// <summary>
@@ -701,12 +1035,71 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting restoring (packed) pre-selected files from current set #{Set} down", TOC.CurrentSetIndex);
 
         _stats.Reset();
-        _setAnomalies.Clear();
+        ClearAnomalies();
         ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(filesSelected, ignoreFailures, fileNotify)
+        return RestoreFilesFromCurrentSetDownCore(filesSelected, ignoreFailures, fileNotify)
             ? TapeResult.OK : FailedOperationResult;
     }
 
+    /// <summary>
+    /// Runs a file selection; a LOCKED set in it (E6) becomes <c>ERROR_INVALID_PASSWORD</c>, set and latched, before
+    ///  anything moves.
+    /// </summary>
+    private bool TrySelectFiles(Func<List<TapeFileInfo>?[]> select, out List<TapeFileInfo>?[] selected)
+    {
+        try
+        {
+            selected = select();
+            return true;
+        }
+        catch (TapeSetLockedException ex)
+        {
+            SetError(WIN32_ERROR.ERROR_INVALID_PASSWORD,
+                $"Backup set {ex.SetId:N} is encrypted and locked — its password has not been supplied");
+            LatchFailure();
+            m_logger.LogWarning("Restore refused before moving the tape: a selected set is locked ({SetId:N})", ex.SetId);
+            selected = [];
+            return false;
+        }
+    }
+
+    /// <summary>
+    ///  Routes content reads through the shared-block read packer; supports multi-volume continuation.
+    /// </summary>
+    public TapeResult RestoreFilesFromCurrentSet(ITapeFileFilter? fileFilter,
+        bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
+    {
+        m_logger.LogTrace("Starting restoring (packed) files from current set #{Set}",
+            TOC.CurrentSetIndex);
+
+        _stats.Reset();
+        ClearAnomalies();
+        ResetLatchedFailure();
+
+        if (!TrySelectFiles(() => TOC.SelectFiles(incremental: false, fileFilter), out var selected))
+            return FailedOperationResult;
+        return RestoreFilesFromCurrentSetDownCore(selected, ignoreFailures, fileNotify)
+            ? TapeResult.OK : FailedOperationResult;
+    }
+
+    /// <summary>
+    ///  Supports multi-volume continuation.
+    /// </summary>
+    public TapeResult RestoreAllFilesFromCurrentSet(
+        bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
+    {
+        m_logger.LogTrace("Starting restoring (packed) all files from current set #{Set}",
+            TOC.CurrentSetIndex);
+
+        _stats.Reset();
+        ClearAnomalies();
+        ResetLatchedFailure();
+
+        if (!TrySelectFiles(() => TOC.SelectFiles(incremental: false, filter: null), out var selected))
+            return FailedOperationResult;
+        return RestoreFilesFromCurrentSetDownCore(selected, ignoreFailures, fileNotify)
+            ? TapeResult.OK : FailedOperationResult;
+    }
 
     /// <summary>Restores filtered files from the current set and its incremental chain.</summary>
     public TapeResult RestoreFilesFromCurrentSetInc(ITapeFileFilter? fileFilter, bool ignoreFailures = true, ITapeFileNotifiable? fileNotify = null)
@@ -714,9 +1107,12 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting incrementally restoring (packed) files from current set #{Set}", TOC.CurrentSetIndex);
 
         _stats.Reset();
-        _setAnomalies.Clear();
+        ClearAnomalies();
         ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, fileFilter), ignoreFailures, fileNotify)
+
+        if (!TrySelectFiles(() => TOC.SelectFiles(incremental: true, fileFilter), out var selected))
+            return FailedOperationResult;
+        return RestoreFilesFromCurrentSetDownCore(selected, ignoreFailures, fileNotify)
             ? TapeResult.OK : FailedOperationResult;
     }
 
@@ -726,9 +1122,12 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
         m_logger.LogTrace("Starting incrementally restoring (packed) all files from current set #{Set}", TOC.CurrentSetIndex);
 
         _stats.Reset();
-        _setAnomalies.Clear();
+        ClearAnomalies();
         ResetLatchedFailure();
-        return RestoreFilesFromCurrentSetDownInt(TOC.SelectFiles(incremental: true, filter: null), ignoreFailures, fileNotify)
+
+        if (!TrySelectFiles(() => TOC.SelectFiles(incremental: true, filter: null), out var selected))
+            return FailedOperationResult;
+        return RestoreFilesFromCurrentSetDownCore(selected, ignoreFailures, fileNotify)
             ? TapeResult.OK : FailedOperationResult;
     }
 
@@ -755,39 +1154,38 @@ public abstract class TapeFileRestoreBaseAgent(TapeDrive drive, TapeTOC? legacyT
             return TapeResult.OK;
 
         _stats.Reset();
-        _setAnomalies.Clear();
+        ClearAnomalies();
         ResetLatchedFailure();
 
         m_logger.LogTrace("Restoring (packed) files from {Count} set(s): {Sets}",
             setIndexes.Count, string.Join(", ", setIndexes.Select(i => $"#{i}")));
 
         var checkedFilesBySet = new Dictionary<int, IReadOnlyList<TapeFileInfo>?>(setIndexes.Count);
-        foreach (int idx in setIndexes)
+        int newestIdx = 0;
+        bool selectedOk = TrySelectFiles(() =>
         {
-            int stdIdx = TOC.SetIndexToStd(idx);
-            if (checkedFilesBySet.ContainsKey(stdIdx))
-                continue; // deduplicate
-
-            if (fileFilter is null)
+            foreach (int idx in setIndexes)
             {
-                checkedFilesBySet[stdIdx] = null; // all files
-            }
-            else
-            {
-                var setTOC = TOC[stdIdx];
-                var matching = setTOC.SelectFiles(fileFilter);
-                checkedFilesBySet[stdIdx] = matching;
-            }
-        }
+                int stdIdx = TOC.SetIndexToStd(idx);
+                if (checkedFilesBySet.ContainsKey(stdIdx))
+                    continue; // deduplicate
 
-        var combined = TOC.SelectFilesFromSets(incremental, checkedFilesBySet);
+                // null = all files; a filter selects (throws on a locked set — turned into a clean refusal)
+                checkedFilesBySet[stdIdx] = fileFilter is null ? null : TOC[stdIdx].SelectFiles(fileFilter);
+            }
 
-        int newestIdx = checkedFilesBySet.Keys.Select(TOC.SetIndexToStd).Max();
+            var combinedSel = TOC.SelectFilesFromSets(incremental, checkedFilesBySet);
+            newestIdx = checkedFilesBySet.Keys.Select(TOC.SetIndexToStd).Max();
+            return combinedSel;
+        }, out var combined);
+        if (!selectedOk)
+            return FailedOperationResult;
+
         TOC.CurrentSetIndex = newestIdx;
         return RestoreFilesFromCurrentSetDown(combined, ignoreFailures, fileNotify);
     }
 
-}
+} // class TapeFileRestoreBaseAgent
 
 
 /// <summary>

@@ -1,4 +1,5 @@
 ﻿using TapeLibNET.Agents;
+using TapeLibNET.Media;
 using Windows.Win32.System.SystemServices;
 
 namespace TapeLibNET.Services;
@@ -90,6 +91,29 @@ public enum SetAnomalyAdvice
     WriteRefused,
 }
 
+/// <summary>
+/// What the service recommends about the room a series' TOC took on its volumes (Design-TocReserve §9.6). Policy, computed
+///  from <see cref="BackupResult.VolumeEnds"/>; the wording lives in <see cref="TapeServiceBase.AdviseVolumeSpaceText"/>.
+/// </summary>
+/// <remarks>
+/// A volume ending at end-of-media or at the TOC reserve is ordinary — nothing to advise. A TOC PARTITION ending a volume
+///  is not: every volume repeats the whole series' TOC, so a cartridge with the same partition cannot take more.
+/// </remarks>
+public enum VolumeSpaceAdvice
+{
+    /// <summary>Nothing to say.</summary>
+    None,
+
+    /// <summary>A TOC partition ended a volume early; the series went on (on a larger partition).</summary>
+    VolumesEndedByTocPartition,
+
+    /// <summary>The series' TOC fills the TOC partition of a fresh volume: the series cannot continue on such cartridges.</summary>
+    TocPartitionTooSmallForSeries,
+
+    /// <summary>A fresh volume has no room for a file next to the series' TOC (TOC in set).</summary>
+    VolumeTooSmallForToc,
+}
+
 public partial class TapeServiceBase
 {
     #region Outcome judgement (policy)
@@ -113,7 +137,7 @@ public partial class TapeServiceBase
         // Checked BEFORE the file counters: a refused destructive write processes no files, so every
         //  counter-based verdict below would describe it as "nothing happened" — which is true and
         //  useless. This is the verdict that names the cause.
-        if (result.Sets.SetWriteBlocked && result.FilesProcessed == 0)
+        if (result.SetStats.SetWriteBlocked && result.FilesProcessed == 0)
             return FileOperationVerdict.SetVerificationBlocked;
 
         if (result.FilesFailed > 0) return FileOperationVerdict.CompletedWithFailures;
@@ -323,13 +347,84 @@ public partial class TapeServiceBase
 
         var (level, headline, action) = AdviseText(advice);
 
-        _host.Report(level, headline);
-        if (parts.Count > 0)
-            _host.Report(level, string.Join(", ", parts), isSubEntry: true);
-        if (action.Length > 0)
-            _host.Report(ServiceReportLevel.Info, action, isSubEntry: true);
+        ReportAdvice(level, headline, parts.Count > 0 ? string.Join(", ", parts) : null, action);
 
         return advice;
+    }
+
+    #endregion
+
+    #region Volume space advisory (Design-TocReserve §9.6)
+
+    /// <summary>Derives the volume-space recommendation and the volumes it concerns. Pure.</summary>
+    /// <param name="ends">The backup's <see cref="BackupResult.VolumeEnds"/>.</param>
+    /// <param name="seriesStopped">The backup stopped on a fresh volume that took no file — the last of <paramref name="ends"/>.</param>
+    public static (VolumeSpaceAdvice Advice, IReadOnlyList<int> Volumes) AdviseOnVolumeEnds(
+        IReadOnlyList<VolumeEnd> ends, bool seriesStopped)
+    {
+        ArgumentNullException.ThrowIfNull(ends);
+        if (seriesStopped && ends.Count > 0)
+        {
+            VolumeEnd last = ends[^1];
+            return (last.Reason == ContentStopReason.TocPartitionFull
+                ? VolumeSpaceAdvice.TocPartitionTooSmallForSeries
+                : VolumeSpaceAdvice.VolumeTooSmallForToc, [last.Volume]);
+        }
+        List<int> byPartition = [.. ends.Where(e => e.Reason == ContentStopReason.TocPartitionFull)
+            .Select(e => e.Volume).Distinct().Order()];
+        return byPartition.Count > 0
+            ? (VolumeSpaceAdvice.VolumesEndedByTocPartition, byPartition)
+            : (VolumeSpaceAdvice.None, []);
+    }
+
+    /// <summary>Renders a volume-space advice as a headline plus one actionable sub-line.</summary>
+    public static (ServiceReportLevel Level, string Headline, string Action) AdviseVolumeSpaceText(
+        VolumeSpaceAdvice advice, IReadOnlyList<int> volumes)
+    {
+        string on = DescribeVolumes(volumes);
+        return advice switch
+        {
+            VolumeSpaceAdvice.VolumesEndedByTocPartition => (
+                ServiceReportLevel.Warning,
+                $"The TOC partition was full on {on} — the volume ended before its content did",
+                "Format future cartridges with a larger TOC partition: every volume of a series holds the whole " +
+                $"series' table of contents (Help: {TocSpaceHelpTopic})"),
+            VolumeSpaceAdvice.TocPartitionTooSmallForSeries => (
+                ServiceReportLevel.Failed,
+                $"The series' table of contents fills the TOC partition of {on}",
+                "Continue on a cartridge formatted with a larger TOC partition (Media | Format), or start a new " +
+                $"series (Help: {TocSpaceHelpTopic})"),
+            VolumeSpaceAdvice.VolumeTooSmallForToc => (
+                ServiceReportLevel.Failed,
+                $"No room on {on} for a file next to the series' table of contents",
+                $"Continue on a larger cartridge, or start a new series (Help: {TocSpaceHelpTopic})"),
+            _ => (ServiceReportLevel.Info, string.Empty, string.Empty),
+        };
+    }
+
+    /// <summary>Reports the volume-space recommendation. Silent when there is none.</summary>
+    protected VolumeSpaceAdvice ReportVolumeSpaceOutcome(IReadOnlyList<VolumeEnd> ends, bool seriesStopped)
+    {
+        var (advice, volumes) = AdviseOnVolumeEnds(ends, seriesStopped);
+        if (advice != VolumeSpaceAdvice.None)
+        {
+            var (level, headline, action) = AdviseVolumeSpaceText(advice, volumes);
+            ReportAdvice(level, headline, details: null, action);
+        }
+        return advice;
+    }
+
+    /// <summary>
+    /// The one shape of every advice: a headline, an optional details sub-line at the same level, and the action as an
+    ///  informational sub-line. Shared by the set, TOC and volume-space advisors.
+    /// </summary>
+    protected void ReportAdvice(ServiceReportLevel level, string headline, string? details, string action)
+    {
+        _host.Report(level, headline);
+        if (!string.IsNullOrEmpty(details))
+            _host.Report(level, details, isSubEntry: true);
+        if (action.Length > 0)
+            _host.Report(ServiceReportLevel.Info, action, isSubEntry: true);
     }
 
     #endregion

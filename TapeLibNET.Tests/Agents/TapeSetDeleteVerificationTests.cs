@@ -157,13 +157,13 @@ public class TapeSetDeleteVerificationTests
                 agent.Navigator.SimulateSetMiscount = +1;
                 agent.Navigator.SimulateSetMiscountPersistent = true; // keep miscounting to prevent agent's self-correction! (v2)
 
-                var result = agent.DeleteSetsFromCurrentSetUp(fileNotify: notify);
+                var result = agent.DeleteSetsFromCurrentSetUp(setNotify: notify);
                 Assert.False(result, "a delete at a drifted position must be refused");
                 Assert.Equal((uint)WIN32_ERROR.ERROR_INVALID_DATA, result.ErrorCode);   // the VERDICT, not some other fault
                 // Do NOT Assert.Equal(0, agent.Navigator.SimulateSetMiscount) since we keep injecting (Persistent = true).
                 //  No worries, we'll have enough checks to verify! :-)
 
-                var sets = agent.Statistics.Sets;
+                var sets = agent.Statistics.SetStats;
                 Assert.Equal(1, sets.AnomaliesDetected);
                 Assert.Equal(0, sets.AnomaliesRecovered);
                 Assert.Equal(0, sets.AnomaliesRecoveredFromBom);
@@ -248,7 +248,7 @@ public class TapeSetDeleteVerificationTests
             {
                 var result = agent.DeleteSetsFromCurrentSetUp();
                 Assert.True(result, $"a clean delete must not be disturbed by verification: {result.ErrorMessage}");
-                Assert.False(agent.Statistics.Sets.HasAnomalies, "No set anomalies should've occurred");
+                Assert.False(agent.Statistics.SetStats.HasAnomalies, "No set anomalies should've occurred");
             }
 
             fixture.LoadTOC();

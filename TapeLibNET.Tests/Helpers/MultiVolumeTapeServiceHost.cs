@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 
+using TapeLibNET.Virtual;
 using TapeLibNET.Services;
 
 namespace TapeLibNET.Tests.Helpers;
@@ -17,7 +18,7 @@ namespace TapeLibNET.Tests.Helpers;
 /// <list type="bullet">
 ///  <item><see cref="OnVolumeFullConfirm"/> / <see cref="OnInsertNewMediaConfirm"/>
 ///   — used during backup; inserts the next blank volume.</item>
-///  <item><see cref="OnVolumeContinueConfirm"/> / <see cref="OnInsertMediaConfirm"/>
+///  <item><see cref="OnVolumeContinueSelect"/> / <see cref="OnInsertMediaConfirm"/>
 ///   — used during restore; re-inserts a previously written volume.</item>
 /// </list>
 /// </para>
@@ -30,6 +31,10 @@ namespace TapeLibNET.Tests.Helpers;
 /// <b>Drive service interaction:</b> the service calls <c>_drive.UnloadMedia()</c>
 ///  itself before asking the host, so the swap callbacks only need to call
 ///  <see cref="TapeServiceBase.InsertVirtualMedia"/> with the next descriptor.
+/// </para>
+/// <para>
+/// <b>Per-volume faults</b> (<see cref="VolumeFaults"/>): the deterministic way to make ONE cartridge misbehave at
+///  service level — armed on every insertion of that volume, cleared on every other.
 /// </para>
 /// </remarks>
 public sealed class MultiVolumeTapeServiceHost(
@@ -48,10 +53,78 @@ public sealed class MultiVolumeTapeServiceHost(
 
     /// <summary>
     /// Total number of volumes inserted (across both backup and restore phases).
-    /// Incremented by each successful <see cref="OnInsertNewMediaConfirm"/> or
+    ///  Incremented by each successful <see cref="OnInsertNewMediaConfirm"/> or
     ///  <see cref="OnInsertMediaConfirm"/> call.
     /// </summary>
     public int VolumesInserted { get; private set; }
+
+    /// <summary>
+    /// Called after a volume was inserted successfully, with its 1-based number — for both backup
+    ///  (<see cref="OnInsertNewMediaConfirm"/>) and restore (<see cref="OnInsertMediaConfirm"/>). Lets a test arm a fault
+    ///  on exactly that cartridge. Runs AFTER <see cref="VolumeFaults"/> was applied.
+    /// </summary>
+    public Action<int>? AfterMediaInserted { get; set; }
+
+    // ── Per-volume faults ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Faults to arm on the drive's backend whenever the volume (1-based key) is inserted — after the insertion, before the
+    ///  service loads and reads the cartridge. While any plan is registered, EVERY insertion first clears the read
+    ///  injectors of both partitions, so a fault never leaks onto another cartridge.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Remove a volume's entry to model "the cartridge was cleaned": its next insertion is clean.
+    /// </para>
+    /// <para>
+    /// The injectors are owned by the backend and survive the load; tape SURGERY
+    ///  (<c>VirtualTapeMedia.TruncateAt</c> etc.) does not belong here — the medium is not loaded yet at insertion. Cut a
+    ///  volume between operations instead.
+    /// </para>
+    /// </remarks>
+    public Dictionary<int, Action<VirtualTapeDriveBackend>> VolumeFaults { get; } = [];
+
+    /// <summary>
+    /// Plans <paramref name="volume"/> as UNIDENTIFIABLE: every block read from it — media header, TOC copies, the set's
+    ///  first block — comes back with its magic corrupted, in both partitions. The agent can identify the cartridge by
+    ///  nothing (Design-TocLocation §7) and must reject it.
+    /// </summary>
+    public void MakeVolumeUnreadable(int volume) => VolumeFaults[volume] = CorruptEveryRead;
+
+    /// <summary>Corrupts the first bytes of every read, both partitions: nothing identifies, nothing parses.</summary>
+    public static void CorruptEveryRead(VirtualTapeDriveBackend backend)
+    {
+        backend.ContentReadFaults.CorruptAlways(bits: 2, offset: 0);
+        backend.InitiatorReadFaults.CorruptAlways(bits: 2, offset: 0);
+    }
+
+    // Whether a plan armed the injectors for the cartridge now in the drive — the next insertion disarms them even when
+    //  that plan has since been removed ("the cartridge was cleaned").
+    private bool m_faultsArmed;
+
+    /// <summary>
+    /// Disarms what a plan armed for the previous cartridge, applies this volume's plan (if any), then the test's own hook.
+    ///  Untouched when no plan was ever involved, so tests arming faults by hand keep full control.
+    /// </summary>
+    private void OnVolumeInserted(int volume)
+    {
+        VolumesInserted++;
+        bool planned = VolumeFaults.TryGetValue(volume, out var arm);
+        if (planned || m_faultsArmed)
+        {
+            VirtualTapeDriveBackend backend = Service.VirtualBackend
+                ?? throw new InvalidOperationException("Volume faults need a virtual drive");
+            backend.ContentReadFaults.Reset();
+            backend.InitiatorReadFaults.Reset();
+            m_faultsArmed = false;
+            if (planned)
+            {
+                arm!(backend);
+                m_faultsArmed = true;
+            }
+        }
+        AfterMediaInserted?.Invoke(volume);
+    }
 
     // ── Volume-swap callbacks ─────────────────────────────────────────────────
 
@@ -80,17 +153,19 @@ public sealed class MultiVolumeTapeServiceHost(
             return false;
 
         bool ok = Service.InsertVirtualMedia(MakeDescriptor(volumes[idx]), FileMode.Create);
-        if (ok) VolumesInserted++;
+        if (ok)
+            OnVolumeInserted(nextVolume);
         return ok;
     }
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Always agrees to continue — the actual media swap happens in
-    ///  <see cref="OnInsertMediaConfirm"/> after the service ejects the current volume.
+    /// Inserts by default — the actual media swap happens in <see cref="OnInsertMediaConfirm"/>
+    ///  after the service ejects the current volume.
+    ///  Queue <see cref="TestTapeServiceHost.VolumeContinueAnswers"/> to skip or end instead.
     /// </remarks>
-    public override bool OnVolumeContinueConfirm(int volumeNeeded, RestoreMode mode)
-        => true;
+    public override VolumeAction OnVolumeContinueSelect(int volumeNeeded, RestoreMode mode)
+        => VolumeContinueAnswers.Count > 0 ? VolumeContinueAnswers.Dequeue() : VolumeAction.Insert;
 
     /// <inheritdoc/>
     /// <remarks>
@@ -105,7 +180,8 @@ public sealed class MultiVolumeTapeServiceHost(
             return false;
 
         bool ok = Service.InsertVirtualMedia(MakeDescriptor(volumes[idx]), FileMode.Open);
-        if (ok) VolumesInserted++;
+        if (ok)
+            OnVolumeInserted(volumeNeeded);
         return ok;
     }
 

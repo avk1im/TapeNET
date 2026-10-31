@@ -109,7 +109,8 @@ public sealed record TapeCalibrationCheckpoint(
     int Index,
     long BytesWritten,
     (long ActualWritten, long ReportedRemaining)? EarlyWarning,
-    IReadOnlyList<(long ActualWritten, long ReportedRemaining)> Samples) : ITapeFramedRecord<TapeCalibrationCheckpoint>
+    IReadOnlyList<(long ActualWritten, long ReportedRemaining)> Samples)
+        : ITapeFramedRecord<TapeCalibrationCheckpoint>, ITapeBlockPeeker<TapeCalibrationCheckpoint>
 {
     #region *** Format 2.1 ***
 
@@ -140,6 +141,11 @@ public sealed record TapeCalibrationCheckpoint(
             w.EarlyWarning is { } ew ? (ew.ActualWritten, ew.ReportedRemaining) : null,
             TapeSampleCoder.Decode(w.Samples));
     }
+
+    /// <summary>The checkpoint's peeker (Design-TocLocation §3.2): a verified 2.1 block frame. Total.</summary>
+    static TapeFrameStatus ITapeBlockPeeker<TapeCalibrationCheckpoint>.TryPeek(ReadOnlySpan<byte> block,
+        out TapeCalibrationCheckpoint? peek)
+        => TapeFrame.TryUnpack(block, out peek, out _, out _);
 
     #endregion
 

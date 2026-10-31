@@ -390,7 +390,7 @@ public class TapeSetHeaderCorrectionTests
             // Navigation to a middle set via positive index (from BOM) screwed -> adjustment via delta should've fixed it (stage 1)
             Assert.Equal(TapeSetAnomalyStage.Delta, recovered.Stage);
 
-            var sets = agent.Statistics.Sets;
+            var sets = agent.Statistics.SetStats;
             Assert.Equal(1, sets.AnomaliesDetected);
             Assert.Equal(1, sets.AnomaliesRecovered);
             Assert.False(sets.SetWriteBlocked); // we should've cleared the writing upon recovery
@@ -454,7 +454,7 @@ public class TapeSetHeaderCorrectionTests
             // Navigation to the last set screwed -> renavigation from BOM must've been required to fix it
             Assert.Equal(TapeSetAnomalyStage.Renavigated, recovered.Stage);
 
-            var sets = agent.Statistics.Sets;
+            var sets = agent.Statistics.SetStats;
             Assert.Equal(1, sets.AnomaliesDetected);
             Assert.Equal(1, sets.AnomaliesRecovered);
             Assert.False(sets.SetWriteBlocked); // we should've cleared the writing upon recovery

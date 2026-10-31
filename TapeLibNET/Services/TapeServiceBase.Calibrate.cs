@@ -186,10 +186,9 @@ public partial class TapeServiceBase
                     throw new InvalidOperationException($"Couldn't eject media: {LastError}");
                 }
 
-                // Reuse the existing insert prompt (virtual: opens the open-existing picker; physical: "insert &
-                //  continue"). The RestoreMode arg only colors the dialog wording — a minor cosmetic stretch for
-                //  calibration; swap for a dedicated calibration-insert host verb if that wording ever matters.
-                if (!_host.OnInsertMediaConfirm(volumeNeeded: 1, RestoreMode.Restore))
+                // Ask for a scratch cartridge: the host warns that it will be erased and, on a virtual drive,
+                //  offers a new file rather than the one just ejected.
+                if (!_host.OnInsertScratchMediaConfirm())
                     return MakeResult(aborted: true,
                         diagnosis: TapeResult.Fail((uint)WIN32_ERROR.ERROR_CANCELLED,
                             "Calibration cancelled — no scratch cartridge inserted"),

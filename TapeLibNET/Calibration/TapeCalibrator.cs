@@ -962,6 +962,8 @@ public sealed class TapeCalibrator : TapeDriveHolder<TapeCalibrator>
     private T? ReadRecord<T>(byte[] recordBuffer) where T : class, ITapeFramedRecord<T>
     {
         int read = Drive.ReadDirect(recordBuffer, 0, recordBuffer.Length, out _, out _);
+        if (read > 0 && Drive.LastErrorWin32 == WIN32_ERROR.ERROR_INVALID_BLOCK_LENGTH)
+            Drive.ResetError(); // a block of another size (e.g. the 16 KiB run header): no checkpoint — a finding
         if (read <= 0)
             return null;
         return TapeCalibrationFramer.Unpack<T>(recordBuffer, read);

@@ -124,4 +124,26 @@ public class ServiceOverwriteTests : ServiceTestBase
             }
         }
     }
+
+    [Fact]
+    public async Task Append_WithoutLoadedToc_IsRefused_TapeUnchanged()
+    {
+        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity, InitiatorCapacity);
+        using var src = new TempFileTree();
+        src.AddFiles("keep", count: 3, minSize: 512, maxSize: 4_096);
+        var (seed, _) = await OpenAndFormatAsync(media);
+        using (seed)
+            Assert.True((await seed.ExecuteBackupAsync(MakeBackupRequest(seed, src.RootPath, "Keep"))).Success);
+
+        var (svc, _) = await ReopenAsync(media, restoreTOC: false);
+        using (svc)
+        {
+            var result = await svc.ExecuteBackupAsync(MakeBackupRequest(svc, src.RootPath, "Append", append: true));
+            Assert.False(result.Success);
+            Assert.Contains("no table of contents", svc.LastError);
+        }
+        var (check, _) = await ReopenAsync(media);
+        using (check)
+            Assert.Equal(1, check.TOC!.Count);     // the set is still there
+    }
 }

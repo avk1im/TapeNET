@@ -7,6 +7,7 @@ using TapeLibNET.Compression;
 using TapeLibNET.Headers;
 using TapeLibNET.Toc;
 using TapeLibNET.Agents;
+using TapeLibNET.Encryption;
 
 namespace TapeLibNET.Tests.Helpers;
 
@@ -117,6 +118,12 @@ public sealed class VirtualTapeFixture : IDisposable
     public VirtualTapeDriveBackend Backend { get; }
 
     /// <summary>
+    /// Whether <c>BackupFiles</c> checks the TOC it just saved (<see cref="TocInvariants"/>).
+    ///  On by default; turn off in tests that write a malformed TOC on purpose.
+    /// </summary>
+    public bool ValidatesTocAfterBackup { get; set; } = true;
+
+    /// <summary>
     /// The record emitter the fixture's writing agents BORROW, or <see langword="null"/> = each agent's own V2.1 emitter.
     ///  Set it only to write another format than V2.1 (e.g. <c>LegacyRecordEmitter.Instance</c>).
     /// </summary>
@@ -147,7 +154,7 @@ public sealed class VirtualTapeFixture : IDisposable
 
     /// <summary>
     /// Creates a fully ready fixture: memory-backed virtual drive opened, media loaded
-    /// and prepared, TOC initialized.
+    ///  and prepared, TOC initialized.
     /// </summary>
     /// <param name="profile">Drive capability profile to emulate.</param>
     /// <param name="contentCapacity">Content partition capacity in bytes.</param>
@@ -155,17 +162,22 @@ public sealed class VirtualTapeFixture : IDisposable
     /// <param name="mediaDescription">Optional description for the initial TOC.</param>
     /// <param name="useMemoryMap">
     /// When <see langword="true"/>, uses <see cref="VirtualTapeDriveBackend.CreateMemoryMapBacked"/>
-    /// (memory-mapped files) instead of <see cref="MemoryStream"/>-backed media.
-    /// Required for content capacities exceeding 2 GB.
+    ///  (memory-mapped files) instead of <see cref="MemoryStream"/>-backed media.
+    ///  Required for content capacities exceeding 2 GB.
     /// </param>
     /// <param name="withMediaHeader">
     /// When <see langword="true"/>, writes a <see cref="TapeMediaHeader"/> to the tape.
-    /// Set to <see langword="false"/> by default (no header).
+    ///  Set to <see langword="false"/> by default (no header).
     /// </param>
     /// <param name="withSetHeaders">
     /// When <see langword="true"/>, each set receives a <see cref="TapeSetHeader"/>. Requires
     ///  <paramref name="withMediaHeader"/> — a volume that carries no media header can declare no set
     ///  headers either (SH-1), so the combination is rejected rather than silently downgraded.
+    /// </param>
+    /// <param name="recordEmitter">The emitter the fixture's writing agents borrow; null = their own 2.1 emitter.</param>
+    /// <param name="sealPadding">
+    /// Whether encrypted sets are sealed with production padding (64 KiB units, Design-Encryption §5.4). Off by default:
+    ///  small virtual volumes. Turn on to test the production path.
     /// </param>
     public VirtualTapeFixture(
         DriveProfile profile = DriveProfile.Setmarks,
@@ -175,16 +187,17 @@ public sealed class VirtualTapeFixture : IDisposable
         bool useMemoryMap = false,
         bool withMediaHeader = false,
         bool withSetHeaders = false,
-        ITapeRecordEmitter? recordEmitter = null) // null = use the agents' own 2.1 emitter
+        ITapeRecordEmitter? recordEmitter = null, // null = use the agents' own 2.1 emitter
+        bool sealPadding = false)
     {
         if (withSetHeaders && !withMediaHeader) // cannot have set headers without a media header (SH-1)
             throw new ArgumentException("Set headers require a media header (SH-1)", nameof(withSetHeaders));
+
         WithMediaHeader = withMediaHeader;
         WithSetHeaders = withSetHeaders;   // BEFORE the header write below — CreateHeader reads it
 
         LoggerFactory = loggerFactory ?? TestLoggerFactory.Default;
         Capabilities = ProfileToCapabilities(profile);
-
         long initCap = Capabilities.SupportsInitiatorPartition
             ? DefaultInitiatorCapacity : 0;
 
@@ -210,7 +223,11 @@ public sealed class VirtualTapeFixture : IDisposable
 
         // Create initial TOC
         TOC = new TapeTOC(mediaDescription);
-        
+#if TEST_HOOKS
+        if (!sealPadding)
+            TOC.SealPadUnit = 1;    // small virtual volumes: an unpadded sealed set costs about what a plain one does
+#endif
+
         // Write header if requested (Notice some tests want to start with a blank tape)
         if (withMediaHeader)
         {
@@ -316,7 +333,7 @@ public sealed class VirtualTapeFixture : IDisposable
 
     /// <summary>
     /// Backs up a list of files as a new set with sensible defaults, saves the TOC,
-    /// and returns the backup agent's final statistics snapshot.
+    ///  and returns the backup agent's final statistics snapshot.
     /// </summary>
     /// <param name="fileList">Full paths to back up.</param>
     /// <param name="description">Backup set description.</param>
@@ -330,6 +347,11 @@ public sealed class VirtualTapeFixture : IDisposable
     /// Pins the new set's <see cref="TapeSetTOC.SetId"/> — for tests that compare the bytes of two independent backups.
     ///  <see langword="null"/> keeps the freshly minted id.
     /// </param>
+    /// <param name="password">
+    /// Encrypts the set (Design-Encryption §15.7): a new chain — or, for an incremental on an encrypted previous set,
+    ///  that chain's key. <see langword="null"/> = a plain set.
+    /// </param>
+    /// <param name="encryption">The scheme, when <paramref name="password"/> is given.</param>
     /// <returns>Statistics snapshot after backup completes.</returns>
     public TapeFileStatistics BackupFiles(
         List<string> fileList,
@@ -340,7 +362,9 @@ public sealed class VirtualTapeFixture : IDisposable
         ITapeFileNotifiable? notifiable = null,
         TapeCompression compression = TapeCompression.None,
         int compressionLevel = ZstdLevel.Default,
-        Guid? setId = null)
+        Guid? setId = null,
+        string? password = null,
+        TapeEncryption encryption = TapeEncryption.Software)
     {
         // Configure the set
         TOC.AddNewSetTOC(0, incremental);
@@ -349,12 +373,12 @@ public sealed class VirtualTapeFixture : IDisposable
         TOC.CurrentSetTOC.BlockSize = blockSize == 0 ? Drive.DefaultBlockSize : blockSize;
         TOC.CurrentSetTOC.Compression = compression;
         TOC.CurrentSetTOC.CompressionLevel = compressionLevel;
-
         if (setId is { } id)
             TOC.CurrentSetTOC.SetId = id;
+        if (password is not null)
+            EncryptCurrentSet(password, encryption);
 
         using var agent = CreateBackupAgent();
-
         bool success = agent.BackupFileListToCurrentSet(
             newSet: true,
             fileList,
@@ -365,8 +389,61 @@ public sealed class VirtualTapeFixture : IDisposable
 
         // Save TOC after successful backup
         Assert.True(agent.BackupTOC(), "Failed to save TOC after backup");
-
+        if (ValidatesTocAfterBackup)
+            TocInvariants.AssertWellFormed(TOC);
         return agent.Statistics;
+    }
+
+    #endregion
+
+    #region *** Encryption ***
+
+    /// <summary>
+    /// PBKDF2 work factor of every set the fixture encrypts — low, so the suite stays fast.
+    /// </summary>
+    public const int TestIterations = 1_000;
+
+    // The fixture's key ring: holds every chain key it created or unwrapped; disposed with the fixture.
+    private readonly TapeKeyRing m_ring = new();
+
+    /// <summary>
+    /// Unlocks every locked set of <see cref="TOC"/> — by trial with the keys already held, else with
+    ///  <paramref name="password"/> (asserted). Returns how many sets were unlocked.
+    /// </summary>
+    public int UnlockAll(string password)
+    {
+        int lockedBefore = TOC.Count(s => s.IsLocked);
+        m_ring.UnlockAll(TOC);
+        for (int i = 1; i <= TOC.Count; i++)
+        {
+            if (!TOC[i].IsLocked || !TOC[i].IsUnlockable)
+                continue;
+            TapeResult result = m_ring.Unlock(TOC, i, password);
+            Assert.True(result.Success, $"Fixture: unlocking set #{i} failed: {result.ErrorMessage}");
+        }
+        return lockedBefore - TOC.Count(s => s.IsLocked);
+    }
+
+    /// <summary>
+    /// Makes the CURRENT (new, empty) set encrypted: a new chain, or — for an incremental on an encrypted previous set —
+    ///  the previous set's key under a fresh envelope (Design-Encryption §8.2).
+    /// </summary>
+    public void EncryptCurrentSet(string password, TapeEncryption encryption = TapeEncryption.Software)
+    {
+        using var _ = TapeCrypto.UseIterations(TestIterations);
+        TapeSetTOC set = TOC.CurrentSetTOC;
+        TapeSetTOC? previous = TOC.CurrentSetIndex > 1 ? TOC[TOC.CurrentSetIndex - 1] : null;
+
+        if (set.Incremental && previous is { IsEncrypted: true })
+        {
+            TapeSetKey key = previous.Key
+                ?? throw new InvalidOperationException("Fixture: the incremental's base is locked — UnlockAll first");
+            set.EnableEncryption(previous.Encryption, TapeSetEncryption.Wrap(key, password), key);
+            return;
+        }
+
+        var (envelope, fresh) = TapeSetEncryption.CreateChain(password);
+        set.EnableEncryption(encryption, envelope, m_ring.Add(fresh));
     }
 
     #endregion
@@ -403,6 +480,7 @@ public sealed class VirtualTapeFixture : IDisposable
     public void Dispose()
     {
         Drive.Dispose();
+        m_ring.Dispose();
     }
 
     #endregion

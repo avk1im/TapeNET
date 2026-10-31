@@ -30,8 +30,12 @@ public interface ITapeRecordEmitter
     /// <summary>Writes the per-file header in front of <paramref name="file"/>'s body.</summary>
     void WriteFileHeader(Stream stream, TapeSetTOC set, TapeFileInfo file);
 
-    /// <summary>Writes one complete TOC copy, integrity trailer included.</summary>
-    void WriteToc(TapeTOC toc, Stream stream);
+    /// <summary>
+    /// Writes one complete TOC copy, integrity trailer included — copy <paramref name="copyIndex"/> of
+    ///  <paramref name="copyCount"/> (Design-TocLocation §6); 0 = unmarked. A legacy emitter ignores the marker: the
+    ///  legacy format has no place for it.
+    /// </summary>
+    void WriteTOC(TapeTOC toc, Stream stream, byte copyIndex = 0, byte copyCount = 0);
 
     /// <summary>
     /// Frames <paramref name="header"/> into one standard header block, or returns <see langword="null"/> when it does
@@ -71,7 +75,8 @@ internal sealed class TapeRecordEmitter21 : ITapeRecordEmitter, IDisposable
         m_frames.WriteInline(stream, m_fileHeader);
     }
 
-    public void WriteToc(TapeTOC toc, Stream stream) => toc.SaveTo(stream);
+    public void WriteTOC(TapeTOC toc, Stream stream, byte copyIndex = 0, byte copyCount = 0)
+        => toc.SaveTo(stream, copyIndex, copyCount);
 
     // Rare (one per volume / set) and the 16 KiB block array is inherent — no gain from the frame writer here.
     public byte[]? FrameHeaderBlock(TapeHeader header) => TapeHeaderBlock.Frame(header);

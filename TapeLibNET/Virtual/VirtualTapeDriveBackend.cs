@@ -841,42 +841,39 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
     /// Re-inserts previously captured memory-backed media.
     /// Call <see cref="LoadMedia"/> afterwards to load the restored state.
     /// </summary>
+    /// <remarks>
+    /// Every stream is a GROWABLE copy of the snapshot. A <see cref="MemoryStream"/> built over a supplied array can be
+    ///  written but never extended — so a re-inserted volume could not take an append, nor test surgery that adds blocks
+    ///  (the metadata grows with every new block), and its state save would fail silently. The content stream reserves
+    ///  room for the media's capacity up front, so appends do not reallocate; its <see cref="Stream.Length"/> is
+    ///  the data actually written.
+    /// </remarks>
     public void InsertMemoryMedia(MemoryMediaSnapshot snapshot)
     {
+        ArgumentNullException.ThrowIfNull(snapshot);
+
         if (m_hasMedia || m_contentStream != null)
             UnloadMedia();
 
-        static int ChoseCapacity(int needed, long reserved)
+        // A growable stream holding a copy of data, its capacity reserved up to reserve (capped for MemoryStream)
+        static MemoryStream Growable(byte[]? data, long reserve)
         {
-            // Ensure we don't exceed Int32.MaxValue for MemoryStream
-            if (reserved > Int32.MaxValue)
-                reserved = Int32.MaxValue;
-            return Math.Max(needed, (int)reserved);
+            int length = data?.Length ?? 0;
+            int capacity = (int)Math.Min(Math.Max(length, reserve), int.MaxValue);
+            var stream = new MemoryStream(capacity);
+            if (length > 0)
+                stream.Write(data!, 0, length);
+            stream.Position = 0;
+            return stream;
         }
 
-        static byte[] ChoseBuffer(byte[] supplied, long reserved)
-        {
-            int capacity = ChoseCapacity(supplied.Length, reserved);
-            if (supplied.Length >= capacity)
-                return supplied;
-            var buffer = new byte[capacity];
-            Array.Copy(supplied, buffer, supplied.Length);
-            return buffer;
-        }
-
-        byte[] buff = ChoseBuffer(snapshot.ContentData, snapshot.ContentCapacity);
-        m_contentStream = new MemoryStream(buff, 0, buff.Length, writable: true, publiclyVisible: true);
-        m_contentMetadataStream = snapshot.ContentMetadata != null
-            ? new MemoryStream(snapshot.ContentMetadata, 0, snapshot.ContentMetadata.Length, writable: true, publiclyVisible: true)
-            : new MemoryStream();
+        m_contentStream = Growable(snapshot.ContentData, snapshot.ContentCapacity);
+        m_contentMetadataStream = Growable(snapshot.ContentMetadata, reserve: 0);
 
         if (m_capabilities.SupportsInitiatorPartition && snapshot.InitiatorData != null)
         {
-            buff = ChoseBuffer(snapshot.InitiatorData, snapshot.InitiatorCapacity);
-            m_initiatorStream = new MemoryStream(buff, 0, buff.Length, writable: true, publiclyVisible: true);
-            m_initiatorMetadataStream = snapshot.InitiatorMetadata != null
-                ? new MemoryStream(snapshot.InitiatorMetadata, 0, snapshot.InitiatorMetadata.Length, writable: true, publiclyVisible: true)
-                : new MemoryStream();
+            m_initiatorStream = Growable(snapshot.InitiatorData, snapshot.InitiatorCapacity);
+            m_initiatorMetadataStream = Growable(snapshot.InitiatorMetadata, reserve: 0);
         }
 
         m_contentCapacityForNew = snapshot.ContentCapacity;
@@ -1051,7 +1048,7 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
         {
             SyncErrorFrom(m_currentMedia);
 
-            if (m_currentMedia.LastErrorWin32 == WIN32_ERROR.ERROR_END_OF_MEDIA)
+            if (m_currentMedia.RanToEOM)
                 eom = true;
         }
         else

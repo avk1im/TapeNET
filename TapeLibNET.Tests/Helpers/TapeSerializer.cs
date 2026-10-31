@@ -1,7 +1,6 @@
 ﻿using System.Runtime.CompilerServices;
 using System.Text;
 
-using TapeLibNET.Drive;
 using TapeLibNET.Toc;
 using TapeLibNET.Legacy; // signature and version constants
 
@@ -30,7 +29,7 @@ public interface ITapeSerializable
 ///  (s. Design-FormatV21 §7.3).
 /// </para>
 /// <para>Works with any <see cref="Stream"/>; employs no buffering of its own
-///  since <see cref="TapeStream"/> already buffers. Strings are UTF-8 with a 32-bit length prefix.</para>
+///  since <see cref="Streams.TapeStream"/> already buffers. Strings are UTF-8 with a 32-bit length prefix.</para>
 /// </summary>
 /// <param name="wstream">Target stream to write serialized data to.</param>
 internal class TapeSerializer(Stream wstream)

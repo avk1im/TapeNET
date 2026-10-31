@@ -1,9 +1,12 @@
 using System.Buffers.Binary;
 using System.Reflection;
 using System.Text;
+
 using TapeLibNET.Agents;
 using TapeLibNET.Compression;
+using TapeLibNET.Encryption;
 using TapeLibNET.Format;
+using TapeLibNET.Headers;
 using TapeLibNET.Legacy;
 
 namespace TapeLibNET.Toc;
@@ -12,7 +15,8 @@ namespace TapeLibNET.Toc;
 // ============================================================================================================
 //  Format 2.1 representation of the TOC (Design-FormatV21 §5.1, §7.3).
 //
-//  TOC stream := TocHeader (TocSet TocFileBatch*)* TocEnd ‖ CRC-64
+//  TOC stream := TocHeader ( TocSet TocFileBatch* | TocSealedSet TocSealedChunk+ )* TocEnd ‖ CRC-64
+//   (sealed sets: Design-Encryption §5, wires in TapeTOC.Encryption.cs)
 //
 //  The domain types (TapeTOC, TapeSetTOC, TapeFileInfo) stay free of wire concerns: each record has a small
 //   mutable wire DTO with a schema table (G4). This file holds the DTOs, the TOC's SaveTo / LoadFrom / TryPeek,
@@ -40,8 +44,11 @@ internal sealed class TocHeaderWire : ITapeRecord<TocHeaderWire>
     public int Volume = 1;
     public bool ContinuedOnNextVolume;
     public int SetCount;
-    public string Description = "";
-    public string WrittenBy = "";
+    public byte CopyIndex;                      // ← added by Design-TocLocation §6
+    public byte CopyCount;                      // ← added by Design-TocLocation §6
+    public long FirstBlockAfterContent = -1;    // ← added by Design-TocLocation §6
+    public string Description = string.Empty;
+    public string WrittenBy = string.Empty;
 
     private static readonly TapeSchema<TocHeaderWire> s_schema = new(TapeRecordKind.TocHeader)
     {
@@ -52,6 +59,11 @@ internal sealed class TocHeaderWire : ITapeRecord<TocHeaderWire>
         { 4,  h => h.Volume,                (h, v) => h.Volume = v,                1 },
         { 5,  h => h.ContinuedOnNextVolume, (h, v) => h.ContinuedOnNextVolume = v },
         { 6,  h => h.SetCount,              (h, v) => h.SetCount = v,              FieldFlags.Required },
+        // Design-TocLocation §6 fields. Optional, NOT critical, elided at their defaults: diagnostic orientation for
+        //  the search, never a reason to refuse a copy. Not cross-validated either — an inconsistent marker is merely "unknown".
+        { 7,  h => h.CopyIndex,             (h, v) => h.CopyIndex = v },
+        { 8,  h => h.CopyCount,             (h, v) => h.CopyCount = v },
+        { 9,  h => h.FirstBlockAfterContent, (h, v) => h.FirstBlockAfterContent = v, -1L }, // -1L-elided still ok for varuint
         // ── strings 32–47 ──
         { 32, h => h.Description,           (h, v) => h.Description = v },
         { 33, h => h.WrittenBy,             (h, v) => h.WrittenBy = v },
@@ -62,7 +74,9 @@ internal sealed class TocHeaderWire : ITapeRecord<TocHeaderWire>
     public static bool Accepts(TapeRecordKind kind) => kind == TapeRecordKind.TocHeader;
     public static TocHeaderWire ReadBody(TapeFieldReader fields) => s_schema.Read(fields, new TocHeaderWire());
 
-    public static TocHeaderWire From(TapeTOC toc) => new()
+    /// <param name="copyIndex">Which copy this is (1-based); 0 = unmarked (an export).</param>
+    /// <param name="copyCount">How many copies this save writes; 0 = unmarked.</param>
+    public static TocHeaderWire From(TapeTOC toc, byte copyIndex = 0, byte copyCount = 0) => new()
     {
         MediaId = toc.MediaId,
         CreationTime = toc.CreationTime,
@@ -70,6 +84,11 @@ internal sealed class TocHeaderWire : ITapeRecord<TocHeaderWire>
         Volume = toc.Volume,
         ContinuedOnNextVolume = toc.ContinuedOnNextVolume,
         SetCount = toc.Count,
+        CopyIndex = copyIndex,
+        CopyCount = copyCount,
+        // The copy's OWN volume: whoever finds this copy learns where content ends there from the first block alone
+        //  (the per-set records may lie beyond it). An empty volume says −1: begin-of-content is the navigator's.
+        FirstBlockAfterContent = toc.FirstBlockAfterContentOnVolume(toc.Volume),
         Description = TapeTextRules.ClampWellFormed(toc.Description, MaxDescriptionBytes),
         WrittenBy = TapeTextRules.ClampWellFormed(toc.WrittenBy, MaxWrittenByBytes),
     };
@@ -148,7 +167,7 @@ internal sealed class TocFileEntryWire
     public DateTime LastWriteTime;
     public DateTime LastAccessTime;
     public int NameShared;
-    public string NameSuffix = "";
+    public string NameSuffix = string.Empty;
     public byte[] Hash = [];
     public byte[] NameUtf16 = [];
 
@@ -190,7 +209,7 @@ internal sealed class TocFileEntryWire
         LastAccessTime = d.LastAccessTime;
         Hash = file.Hash ?? [];
 
-        string name = d.FullName ?? "";
+        string name = d.FullName ?? string.Empty;
         if (TapeTextRules.IsWellFormedUtf16(name))
         {
             NameSuffix = coder.Encode(name, out int shared).ToString();
@@ -201,7 +220,7 @@ internal sealed class TocFileEntryWire
         {
             coder.Remember(name);               // the next entry may still share this name's prefix
             NameShared = 0;
-            NameSuffix = "";
+            NameSuffix = string.Empty;
             NameUtf16 = TapeTextRules.EncodeUtf16LE(name);
         }
     }
@@ -255,9 +274,12 @@ public partial class TapeFileInfo
     /// <summary>
     /// Conservative 2.1 TOC footprint of this entry (§10.3): assumes no shared name prefix and maximum varint widths.
     /// </summary>
+    /// <remarks>
+    /// A coarse estimate — the TOC uses <see cref="TocEntrySizing"/>.
+    /// </remarks>
     public int EstimateSerializedSize()
     {
-        string name = FileDescr.FullName ?? "";
+        string name = FileDescr.FullName ?? string.Empty;
         int nameBytes = TapeTextRules.IsWellFormedUtf16(name)
             ? Encoding.UTF8.GetByteCount(name)
             : 2 * name.Length;
@@ -291,13 +313,14 @@ public partial class TapeSetTOC
     /// <summary>
     /// Everything about a set that is persisted, except <see cref="LastSaveTime"/> itself. Files are append-only
     ///  and every attempt burns a <see cref="NextFileId"/>, so the file count plus the id counter capture any
-    ///  change to the file list.
+    ///  change to the file list. For an encrypted set, the scheme and the envelope count too: a new envelope (a
+    ///  password change) re-seals the set (Design-Encryption §6.3).
     /// </summary>
     private readonly record struct PersistedState(
         Guid SetId, TapeDataFormat DataFormat, ulong NextFileId, int FileCount,
         string Description, DateTime CreationTime, uint BlockSize, TapeHashAlgorithm HashAlgorithm,
         TapeCompression Compression, int CompressionLevel, bool Incremental, int Volume, bool ContinuedFromPrevVolume,
-        bool ClosedByEom);
+        bool ClosedByEom, long FirstBlockAfterSet, TapeEncryption Encryption, TapeKeyEnvelope? Envelope);
 
     // The state as last saved or loaded; null for a set never persisted (a new set is always "modified").
     //  Copied by CopyFrom (TapeTOC.cs), so a loaded set copied into the live TOC stays unmodified.
@@ -305,21 +328,34 @@ public partial class TapeSetTOC
 
     private PersistedState CaptureState() => new(
         SetId, DataFormat, NextFileId, Count, Description, CreationTime, BlockSize, HashAlgorithm,
-        Compression, CompressionLevel, Incremental, Volume, ContinuedFromPrevVolume, ClosedByEom);
+        Compression, CompressionLevel, Incremental, Volume, ContinuedFromPrevVolume, ClosedByEom, FirstBlockAfterSet,
+        Encryption, Envelope);
 
     /// <summary>
     /// Whether this set differs from what was last saved or loaded — a new set, appended files, a burned
     ///  <see cref="TapeFileInfo.FileId"/>, or any changed attribute. Only modified sets get a fresh
-    ///  <see cref="LastSaveTime"/> on save.
+    ///  <see cref="LastSaveTime"/> on save, and only modified encrypted sets are re-sealed.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Compares a snapshot rather than tracking setters: no property can be forgotten, and the domain class needs
     ///  no change notifications. The cost is one small struct comparison per set and save.
+    /// </para>
+    /// <para>
+    /// <b>A locked set is never modified</b>: nothing in it can change without unlocking it first (E7).
+    /// </para>
     /// </remarks>
-    internal bool IsModified => m_savedState != CaptureState();
+    internal bool IsModified => !IsLocked && m_savedState != CaptureState();
 
-    /// <summary>Records the current state as persisted: after a successful save, and after a load.</summary>
-    internal void MarkSaved() => m_savedState = CaptureState();
+    /// <summary>
+    /// Records the current state as persisted: after a successful save, after a load, and after an unlock.
+    ///  A no-op on a locked set, whose last known state stays recorded.
+    /// </summary>
+    internal void MarkSaved()
+    {
+        if (!IsLocked)
+            m_savedState = CaptureState();
+    }
 
     #endregion
 
@@ -340,7 +376,8 @@ public partial class TapeSetTOC
         public bool ContinuedFromPrevVolume;
         public int FileCount;
         public bool ClosedByEom;
-        public string Description = "";
+        public long FirstBlockAfterSet = -1;    // ← added by Design-TocLocation §6
+        public string Description = string.Empty;
 
         private static readonly TapeSchema<Wire> s_schema = new(TapeRecordKind.TocSet, validate: Validate)
         {
@@ -361,6 +398,8 @@ public partial class TapeSetTOC
             // F32. Optional, NOT critical: a reader that drops it miscounts by one mark at the volume's tail — which the
             //  set-header verification detects and repairs. Elided when false: every existing TOC stays byte-identical.
             { 14, w => w.ClosedByEom,             (w, v) => w.ClosedByEom = v },
+            // Design-TocLocation §6. Optional, NOT critical, elided at −1: every existing TOC stays byte-identical.
+            { 15, w => w.FirstBlockAfterSet,      (w, v) => w.FirstBlockAfterSet = v,      -1L }, // -1L-elided still ok for varuint
             // ── strings 32–47 ──
             { 32, w => w.Description,             (w, v) => w.Description = v },
         };
@@ -396,6 +435,7 @@ public partial class TapeSetTOC
             ContinuedFromPrevVolume = set.ContinuedFromPrevVolume,
             FileCount = set.Count,
             ClosedByEom = set.ClosedByEom,
+            FirstBlockAfterSet = set.FirstBlockAfterSet,
             Description = TapeTextRules.ClampWellFormed(set.Description, TapeFormat.MaxStringBytes),
         };
 
@@ -414,13 +454,21 @@ public partial class TapeSetTOC
             CompressionLevel = CompressionLevel,
             ContinuedFromPrevVolume = ContinuedFromPrevVolume,
             ClosedByEom = ClosedByEom,
+            FirstBlockAfterSet = FirstBlockAfterSet,
         };
     }
 
     /// <summary>
-    /// Writes this set's files as <c>TocFileBatch</c> records: at most <see cref="MaxFilesPerBatch"/> files or about
-    ///  <see cref="MaxBatchBodyBytes"/> per batch. An empty set writes no batch.
+    /// Writes this set's files as <see cref="TapeRecordKind.TocFileBatch"/> records: at most
+    ///  <see cref="MaxFilesPerBatch"/> files, or about <see cref="MaxBatchBodyBytes"/> bytes by 
+    ///  see cref="TocEntrySizing.GroupBound"/> per batch. An empty set writes no batch.
     /// </summary>
+    /// <remarks>
+    /// The byte rule counts the BOUND of each entry, not the bytes written (Design-TocReserve §9.4): the agent's
+    ///  <see cref="TocEntryMeter"/> must place every batch break — every front-coding reset — exactly where this writer
+    ///  does, and it cannot know an entry's actual bytes before the file is on tape. The bound is never below the actual
+    ///  size, so a batch body still stays within the limit plus one entry; readers accept any batching.
+    /// </remarks>
     /// <param name="entry">Reusable wire object (one per TOC).</param>
     /// <param name="coder">Reusable front coder; reset at every batch start, so batches decode on their own.</param>
     internal void WriteBatches(TapeRecordWriter writer, TocFileEntryWire entry, TapeNameFrontCoder coder)
@@ -429,18 +477,23 @@ public partial class TapeSetTOC
         while (i < m_tapeFileInfos.Count)
         {
             coder.Reset();
+            string previous = string.Empty;
+            long bound = 0;
             TapeFieldWriter body = writer.BeginRecord(TapeRecordKind.TocFileBatch);
             try
             {
                 int inBatch = 0;
                 do
                 {
-                    entry.From(m_tapeFileInfos[i++], coder);
+                    TapeFileInfo file = m_tapeFileInfos[i++];
+                    bound += TocEntrySizing.GroupBound(file, previous);
+                    previous = file.FileDescr.FullName ?? string.Empty;
+                    entry.From(file, coder);
                     TapeFieldWriter group = body.BeginGroup(BatchFileField);
                     TocFileEntryWire.Schema.Write(group, entry);
                     body.EndGroup(group);
                 }
-                while (i < m_tapeFileInfos.Count && ++inBatch < MaxFilesPerBatch && body.BytesWritten < MaxBatchBodyBytes);
+                while (i < m_tapeFileInfos.Count && ++inBatch < MaxFilesPerBatch && bound < MaxBatchBodyBytes);
             }
             catch
             {
@@ -509,13 +562,13 @@ public partial class TapeSetTOC
         if (maxFileId >= NextFileId)
             NextFileId = maxFileId + 1;
     }
-}
+} // TapeSetTOC
 
 #endregion
 
 #region *** TapeTOC — SaveTo / LoadFrom / TryPeek ***
 
-public partial class TapeTOC
+public partial class TapeTOC : ITapeBlockPeeker<TapeTocPeek>
 {
     /// <summary>
     /// TOC version reported for 2.1 TOC copies (<c>Major &lt;&lt; 8 | Minor</c>), e.g. by Scan Media. Legacy TOCs
@@ -560,8 +613,19 @@ public partial class TapeTOC
     /// <param name="stream">Destination; written forward only, never disposed.</param>
     public void SaveTo(Stream stream) => SaveTo(stream, DateTime.UtcNow, DefaultWrittenBy);
 
-    /// <summary>Deterministic form of <see cref="SaveTo(Stream)"/> — tests and goldens pin time and writer.</summary>
-    internal void SaveTo(Stream stream, DateTime saveTimeUtc, string writtenBy)
+    /// <summary>
+    /// <see cref="SaveTo(Stream)"/> for one of the on-tape copies: stamps <paramref name="copyIndex"/> of
+    ///  <paramref name="copyCount"/> into the header (Design-TocLocation §6).
+    /// </summary>
+    /// <remarks>
+    /// All copies of one save carry ONE save time — the one copy 1 stamped. Otherwise each later copy would look newer
+    ///  than its sibling, and the TOC search, which ranks copies by save time (TL-5), would always prefer the last copy.
+    /// </remarks>
+    internal void SaveTo(Stream stream, byte copyIndex, byte copyCount)
+        => SaveTo(stream, copyIndex > 1 ? LastSaveTime : DateTime.UtcNow, DefaultWrittenBy, copyIndex, copyCount);
+
+    /// <summary>Deterministic form of <see cref="SaveTo(Stream)"/> — tests and goldens pin time, writer and copy.</summary>
+    internal void SaveTo(Stream stream, DateTime saveTimeUtc, string writtenBy, byte copyIndex = 0, byte copyCount = 0)
     {
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(writtenBy);
@@ -577,7 +641,7 @@ public partial class TapeTOC
         TapeCrc64Envelope.Write(stream, s =>
         {
             using var writer = new TapeRecordWriter(s);
-            WriteRecords(writer);
+            WriteRecords(writer, copyIndex, copyCount);
         });
 
         // Only after the whole stream went out: a failed save leaves the sets "modified" for the next attempt
@@ -585,15 +649,22 @@ public partial class TapeTOC
             set.MarkSaved();
     }
 
-    private void WriteRecords(TapeRecordWriter writer)
+    private void WriteRecords(TapeRecordWriter writer, byte copyIndex, byte copyCount)
     {
-        writer.Write(TocHeaderWire.From(this));
+        writer.Write(TocHeaderWire.From(this, copyIndex, copyCount));
 
         var entry = new TocFileEntryWire();
         var coder = new TapeNameFrontCoder();
         long totalFiles = 0;
         foreach (TapeSetTOC set in m_setTOCs)
         {
+            if (set.IsEncrypted)
+            {
+                // Stub + chunks: verbatim when locked or unchanged, re-sealed otherwise (E7). Its files count nowhere
+                //  in the clear (§5.2).
+                set.WriteSealed(writer, SealPadUnit);
+                continue;
+            }
             writer.Write(TapeSetTOC.Wire.From(set));
             set.WriteBatches(writer, entry, coder);
             totalFiles += set.Count;
@@ -637,8 +708,9 @@ public partial class TapeTOC
         var sets = new List<TapeSetTOC>(Math.Min(header.SetCount, c_maxPreallocSets));
         var entry = new TocFileEntryWire();
         var coder = new TapeNameFrontCoder();
-        TapeSetTOC? set = null;
+        TapeSetTOC? set = null;                 // the plain set whose batches are arriving
         int declaredFiles = 0;
+        SealedSetLoader? sealedSet = null;      // the sealed set whose chunks are arriving
 
         while (true)
         {
@@ -649,7 +721,7 @@ public partial class TapeTOC
             switch (record.Kind)
             {
                 case TapeRecordKind.TocSet:
-                    set?.FinishLoading(declaredFiles);
+                    CloseCurrentSet();
                     if (sets.Count == header.SetCount)
                         throw CrossCheck(TapeRecordKind.TocSet, $"more sets than the header declares ({header.SetCount})");
                     TapeSetTOC.Wire wire = record.Read<TapeSetTOC.Wire>();
@@ -660,16 +732,33 @@ public partial class TapeTOC
 
                 case TapeRecordKind.TocFileBatch:
                     if (set is null)
-                        throw record.Fields.Error(FormatErrorKind.UnexpectedKind, "file batch before any set");
+                        throw record.Fields.Error(FormatErrorKind.UnexpectedKind, "file batch outside a plain set");
                     set.ReadBatch(record.Fields, entry, coder, declaredFiles);
                     break;
 
+                case TapeRecordKind.TocSealedSet:
+                    CloseCurrentSet();
+                    if (sets.Count == header.SetCount)
+                        throw CrossCheck(TapeRecordKind.TocSealedSet, $"more sets than the header declares ({header.SetCount})");
+                    sealedSet = new SealedSetLoader(record.Read<TocSealedSetWire>());
+                    sets.Add(sealedSet.Set);
+                    break;
+
+                case TapeRecordKind.TocSealedChunk:
+                    if (sealedSet is null)
+                        throw record.Fields.Error(FormatErrorKind.UnexpectedKind, "sealed chunk outside a sealed set");
+                    sealedSet.Add(record.Read<TocSealedChunkWire>());
+                    break;
+
                 case TapeRecordKind.TocEnd:
-                    set?.FinishLoading(declaredFiles);
+                    CloseCurrentSet();
                     TocEndWire end = record.Read<TocEndWire>();
                     long totalFiles = 0;
                     foreach (TapeSetTOC s in sets)
-                        totalFiles += s.Count;
+                    {
+                        if (!s.IsEncrypted)
+                            totalFiles += s.Count;      // a sealed set's count is hidden (§5.2)
+                    }
                     if (end.SetCount != sets.Count || header.SetCount != sets.Count)
                         throw CrossCheck(TapeRecordKind.TocEnd,
                             $"set count mismatch: header {header.SetCount}, end {end.SetCount}, read {sets.Count}");
@@ -683,51 +772,203 @@ public partial class TapeTOC
             }
         }
 
+        // Completes whichever set is open before the next set record or TocEnd.
+        void CloseCurrentSet()
+        {
+            set?.FinishLoading(declaredFiles);
+            set = null;
+            sealedSet?.Complete();
+            sealedSet = null;
+        }
+
         static TapeFormatException CrossCheck(TapeRecordKind kind, string message)
             => new(FormatErrorKind.CrossCheck, message) { Record = kind };
     }
 
     /// <summary>
-    /// Whether <paramref name="block"/> — the FIRST block of a stream — opens a TOC copy, in either format.
+    /// Collects the chunk records that follow a <see cref="TocSealedSetWire"/> <paramref name="stub"/>:
+    ///  exactly <see cref="TocSealedSetWire.ChunkCount"/> of them, indices in order,
+    ///  <see cref="TocSealedChunkWire.Final"/> on the last one only (Design-Encryption §5.2). No decryption on load.
     /// </summary>
-    /// <param name="version">
-    /// <c>Major &lt;&lt; 8 | Minor</c> as written for a 2.1 copy (<see cref="TocVersion"/> for this build's own), or the
-    ///  legacy TOC version.
-    /// </param>
-    /// <param name="mediaId">The series identity; <see cref="Guid.Empty"/> when the TOC carries none.</param>
-    /// <remarks>
-    /// A 2.1 copy is identified positively: magic, kind <c>TocHeader</c> as the FIRST record, supported major, and a
-    ///  <c>TocHeader</c> body that parses. A copy from a newer major is not recognized here (Scan Media reports it as
-    ///  "ours, from a newer TapeNET"). Anything without the magic goes to the legacy probe, unchanged.
-    /// </remarks>
-    public static bool TryPeek(byte[] block, int length, out ushort version, out Guid mediaId)
+    private sealed class SealedSetLoader(TocSealedSetWire stub)
+    {
+        private readonly List<byte[]> m_chunks = new(Math.Min(stub.ChunkCount, 64));
+
+        /// <summary>The locked set, already in the TOC's set list; its sealed bytes attach on <see cref="Complete"/>.</summary>
+        public TapeSetTOC Set { get; } = TapeSetTOC.CreateLocked(stub);
+
+        public void Add(TocSealedChunkWire chunk)
+        {
+            int index = m_chunks.Count;
+            if (index >= stub.ChunkCount)
+                throw Bad($"more sealed chunks than the stub declares ({stub.ChunkCount})");
+            if (chunk.Index != (uint)index)
+                throw Bad($"sealed chunk {chunk.Index} where chunk {index} belongs");
+            if (chunk.Final != (index == stub.ChunkCount - 1))
+                throw Bad($"sealed chunk {index} {(chunk.Final ? "claims" : "lacks")} the final flag");
+            m_chunks.Add(chunk.Ciphertext);
+        }
+
+        public void Complete()
+        {
+            if (m_chunks.Count != stub.ChunkCount)
+                throw Bad($"sealed set holds {m_chunks.Count} of its {stub.ChunkCount} chunks");
+            Set.AttachSealed(TapeSealedPayload.FromStored(stub.SealNoncePrefix, m_chunks));
+        }
+
+        private static TapeFormatException Bad(string message)
+            => new(FormatErrorKind.CrossCheck, message) { Record = TapeRecordKind.TocSealedChunk };
+    }
+
+    /// <summary>
+    /// Whether <paramref name="block"/> — the FIRST block of a stream — opens a TOC copy, in either format. A projection
+    ///  of <see cref="TapeHeaderBlock.IdentifyBlock"/>: one classification, wherever it is asked.
+    /// </summary>
+    internal static bool TryPeek(byte[] block, int length, out ushort version, out Guid mediaId)
     {
         ArgumentNullException.ThrowIfNull(block);
-        ReadOnlySpan<byte> data = block.AsSpan(0, Math.Clamp(length, 0, block.Length));
+        bool ok = TapeHeaderBlock.IdentifyBlock(block, Math.Clamp(length, 0, block.Length)).TryGetToc(out TapeTocPeek peek);
+        version = ok ? peek.Version : (ushort)0;
+        mediaId = ok ? peek.MediaId : Guid.Empty;
+        return ok;
+    }
 
-        if (!TapeFormat.IsV2(data))
-            return LegacyIdentify.TryPeekToc(block, length, out version, out mediaId);
-
-        version = 0;
-        mediaId = Guid.Empty;
-
+    /// <summary>
+    /// The TOC's peeker (Design-TocLocation §3.2): a 2.1 copy is identified positively — magic, kind <c>TocHeader</c> as
+    ///  the FIRST record, supported major, and a <c>TocHeader</c> body that parses within the block. Legacy copies never
+    ///  reach here: the dispatcher routes them to the frozen probe. Total.
+    /// </summary>
+    static TapeFrameStatus ITapeBlockPeeker<TapeTocPeek>.TryPeek(ReadOnlySpan<byte> data, out TapeTocPeek peek)
+    {
+        peek = default;
         if (TapeRecordReader.ParsePrologue(data, out TapeRecordReader.Prologue p) != TapeRecordReader.PrologueStatus.Ok
-            || p.RawKind != (ushort)TapeRecordKind.TocHeader
-            || p.Major != TapeFormat.Major
-            || p.PrologueLength + p.BodyLength > data.Length)
-            return false;
+            || p.RawKind != (ushort)TapeRecordKind.TocHeader)
+            return TapeFrameStatus.NotFramed;
+        if (p.Major != TapeFormat.Major)
+            return TapeFrameStatus.Unparseable;                     // ours, from a newer TapeNET
+        if (p.PrologueLength + p.BodyLength > data.Length)
+            return TapeFrameStatus.NotFramed;                       // the header does not fit the block: torn
 
         try
         {
             var record = new TapeRecord(p.RawKind, p.Major, p.Minor, data.Slice(p.PrologueLength, p.BodyLength).ToArray());
-            mediaId = record.Read<TocHeaderWire>().MediaId;
-            version = (ushort)((p.Major << 8) | p.Minor);
-            return true;
+            TocHeaderWire header = record.Read<TocHeaderWire>();
+            peek = new TapeTocPeek(
+                Version: (ushort)((p.Major << 8) | p.Minor),
+                MediaId: header.MediaId,
+                IsLegacy: false,
+                Volume: header.Volume,
+                LastSaveTime: header.LastSaveTime,
+                SetCount: header.SetCount,
+                CopyIndex: header.CopyIndex == 0 ? null : header.CopyIndex,
+                CopyCount: header.CopyCount == 0 ? null : header.CopyCount,
+                FirstBlockAfterContent: header.FirstBlockAfterContent < 0 ? null : header.FirstBlockAfterContent);
+            return TapeFrameStatus.Ok;
         }
         catch (TapeFormatException)
         {
-            return false;
+            return TapeFrameStatus.Unparseable;
         }
+    }
+}
+
+#endregion
+
+#region *** Size estimates (Design-TocReserve §1) ***
+
+public partial class TapeSetTOC
+{
+    /// <summary>Upper bound of a set record without its description: header, the scalar fields at maximum width.</summary>
+    private const int c_setRecordMax = 160;
+
+    /// <summary>Upper bound of a sealed set's stub record, key envelope included.</summary>
+    private const int c_sealedStubMax = 512;
+
+    /// <summary>Upper bound of one <c>TocSealedChunk</c> record's framing, beside its ciphertext.</summary>
+    private const int c_chunkRecordMax = 32;
+
+    /// <summary>
+    /// Upper bound of this set's footprint in a 2.1 TOC stream (Design-TocReserve TR-5): never below what
+    ///  <see cref="TapeTOC.SaveTo(Stream)"/> writes for it.
+    /// </summary>
+    /// <param name="padUnit">The pad unit an encrypted set would be sealed with (<see cref="TapeTOC.SealPadUnit"/>).</param>
+    /// <remarks>
+    /// <list type="bullet">
+    /// <item>
+    /// <b>Plain:</b> the set record plus each entry's tight bound (<see cref="TocEntrySizing"/>), batch prologues included.
+    /// </item>
+    /// <item>
+    /// <b>Locked:</b> exact — its sealed bytes are re-emitted verbatim (E7).
+    /// </item>
+    /// <item>
+    /// <b>Unlocked:</b> the plain content, framed and
+    ///  padded by a whole extra pad unit (≥ the real round-up, and additive, so a running total stays an upper bound),
+    ///  plus one tag and one record per chunk; never below what it was last sealed at.
+    /// </item>
+    /// </list>
+    /// </remarks>
+    internal long EstimateSerializedSize(int padUnit = TapeSealedPayload.PadUnit)
+    {
+        if (IsLocked)
+            return SealedFootprint(Sealed);
+        long plain = c_setRecordMax
+            + Math.Min(Encoding.UTF8.GetByteCount(m_description), TapeFormat.MaxStringBytes);
+        var meter = new TocEntryMeter();         // the writer's batching, entry by entry (Design-TocReserve §9.4)
+        foreach (TapeFileInfo file in m_tapeFileInfos)
+        {
+            plain += meter.Measure(file);
+            meter.Accept();
+        }
+        if (!IsEncrypted)
+            return plain;
+        long sealedNow = SealedEstimate(plain, padUnit);
+        return Sealed is { } last ? Math.Max(sealedNow, SealedFootprint(last)) : sealedNow;
+    }
+
+    /// <summary>
+    /// How much this set's TOC footprint grows by one more entry of <paramref name="entryBytes"/> — the entry itself, plus
+    ///  for an encrypted set its share of the AEAD tags and chunk records (one each per MiB; generously rounded up).
+    /// </summary>
+    internal long EstimateEntryGrowth(long entryBytes)
+        => IsEncrypted ? entryBytes + entryBytes / 32_768 + 1 : entryBytes;
+
+    private static long SealedFootprint(TapeSealedPayload? sealedPayload)
+        => c_sealedStubMax + (sealedPayload is null ? 0L
+            : sealedPayload.CiphertextLength + (long)c_chunkRecordMax * sealedPayload.Chunks.Count);
+
+    private static long SealedEstimate(long content, int padUnit)
+    {
+        // Real plaintext: max(padUnit, roundUp(varuint + content, padUnit)) < content + 10 + padUnit.
+        long padded = content + 10 + Math.Max(1, padUnit);
+        long chunks = padded / TapeAead.MetaChunkSize + 1;
+        return c_sealedStubMax + TapeAead.CiphertextLength(padded, TapeAead.MetaChunkSize) + chunks * c_chunkRecordMax;
+    }
+}
+
+public partial class TapeTOC
+{
+    /// <summary>Upper bound of the TOC header record without its strings.</summary>
+    private const int c_tocHeaderMax = 128;
+
+    /// <summary>Upper bound of the end record plus the CRC-64 trailer.</summary>
+    private const int c_tocEndMax = 64;
+
+    /// <summary>
+    /// Upper bound of ONE copy of this TOC as written on tape (Design-TocReserve §1, TR-5): header, every set — plain,
+    ///  sealed or locked — and the end record. Pure, in memory, one pass over the entries.
+    /// </summary>
+    /// <remarks>
+    /// Not thread-safe against a set being appended to: a backup in progress estimates through its agent's running total
+    ///  instead (Design-TocReserve §4).
+    /// </remarks>
+    public long EstimateSerializedSize()
+    {
+        long size = c_tocHeaderMax + c_tocEndMax
+            + Math.Min(Encoding.UTF8.GetByteCount(Description ?? string.Empty), TocHeaderWire.MaxDescriptionBytes)
+            + Math.Min(Encoding.UTF8.GetByteCount(DefaultWrittenBy), TocHeaderWire.MaxWrittenByBytes);
+        foreach (TapeSetTOC set in m_setTOCs)
+            size += set.EstimateSerializedSize(SealPadUnit);
+        return size;
     }
 }
 
@@ -791,7 +1032,7 @@ internal static class TapeTextRules
     public static string ClampWellFormed(string? text, int maxBytes)
     {
         if (string.IsNullOrEmpty(text))
-            return "";
+            return string.Empty;
         if (!IsWellFormedUtf16(text))
             text = Encoding.UTF8.GetString(Encoding.UTF8.GetBytes(text));     // non-throwing UTF8: lone surrogate → U+FFFD
         return TapePrimitives.ClampToUtf8Bytes(text, maxBytes);

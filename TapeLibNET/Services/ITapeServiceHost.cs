@@ -28,6 +28,29 @@ public enum ServiceStateChange
     TOCSaveEnded     = 1 << 8,
 }
 
+
+// ── VolumeAction ──────────────────────────────────────────────────────────────
+
+/// <summary>
+/// The user's answer to a volume prompt of a multi-volume operation — <see cref="ITapeServiceHost.OnVolumeContinueSelect"/>
+///  and <see cref="ITapeServiceHost.OnVolumeErrorSelect"/>.
+/// </summary>
+public enum VolumeAction
+{
+    /// <summary>Insert the volume — the requested one, again, or another copy of it — and continue.</summary>
+    Insert,
+
+    /// <summary>
+    /// Go on without this volume: its files are not processed (restore / validate / verify only). Counted as skipped
+    ///  when chosen voluntarily, as failed after a volume error.
+    /// </summary>
+    Skip,
+
+    /// <summary>End the operation here. Everything processed so far stands.</summary>
+    End,
+}
+
+
 // ── ITapeServiceHost ──────────────────────────────────────────────────────────
 
 /// <summary>
@@ -107,14 +130,41 @@ public interface ITapeServiceHost
     // ── Structured operation prompts ─────────────────────────────────────────
 
     /// <summary>
-    /// Invoked during a multi-volume restore/validate/verify when the current volume is
-    ///  exhausted and the operation can continue on a different volume.
-    /// The host shows the appropriate media-change confirmation dialog and returns
-    ///  <see langword="true"/> to continue, <see langword="false"/> to end the operation.
+    /// Invoked during a multi-volume restore/validate/verify when the operation needs a different volume to continue.
+    ///  The host shows the media-change prompt and returns <see cref="VolumeAction.Insert"/> to load it,
+    ///  <see cref="VolumeAction.Skip"/> to go on without it (its files are counted as skipped), or
+    ///  <see cref="VolumeAction.End"/> to end the operation.
     /// </summary>
+    /// <remarks>HOST GUIDANCE: a non-interactive host should return <see cref="VolumeAction.End"/> — as before.</remarks>
     /// <param name="volumeNeeded">The volume number required to continue.</param>
-    /// <param name="mode">The restore operation mode — used to form the dialog title and button label.</param>
-    bool OnVolumeContinueConfirm(int volumeNeeded, RestoreMode mode);
+    /// <param name="mode">The restore operation mode — used to form the dialog title and button labels.</param>
+    VolumeAction OnVolumeContinueSelect(int volumeNeeded, RestoreMode mode);
+
+    /// <summary>
+    /// Invoked when a volume was LOADED and IDENTIFIED but cannot be used: restore cannot read it (its table of contents
+    ///  is unreadable or cannot be decrypted, or it does not hold the backup set the TOC describes); backup cannot write
+    ///  the first block of a fresh continuation volume (write-protected, damaged).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The third of three volume-level stages: <see cref="OnMediaLoadRetryConfirm"/> — the drive cannot LOAD the
+    ///  cartridge; <see cref="OnMediaMismatchConfirm"/> — its header IDENTIFIES it as the wrong one; this — loaded and
+    ///  identified, but its CONTENT is unusable.
+    /// </para>
+    /// <para>
+    /// <see cref="VolumeAction.Insert"/> re-runs the volume change (eject, insert, load, identify) for the same volume —
+    ///  a cleaned cartridge, or another copy. <see cref="VolumeAction.Skip"/>, offered only when
+    ///  <paramref name="allowSkip"/>, goes on without the volume; its files count as failed. A backup cannot skip a
+    ///  volume, so it passes <see langword="false"/> and treats a returned Skip as End.
+    /// </para>
+    /// <para>HOST GUIDANCE: a non-interactive host should return <see cref="VolumeAction.End"/> and log the decision —
+    ///  a retry would only fail again, and a skip silently gives up data.</para>
+    /// </remarks>
+    /// <param name="volume">The volume that cannot be used.</param>
+    /// <param name="errorMessage">Why — the agent's diagnosis.</param>
+    /// <param name="operationName">Human-readable operation name ("Restore", "Validate", "Verify", "Backup").</param>
+    /// <param name="allowSkip">Whether <see cref="VolumeAction.Skip"/> may be offered.</param>
+    VolumeAction OnVolumeErrorSelect(int volume, string errorMessage, string operationName, bool allowSkip);
 
     /// <summary>
     /// Invoked after the current volume has been ejected; the host prompts the user
@@ -239,6 +289,21 @@ public interface ITapeServiceHost
     /// </summary>
     /// <param name="nextVolume">Volume number for the new media.</param>
     bool OnInsertNewMediaConfirm(int nextVolume);
+
+    /// <summary>
+    /// Invoked by a destructive calibration after a cartridge holding a backup was ejected: the host prompts the user to
+    ///  insert a SCRATCH cartridge — one that will be erased. Returns <see langword="true"/> when it is ready,
+    ///  <see langword="false"/> to cancel the calibration.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Distinct from <see cref="OnInsertMediaConfirm"/> (a specific volume, to be read) and
+    ///  <see cref="OnInsertNewMediaConfirm"/> (the next backup volume): the host must warn that the cartridge will be
+    ///  erased, and — for virtual drives — must not suggest the file just ejected.
+    /// </para>
+    /// <para>HOST GUIDANCE: a non-interactive host should return <see langword="false"/>.</para>
+    /// </remarks>
+    bool OnInsertScratchMediaConfirm();
 
     /// <summary>
     /// Invoked when both the primary and the enforced TOC-save to tape have failed.

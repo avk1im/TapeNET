@@ -225,7 +225,7 @@ public class TapeHeaderFormatTests
     }
 
     [Fact]
-    public void Identify_21FileHeaderAtBlockStart_IsContent()
+    public void Identify_21FileHeaderAtBlockStart_IsFileHeader()
     {
         var file = new TapeFileInfo(1, TapeAddress.Zero, new TapeFileDescriptor(@"C:\data\a.txt")
         {
@@ -236,7 +236,10 @@ public class TapeHeaderFormatTests
         var block = new byte[TapeHeaderBlock.Size];
         ms.ToArray().CopyTo(block, 0);
 
-        Assert.Equal(HeaderBlockIdentity.Foreign, TapeHeaderBlock.IdentifyBlock(block, block.Length).Kind);
+        IdentifiedBlock id = TapeHeaderBlock.IdentifyBlock(block, block.Length);
+        Assert.Equal(HeaderBlockIdentity.FileHeader, id.Kind);
+        Assert.True(id.TryGetFile(out TapeFilePeek peek));
+        Assert.Equal(SetId, peek.SetId);
     }
 
     [Fact]

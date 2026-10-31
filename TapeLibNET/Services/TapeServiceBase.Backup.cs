@@ -1,12 +1,12 @@
 using TapeLibNET.Agents;
 using TapeLibNET.Compression;
 using TapeLibNET.Headers;
+using TapeLibNET.Media;
 using TapeLibNET.Toc;
 using Windows.Win32.System.SystemServices; // Helpers, Stopwatch
 using Stopwatch = Windows.Win32.System.SystemServices.Stopwatch;
 
 namespace TapeLibNET.Services;
-
 
 public partial class TapeServiceBase
 {
@@ -63,6 +63,7 @@ public partial class TapeServiceBase
         ServiceBackupProgressHandler? progressHandler = null;
         TapeFileBackupAgent? agent = null;
         TapeResult agentResult = TapeResult.OK; // Note TapeResult.OK, NOT default — a default TapeResult means FAILURE
+        List<VolumeEnd> volumeEnds = [];        // Design-TocReserve §9.6: why each volume ended before the files did
 
         // +-------------------------------+--------------------------------------+-----------------------------------------------+
         // | Figure                        | Scope                                | Notes                                         |
@@ -102,7 +103,10 @@ public partial class TapeServiceBase
                 Outcome = aborted ? ServiceReportLevel.Failed
                                     : failed ? ServiceReportLevel.Error
                                         : ServiceReportLevel.Completed,
-                Sets = progressHandler?.SetStats ?? new(),
+                SetStats = progressHandler?.SetStats ?? new(),
+                TocStats = agent is null ? default : agent.Statistics.TocStats,
+                TocAnomalies = agent is null ? [] : [.. agent.TocAnomalies],
+                VolumeEnds = [.. volumeEnds],
             };
 
         if (_drive is null || !_drive.IsMediaLoaded)
@@ -134,7 +138,16 @@ public partial class TapeServiceBase
                 throw new InvalidOperationException($"Couldn't prepare media: {LastError}");
             }
 
-            bool append = request.AppendMode && _toc != null;
+            // An append needs the TOC that says where content ends. Without one, refuse — do not just overwrite!
+            if (request.AppendMode && _toc is null)
+            {
+                LastError = "Cannot append: no table of contents is loaded — load it (or recover it with Scan Media) first";
+                LogErr(LastError);
+                OnStatusUpdate("Backup refused");
+                return MakeResult(failed: true,
+                    diagnosis: TapeResult.Fail((uint)Windows.Win32.Foundation.WIN32_ERROR.ERROR_INVALID_STATE, LastError));
+            }
+            bool append = request.AppendMode;
 
             // --- TOC preparation ---
             // Three modes:
@@ -156,8 +169,8 @@ public partial class TapeServiceBase
             agent.WritesMediaHeader = true; // the agent heads only at fresh-volume starts (append leaves it alone)
             agent.CorrectsSetNavigation = request.CorrectSetNavigation;  // default true
             agent.VerifiesSetHeader = request.VerifySetHeader; // default true
-
             var toc = agent.TOC;
+
             TapeTOC? backupTOC = null;
             bool appendAfterSetUsed = false;
             int appendAfterSetIndex = toc.SetIndexToStd(request.AppendAfterSetIndex); // ensure std form
@@ -203,7 +216,6 @@ public partial class TapeServiceBase
                 appendAfterSetUsed = true;
                 toc.CurrentSetIndex = appendAfterSetIndex + 1;
                 toc.ReplaceCurrentSetTOC(capacityHint, request.Incremental);
-
                 reusingReplacedSlot = true;
             }
             // Mode 3: Overwrite — warn before destroying real content, then save a rollback copy.
@@ -271,7 +283,6 @@ public partial class TapeServiceBase
             toc.CurrentSetTOC.BlockSize = request.BlockSize;
             toc.CurrentSetTOC.Compression = request.Compression;
             toc.CurrentSetTOC.CompressionLevel = request.CompressionLevel;
-
             int startVolume = toc.Volume;
 
             LogInfo($"Backup set: >{request.Description}<");
@@ -286,17 +297,108 @@ public partial class TapeServiceBase
 
             // Create progress handler via the overridable factory
             progressHandler = CreateBackupProgressHandler(agent, request.SkipAllErrors, request.Filter);
-
             OnStatusUpdate("Backing up files...");
+
+            // Steps 2–5 of a volume change: eject, insert a FRESH cartridge, load it, verify it is fresh. Retry re-runs
+            //  the cycle. Returns false when the user cancels. Shared by the normal continuation and by the retry after
+            //  a rejected continuation cartridge.
+            //  (The agent heads the fresh volume inside ResumeBackupToNextVolume → BeginWriteContentForCurrentSet,
+            //  per §17.10 — the service never writes the continuation header itself.)
+            bool SwapToFreshVolume()
+            {
+                do
+                {
+                    // Step 2: Eject current media
+                    LogInfo("Ejecting media...");
+                    OnStatusUpdate("Ejecting media...");
+                    if (!_drive.UnloadMedia())
+                        throw new InvalidOperationException($"Couldn't eject media: {_drive.LastErrorMessage}");
+                    LogOk($"Volume #{toc.Volume} ejected");
+
+                    // Step 3: Ask user to insert new media
+                    if (!_host.OnInsertNewMediaConfirm(toc.Volume + 1))
+                    {
+                        LogInfo("User cancelled media insertion");
+                        return false;
+                    }
+
+                    // Step 4: Load and prepare the new media (with load-retry)
+                    LogInfo("Loading media...");
+                    OnStatusUpdate("Loading media...");
+
+                    const int maxLoadAttempts = 2;
+                    bool mediaLoaded = false;
+                    for (int loadAttempt = 1; loadAttempt <= maxLoadAttempts && !mediaLoaded; loadAttempt++)
+                    {
+                        bool loadOk = _drive.ReloadMedia();
+                        string loadErr = _drive.LastErrorMessage;
+
+                        if (loadOk && !_drive.PrepareMedia())
+                        {
+                            loadOk = false;
+                            loadErr = _drive.LastErrorMessage;
+                        }
+
+                        if (loadOk)
+                        {
+                            mediaLoaded = true;
+                        }
+                        else
+                        {
+                            LogErr($"Couldn't load media: {loadErr}");
+
+                            bool retryLoad = loadAttempt < maxLoadAttempts
+                                && _host.OnMediaLoadRetryConfirm(loadErr, loadAttempt > 1);
+
+                            if (!retryLoad)
+                                throw new InvalidOperationException($"Couldn't load media: {loadErr}");
+
+                            LogInfo("Retrying media load...");
+                            OnStatusUpdate("Loading media...");
+                        }
+                    }
+
+                    // Step 5 (§10.5 checkpoint 3): verify the continuation volume's identity.
+                    //  Deliberately NOT routed through EvaluateLoadedHeader: this checkpoint INVERTS the usual
+                    //  rule — a MATCHING MediaId means WrongVolume here, because a continuation needs a FRESH
+                    //  cartridge, and an earlier volume of our own series is exactly what must not be overwritten.
+                    //  Skip the header test if ProceedOnMediaMismatch was set by the caller.
+                    if (!request.ProceedOnMediaMismatch)
+                        RefreshLoadedHeader();
+                    else
+                        _loadedHeader = null; // treat the volume as blank
+
+                    TapeMediaVerdict cvVerdict = _loadedHeader switch
+                    {
+                        null => TapeMediaVerdict.Unidentified,   // blank fresh volume — ideal
+                        TapeCalibrationHeader => TapeMediaVerdict.WrongKind,
+                        TapeMediaHeader m when m.MediaId == toc.MediaId => TapeMediaVerdict.WrongVolume,     // an earlier volume of THIS series
+                        _ => TapeMediaVerdict.MediaIdMismatch, // a different backup
+                    };
+
+                    var cvChoice = PresentVerdict(
+                        cvVerdict, MediaPromptContext.ContinuationVolume, suppress, allowRetry: true);
+                    if (cvChoice == MediaMismatchChoice.Abort)
+                        return false;
+                    if (cvChoice == MediaMismatchChoice.Retry)
+                        continue;   // re-eject, re-insert
+                    if (cvChoice == MediaMismatchChoice.ProceedAlways)
+                        suppress = true;
+                    return true;    // Proceed
+                } while (true);
+            }
 
             // --- Backup loop (handles multi-volume) ---
             // After each iteration:
             //  result=true  → all files processed successfully
-            //  result=false → abort, volume full (CanResumeToNextVolume), or hard failure
-            // In all cases, the TOC must be cleaned up and saved to tape.
+            //  result=false → abort, volume full (CanResumeToNextVolume), rejected continuation cartridge
+            //                 (IsVolumeRejected), or hard failure
+            // In all cases but the rejected cartridge, the TOC must be cleaned up and saved to tape.
 
             // Outcomes declared outside of the loop so that the exits after the loop can read it
             bool wasAborted = false;
+            bool endedOnRejectedVolume = false;
+            bool endedByUser = false;       // the user ended the series before every file was written
 
             // Timing — accumulate data and TOC times separately across multi-volume iterations;
             //  user interaction time between volumes is excluded
@@ -309,17 +411,16 @@ public partial class TapeServiceBase
             do // the multivolume loop — breaks on abort, no more volumes, or user cancels
             {
                 // --- Invoke the agent ---
+                //  IsMultiVolumePending, not CanResumeToNextVolume: a REJECTED continuation is retried by resuming too
                 _drive.IoTimeCounterUs = 0; // reset I/O time counter for this volume
                 dataTimer.Restart();
-
-                agentResult = agent.CanResumeToNextVolume
+                agentResult = agent.IsMultiVolumePending
                     ? agent.ResumeBackupToNextVolume()
                     : request.ListContainsPatterns
                         ? agent.BackupFilesToCurrentSet(newSet, request.FileList, request.IncludeSubdirectories,
                               ignoreFailures: true, progressHandler)
                         : agent.BackupFileListToCurrentSet(newSet, request.FileList,
                               ignoreFailures: true, progressHandler);
-
                 dataTimer.Stop();
                 dataElapsedUs += dataTimer.ElapsedMicroseconds;
                 dataIoElapsedUs += _drive.IoTimeCounterUs;
@@ -329,6 +430,41 @@ public partial class TapeServiceBase
                 // The agent catches TapeAbortRequestedException internally and returns false,
                 //  so abort is detected via the flag rather than catching the exception.
                 wasAborted = agent.IsAbortRequested;
+
+                // --- The fresh continuation cartridge cannot be written ---
+                //  Nothing of this backup reached it, and the agent has rolled the TOC back to the previous volume, whose
+                //  TOC is already saved. So: no TOC cleanup, and NEVER a TOC save onto the refused cartridge. Ask the
+                //  user — another cartridge, or end the backup here. (No Skip: a backup can only go on with a volume.)
+                if (agent.IsVolumeRejected)
+                {
+                    LogErr(agentResult.ErrorMessage);
+                    LogInfoSub($"Nothing was written to it — volume #{toc.Volume} and its TOC are intact");
+
+                    if (wasAborted)
+                    {
+                        endedOnRejectedVolume = true;
+                        break;
+                    }
+
+                    var action = _host.OnVolumeErrorSelect(toc.Volume + 1, agentResult.ErrorMessage, "Backup",
+                        allowSkip: false);
+                    if (action != VolumeAction.Insert)   // End — and Skip, which a backup cannot honour
+                    {
+                        LogInfo("User chose to end multi-volume backup");
+                        endedOnRejectedVolume = true;
+                        break;
+                    }
+                    if (!SwapToFreshVolume())
+                    {
+                        endedOnRejectedVolume = true;
+                        break;
+                    }
+                    LogOk("Media loaded, retrying the continuation...");
+                    continue;   // → ResumeBackupToNextVolume on the new cartridge
+                }
+
+                if (agent.CanResumeToNextVolume || agent.FreshVolumeTookNoFile)
+                    volumeEnds.Add(new VolumeEnd(toc.Volume, agent.VolumeEndReason));
 
                 bool noFilesBackedUp = toc.CurrentSetTOC.Count == 0;
                 bool skipTOCSave = false;
@@ -410,11 +546,19 @@ public partial class TapeServiceBase
                     }
                 } // if (noFilesBackedUp)
 
-                // 2. Log volume-full status (applies regardless of file count)
-                //    Check CanResumeToNextVolume to determine if the backup can continue on a new volume.
+                // 2. Log volume-full status (applies regardless of file count) — with the reason when it is not the
+                //    medium's end (Design-TocReserve §9.6)
                 if (agent.CanResumeToNextVolume)
                 {
-                    if (!request.NoMultivolume)
+                    if (agent.VolumeEndReason == ContentStopReason.TocPartitionFull)
+                    {
+                        LogWarn($"Volume #{toc.Volume} ends early: its TOC partition " +
+                                $"({Helpers.BytesToString(_drive.InitiatorCapacity)}) is full");
+                        if (!request.NoMultivolume)
+                            LogWarnSub("Continue on a cartridge with a larger TOC partition — one of the same size " +
+                                       "cannot take more files of this series");
+                    }
+                    else if (!request.NoMultivolume)
                         LogInfo($"Volume #{toc.Volume} is full - backup can continue to next volume");
                     else
                         LogInfo($"Volume #{toc.Volume} is full - backup will complete (no-multivolume mode)");
@@ -470,19 +614,17 @@ public partial class TapeServiceBase
                         }
 
                         // --- Invoke the agent to save the TOC ---
-                        var tocResult = SaveTocCore(agent);
-
+                        var tocResult = SaveTocCore(agent, tocNotify: progressHandler);
                         if (!tocResult)
                         {
                             LogErr($"Couldn't backup TOC. Error: {tocResult.ErrorMessage}");
-
                             // A TOC failure outranks a clean file loop in the headline: every file is on
                             //  tape, and none of them is reachable without a TOC!
                             if (agentResult.Success)
                                 agentResult = tocResult;
 
                             LogInfo("Attempting to enforce TOC backup...");
-                            var enforceResult = SaveTocCore(agent, enforce: true);
+                            var enforceResult = SaveTocCore(agent, enforce: true, tocNotify: progressHandler);
                             if (!enforceResult)
                             {
                                 LogErr("Couldn't enforce TOC backup");
@@ -562,11 +704,13 @@ public partial class TapeServiceBase
                             $"{resultSoFar.FilesTotal:N0} file(s) written so far");
                     LogInfoSub($"{Helpers.BytesToStringLong(agent.BytesBackedupInCurrentSet)} written to this volume");
                 }
-                else
+                else if (!agent.FreshVolumeTookNoFile)      // a stopped series reports once, after the loop
                 {
                     // The whole operation outcome
                     ReportFileOperationOutcome(resultSoFar, "Backup");
                     ReportSetAnomalyOutcome(progressHandler.SetStats);
+                    ReportTocAnomalyOutcome(agent);
+                    ReportVolumeSpaceOutcome(volumeEnds, seriesStopped: false);
                 }
 
                 // Current statistics we report for each volume.
@@ -574,6 +718,7 @@ public partial class TapeServiceBase
                     dataSecs: dataElapsedUs / 1e6, ioSecs: dataIoElapsedUs / 1e6, tocSecs: tocElapsedUs / 1e6);
 
                 // --- Check for finish conditions ---
+
                 // If backup was aborted, TOC has been saved — break out
                 if (wasAborted)
                     break;
@@ -590,98 +735,25 @@ public partial class TapeServiceBase
                 }
 
                 // --- Handle media swap for multivolume continuation ---
+
+                // --- Handle media swap for multivolume continuation ---
                 // Step 1: Ask user if they want to continue on a new volume
                 if (!_host.OnVolumeFullConfirm(toc.Volume, toc.Volume + 1,
                         progressHandler.FilesProcessed, progressHandler.FilesTotal,
                         progressHandler.BytesProcessed, progressHandler.BytesTotal))
                 {
                     LogInfo("User chose to end multi-volume backup");
+                    endedByUser = true;
                     break;
                 }
 
                 // Steps 2–5: eject, insert, load, and verify the fresh volume's identity.
-                //  Retry re-runs the whole cycle; Abort / user-cancel exits the outer multi-volume loop.
-                //  (The agent heads the fresh volume inside ResumeBackupToNextVolume → BeginWriteContentForCurrentSet,
-                //  per §17.10 — the service never writes the continuation header itself.)
-                bool cancelled = false;
-                do
+                //  A cancelled insertion or an Abort at the identity check ends the series here.
+                if (!SwapToFreshVolume())
                 {
-                    // Step 2: Eject current media
-                    LogInfo("Ejecting media...");
-                    OnStatusUpdate("Ejecting media...");
-                    if (!_drive.UnloadMedia())
-                        throw new InvalidOperationException($"Couldn't eject media: {_drive.LastErrorMessage}");
-
-                    LogOk($"Volume #{toc.Volume} ejected");
-
-                    // Step 3: Ask user to insert new media
-                    if (!_host.OnInsertNewMediaConfirm(toc.Volume + 1))
-                    {
-                        LogInfo("User cancelled media insertion");
-                        cancelled = true;
-                        break;
-                    }
-
-                    // Step 4: Load and prepare the new media (with load-retry)
-                    LogInfo("Loading media...");
-                    OnStatusUpdate("Loading media...");
-
-                    const int maxLoadAttempts = 2;
-                    bool mediaLoaded = false;
-                    for (int loadAttempt = 1; loadAttempt <= maxLoadAttempts && !mediaLoaded; loadAttempt++)
-                    {
-                        bool loadOk = _drive.ReloadMedia();
-                        string loadErr = _drive.LastErrorMessage;
-                        if (loadOk && !_drive.PrepareMedia())
-                        {
-                            loadOk = false;
-                            loadErr = _drive.LastErrorMessage;
-                        }
-
-                        if (loadOk)
-                        {
-                            mediaLoaded = true;
-                        }
-                        else
-                        {
-                            LogErr($"Couldn't load media: {loadErr}");
-                            bool retryLoad = loadAttempt < maxLoadAttempts
-                                && _host.OnMediaLoadRetryConfirm(loadErr, loadAttempt > 1);
-                            if (!retryLoad)
-                                throw new InvalidOperationException($"Couldn't load media: {loadErr}");
-
-                            LogInfo("Retrying media load...");
-                            OnStatusUpdate("Loading media...");
-                        }
-                    }
-
-                    // Step 5 (§10.5 checkpoint 3): verify the continuation volume's identity.
-                    //  Deliberately NOT routed through EvaluateLoadedHeader: this checkpoint INVERTS the usual
-                    //  rule — a MATCHING MediaId means WrongVolume here, because a continuation needs a FRESH
-                    //  cartridge, and an earlier volume of our own series is exactly what must not be overwritten.
-                    //  Skip the header test if ProceedOnMediaMismatch was set by the caller.
-                    if (!request.ProceedOnMediaMismatch)
-                        RefreshLoadedHeader();
-                    else
-                        _loadedHeader = null; // treat the volume as blank
-                    TapeMediaVerdict cvVerdict = _loadedHeader switch
-                    {
-                        null => TapeMediaVerdict.Unidentified,   // blank fresh volume — ideal
-                        TapeCalibrationHeader => TapeMediaVerdict.WrongKind,
-                        TapeMediaHeader m when m.MediaId == toc.MediaId => TapeMediaVerdict.WrongVolume,     // an earlier volume of THIS series
-                        _ => TapeMediaVerdict.MediaIdMismatch, // a different backup
-                    };
-
-                    var cvChoice = PresentVerdict(
-                        cvVerdict, MediaPromptContext.ContinuationVolume, suppress, allowRetry: true);
-                    if (cvChoice == MediaMismatchChoice.Abort) { cancelled = true; break; }
-                    if (cvChoice == MediaMismatchChoice.Retry) continue;   // re-eject, re-insert
-                    if (cvChoice == MediaMismatchChoice.ProceedAlways) suppress = true;
-                    break; // Proceed
-                } while (true);
-
-                if (cancelled)
+                    endedByUser = true;
                     break; // exit the outer multi-volume do-while
+                }
 
                 LogOk("Media loaded, continuing backup...");
 
@@ -694,6 +766,30 @@ public partial class TapeServiceBase
             int volumes = toc.Volume - startVolume + 1;
             if (volumes > 0)
                 LogInfoSub($"Across {volumes} volume(s)");
+
+            bool seriesStopped = agent.FreshVolumeTookNoFile;
+            if (endedOnRejectedVolume || endedByUser || seriesStopped)
+            {
+                // The backup ends on the last volume that took data; its TOC was saved before the volume change. The files
+                //  after it were never written: the operation did not do what was asked, whoever ended it. A stopped series
+                //  keeps the agent's diagnosis; the advice below says what to do.
+                int lastWithData = seriesStopped ? toc.Volume - 1 : toc.Volume;
+                int notBackedUp = Math.Max(0, progressHandler.FilesTotal - progressHandler.FilesProcessed);
+                string why = $"Backup ended after volume #{lastWithData} — {notBackedUp:N0} file(s) not backed up";
+                var ended = MakeResult(aborted: wasAborted, failed: !wasAborted,
+                    // A rejected cartridge keeps the agent's diagnosis (it names the volume); a user's decision gets its own.
+                    diagnosis: endedByUser && !wasAborted
+                        ? TapeResult.Fail((uint)Windows.Win32.Foundation.WIN32_ERROR.ERROR_END_OF_MEDIA, why)
+                        : null);
+                ReportFileOperationOutcome(ended, "Backup");
+                ReportBackupStats(ended,
+                    dataSecs: dataElapsedUs / 1e6, ioSecs: dataIoElapsedUs / 1e6, tocSecs: tocElapsedUs / 1e6);
+                ReportTocAnomalyOutcome(agent);
+                ReportVolumeSpaceOutcome(volumeEnds, seriesStopped);
+                LogFail(why);
+                OnStatusUpdate(wasAborted ? "Backup aborted" : "Backup ended");
+                return ended;
+            }
 
             if (wasAborted)
             {
@@ -714,7 +810,6 @@ public partial class TapeServiceBase
             }
 
             var backupResult = MakeResult();
-
             if (backupResult is { HasFailed: true })
                 LogFail("Backup completed with failures");
             else if (backupResult is { IsFullSuccess: true })
@@ -770,7 +865,6 @@ public partial class TapeServiceBase
         var sanitized = new string(
                 [.. (toc.Description ?? "tape").Select(c => invalidChars.Contains(c) ? '_' : c)]
             ).Trim();
-
         if (string.IsNullOrWhiteSpace(sanitized))
             sanitized = "tape";
 
@@ -782,6 +876,7 @@ public partial class TapeServiceBase
         var directory = !string.IsNullOrWhiteSpace(folderHint) && Directory.Exists(folderHint)
             ? folderHint
             : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+
         return Path.Combine(directory, fileName);
     }
 }

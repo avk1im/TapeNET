@@ -114,7 +114,7 @@ public partial class TapeAgentBase
 
     /// <summary>
     /// Set anomalies observed during the current operation, corrected or not — the records behind
-    ///  <see cref="TapeFileStatistics.Sets"/>'s counters. It's a forensic trail of all anomaly
+    ///  <see cref="TapeFileStatistics.SetStats"/>'s counters. It's a forensic trail of all anomaly
     ///  reports - hence a single anomaly can be registered several times as we attempt to correct it.
     ///  Therefore, <c><see cref="SetAnomalies"/>.Count >= <see cref="TapeSetStatistics.AnomaliesDetected"/></c>
     ///  (as contained by <see cref="_stats"/>) by design.
@@ -195,8 +195,9 @@ public partial class TapeAgentBase
             return TapeSetHeaderVerdict.SetIndexDrift;
 
         // Design-FormatV21 §5.4. Both ids must be known: legacy set headers and legacy TOC sets carry none.
+        //  IsVacant, not Count: a delete verifies LOCKED sets, whose count is hidden (Design-Encryption §6.2).
         TapeSetTOC expectedSet = TOC.CurrentSetTOC;
-        if (header.SetId != Guid.Empty && expectedSet.SetId != Guid.Empty && expectedSet.Count > 0
+        if (header.SetId != Guid.Empty && expectedSet.SetId != Guid.Empty && !expectedSet.IsVacant
             && header.SetId != expectedSet.SetId)
             return TapeSetHeaderVerdict.SetIdMismatch;
 
@@ -251,8 +252,8 @@ public partial class TapeAgentBase
     ///  once a recovery has repositioned.
     /// </para>
     /// </remarks>
-    /// <param name="fileNotify">Optional callback, for the set-level anomaly channel.</param>
-    protected bool VerifySetHeaderForCurrentSet(ITapeFileNotifiable? fileNotify)
+    /// <param name="setNotify">Optional callback, for the set-level anomaly channel.</param>
+    protected bool VerifySetHeaderForCurrentSet(ITapeSetNotifiable? setNotify)
     {
         // Capture the anchor NOW: stage 1 rewrites TargetContentSet (see the remarks).
         bool endAnchored = Navigator.TargetContentSet < 0;
@@ -268,7 +269,7 @@ public partial class TapeAgentBase
             && CorrectsSetNavigation
             && verdict is TapeSetHeaderVerdict.SetIndexDrift or TapeSetHeaderVerdict.Unreadable;
 
-        var outcome = HandleSetHeaderVerdict(verdict, header, recoveryAvailable: canRenavigate, fileNotify);
+        var outcome = HandleSetHeaderVerdict(verdict, header, recoveryAvailable: canRenavigate, setNotify);
         if (outcome == SetVerdictOutcome.Proceed)
             return true;
         if (outcome == SetVerdictOutcome.Terminal)
@@ -309,7 +310,7 @@ public partial class TapeAgentBase
         header = ReadSetHeader();
         verdict = ClassifySetHeader(header);
 
-        if (HandleSetHeaderVerdict(verdict, header, recoveryAvailable: false, fileNotify)
+        if (HandleSetHeaderVerdict(verdict, header, recoveryAvailable: false, setNotify)
                 != SetVerdictOutcome.Proceed)
             return false;
 
@@ -318,7 +319,7 @@ public partial class TapeAgentBase
         //  and the second is the one that argues for retiring it (SH-16).
         if (verdict == TapeSetHeaderVerdict.Match)
         {
-            NotifySetAnomalyRecovered(fileNotify,
+            NotifySetAnomalyRecovered(setNotify,
                 BuildSetAnomaly(TapeSetHeaderVerdict.SetIndexDrift, header,
                     TapeSetAnomalyStage.Renavigated, canAttemptRecovery: false,
                     diagnosis: TapeResult.OK)); // <- sic!
@@ -337,7 +338,7 @@ public partial class TapeAgentBase
     ///  happened to be current. Returns the notifiable's answer.
     /// </summary>
     private SetAnomalyAction RaiseSetAnomaly(TapeSetHeaderVerdict verdict, TapeSetHeader? header,
-        ITapeFileNotifiable? fileNotify, WIN32_ERROR error, string message, bool canAttemptRecovery = false)
+        ITapeSetNotifiable? setNotify, WIN32_ERROR error, string message, bool canAttemptRecovery = false)
     {
         m_logger.LogError("Set #{Set}: {Message}", TOC.CurrentSetIndex, message);
         SetError(error, message);
@@ -348,7 +349,7 @@ public partial class TapeAgentBase
                   : m_correctingSetNavigation ? TapeSetAnomalyStage.Delta
                   : TapeSetAnomalyStage.Detected;
 
-        return NotifySetAnomaly(fileNotify, BuildSetAnomaly(verdict, header, stage, canAttemptRecovery));
+        return NotifySetAnomaly(setNotify, BuildSetAnomaly(verdict, header, stage, canAttemptRecovery));
     }
 
     /// <summary>
@@ -357,12 +358,12 @@ public partial class TapeAgentBase
     ///  <see cref="IsAbortRequested"/>, which is what turns the diagnosis into <c>ERROR_CANCELLED</c>.
     /// </summary>
     private bool RejectSet(TapeSetHeaderVerdict verdict, TapeSetHeader? header,
-        ITapeFileNotifiable? fileNotify, WIN32_ERROR error, string message)
+        ITapeSetNotifiable? setNotify, WIN32_ERROR error, string message)
     {
-        RaiseSetAnomaly(verdict, header, fileNotify, error, message, canAttemptRecovery: false);
+        RaiseSetAnomaly(verdict, header, setNotify, error, message, canAttemptRecovery: false);
 
         if (BlocksOnUnverifiableSet)
-            _stats.Sets.SetWriteBlocked = true; // a destructive write was actually refused
+            _stats.SetStats.SetWriteBlocked = true; // a destructive write was actually refused
         return false;
     }
 
@@ -398,14 +399,14 @@ public partial class TapeAgentBase
     /// <param name="verdict">The classification from <see cref="ClassifySetHeader"/>.</param>
     /// <param name="header">The header that produced it; <see langword="null"/> when unreadable.</param>
     /// <param name="recoveryAvailable">Whether a recovery stage remains untried for this verdict.</param>
-    /// <param name="fileNotify">Optional callback, for the set-level anomaly channel.</param>
+    /// <param name="setNotify">Optional callback, for the set-level anomaly channel.</param>
     private SetVerdictOutcome HandleSetHeaderVerdict(TapeSetHeaderVerdict verdict, TapeSetHeader? header,
-        bool recoveryAvailable, ITapeFileNotifiable? fileNotify)
+        bool recoveryAvailable, ITapeSetNotifiable? setNotify)
     {
         SetVerdictOutcome TerminalHere()
         {
             if (BlocksOnUnverifiableSet)
-                _stats.Sets.SetWriteBlocked = true; // RejectSet() sets this, too, but just to be sure
+                _stats.SetStats.SetWriteBlocked = true; // RejectSet() sets this, too, but just to be sure
             return SetVerdictOutcome.Terminal;
         }
 
@@ -422,11 +423,14 @@ public partial class TapeAgentBase
                         "Advisory only — attribution can legitimately shift after a TOC import",
                         TOC.CurrentSetIndex, header.GlobalSetIndex);
 
-                if (header.SetBlockSize != TOC.CurrentSetTOC.BlockSize)
+                // An encrypted set hides its block size: the header carries 0, a locked set throws (§5.6, E6).
+                if (header.Encryption == Encryption.TapeEncryption.None && !TOC.CurrentSetTOC.IsLocked
+                    && header.SetBlockSize != TOC.CurrentSetTOC.BlockSize)
                     m_logger.LogWarning(
                         "Set header block size differs for set #{Set}: header says {Actual} B, TOC says {Expected} B. " +
                         "Advisory only — the TOC stays authoritative",
                         TOC.CurrentSetIndex, header.SetBlockSize, TOC.CurrentSetTOC.BlockSize);
+
                 return SetVerdictOutcome.Proceed;
 
             case TapeSetHeaderVerdict.Unreadable:
@@ -435,7 +439,7 @@ public partial class TapeAgentBase
                 //  a damaged tail, which is what the renavigation escapes.
                 if (recoveryAvailable)
                 {
-                    RaiseSetAnomaly(verdict, header, fileNotify, WIN32_ERROR.ERROR_INVALID_DATA,
+                    RaiseSetAnomaly(verdict, header, setNotify, WIN32_ERROR.ERROR_INVALID_DATA,
                         "set header could not be read or classified — renavigating before deciding",
                         canAttemptRecovery: true);
                     return IsAbortRequested ? SetVerdictOutcome.Terminal : SetVerdictOutcome.Recoverable;
@@ -446,7 +450,7 @@ public partial class TapeAgentBase
                 //   presumed set start is the miscount's own signature — not a lost safety net.
                 if (BlocksOnUnverifiableSet)
                 {
-                    RejectSet(verdict, header, fileNotify, WIN32_ERROR.ERROR_INVALID_DATA,
+                    RejectSet(verdict, header, setNotify, WIN32_ERROR.ERROR_INVALID_DATA,
                         "set header could not be read or classified — refusing a destructive write at " +
                         "an unconfirmed position");
                     return TerminalHere();
@@ -478,7 +482,7 @@ public partial class TapeAgentBase
             case TapeSetHeaderVerdict.WrongMedia:
                 // Every in-memory assumption is void, the TOC included — nothing is correctable, and
                 //  moving the head on a foreign cartridge is the last thing anyone wants.
-                RejectSet(verdict, header, fileNotify, WIN32_ERROR.ERROR_INVALID_DATA,
+                RejectSet(verdict, header, setNotify, WIN32_ERROR.ERROR_INVALID_DATA,
                     $"media identity mismatch — header carries media id {header!.MediaId:N}, expected " +
                     $"{TOC.MediaId:N}; the cartridge appears to have been swapped mid-operation");
                 return TerminalHere();
@@ -486,7 +490,7 @@ public partial class TapeAgentBase
             case TapeSetHeaderVerdict.WrongVolume:
                 // File addresses are physical-per-volume, so every address in the TOC would resolve to
                 //  garbage on this volume.
-                RejectSet(verdict, header, fileNotify, WIN32_ERROR.ERROR_INVALID_DATA,
+                RejectSet(verdict, header, setNotify, WIN32_ERROR.ERROR_INVALID_DATA,
                     $"volume mismatch — tape carries volume {header!.Volume}, expected volume {TOC.Volume}");
                 return TerminalHere();
 
@@ -494,7 +498,7 @@ public partial class TapeAgentBase
                 // Right cartridge, right position — another set. The TOC describes a set this tape does not hold
                 //  (stale or foreign TOC). No repositioning can help, and a destructive write here would destroy a
                 //  set nobody asked to replace.
-                RejectSet(verdict, header, fileNotify, WIN32_ERROR.ERROR_INVALID_DATA,
+                RejectSet(verdict, header, setNotify, WIN32_ERROR.ERROR_INVALID_DATA,
                     $"set identity mismatch — the set at this position carries set id {header!.SetId:N}, the TOC " +
                     $"expects {TOC.CurrentSetTOC.SetId:N}; the TOC may be stale or belong to another tape");
                 return TerminalHere();
@@ -506,7 +510,7 @@ public partial class TapeAgentBase
 
                 // Composed for the TERMINAL case and set BEFORE the prompt, so the caller / host sees a real
                 //  diagnosis while deciding. A stage that settles clears it again.
-                var action = RaiseSetAnomaly(verdict, header, fileNotify, WIN32_ERROR.ERROR_INVALID_DATA,
+                var action = RaiseSetAnomaly(verdict, header, setNotify, WIN32_ERROR.ERROR_INVALID_DATA,
                     $"set navigation drift — positioned at on-volume set {header!.VolumeSetIndex}, " +
                     $"expected {TOC.CurrentSetIndexOnVolume} " +
                     $"(delta {TOC.CurrentSetIndexOnVolume - header.VolumeSetIndex})" +
@@ -519,7 +523,7 @@ public partial class TapeAgentBase
                     return TerminalHere();     // the user declined; do not move the head
 
                 // Stage 1: believe the header and move the delta.
-                if (canCorrect && CorrectSetNavigation(header, recoveryAvailable, fileNotify))
+                if (canCorrect && CorrectSetNavigation(header, recoveryAvailable, setNotify))
                     return SetVerdictOutcome.Proceed;
 
                 // Unsettled. Stage 2 may still rescue it; otherwise the error above stands.
@@ -560,8 +564,8 @@ public partial class TapeAgentBase
     ///  <see cref="ClassifySetHeader"/>, which is what makes the drift interpretable as positional (SH-9).
     /// </param>
     /// <param name="recoveryAvailable">Passed through, so a re-verify failure defers its terminal action.</param>
-    /// <param name="fileNotify">Optional callback, for the set-level anomaly channel.</param>
-    private bool CorrectSetNavigation(TapeSetHeader header, bool recoveryAvailable, ITapeFileNotifiable? fileNotify)
+    /// <param name="setNotify">Optional callback, for the set-level anomaly channel.</param>
+    private bool CorrectSetNavigation(TapeSetHeader header, bool recoveryAvailable, ITapeSetNotifiable? setNotify)
     {
         int actual = header.VolumeSetIndex;
         int expected = TOC.CurrentSetIndexOnVolume;
@@ -605,7 +609,7 @@ public partial class TapeAgentBase
                     TOC.CurrentSetIndex, verdict);
                 // Route through the ladder so each failure mode keeps its own diagnosis and error code.
                 //  A drift here re-enters this method, which the guard turns into a clean stop.
-                return HandleSetHeaderVerdict(verdict, againHeader, recoveryAvailable, fileNotify)
+                return HandleSetHeaderVerdict(verdict, againHeader, recoveryAvailable, setNotify)
                     == SetVerdictOutcome.Proceed;
             }
 
@@ -617,7 +621,7 @@ public partial class TapeAgentBase
             // Report BEFORE ResetError(): the payload's Diagnosis names the fault that was REPAIRED, which is
             //  the whole content of a recovery notification. Clearing first would hand the host a failure
             //  with no code and no message.
-            NotifySetAnomalyRecovered(fileNotify,
+            NotifySetAnomalyRecovered(setNotify,
                 BuildSetAnomaly(TapeSetHeaderVerdict.SetIndexDrift, againHeader,
                     m_renavigatedFromBom ? TapeSetAnomalyStage.Renavigated : TapeSetAnomalyStage.Delta,
                     canAttemptRecovery: false, diagnosis: TapeResult.OK)); // <- sic!
@@ -687,8 +691,8 @@ public partial class TapeAgentBase
     ///  is what just proved unreliable.
     /// </para>
     /// </remarks>
-    /// <param name="fileNotify">Optional callback, for the set-level anomaly channel.</param>
-    protected bool NavigateToTargetContentSet(ITapeFileNotifiable? fileNotify)
+    /// <param name="setNotify">Optional callback, for the set-level anomaly channel.</param>
+    protected bool NavigateToTargetContentSet(ITapeSetNotifiable? setNotify)
     {
         // Capture the anchor BEFORE moving: a failed move resets the navigator, and the retry below
         //  rewrites TargetContentSet — so afterwards there is no way to tell which way we counted.
@@ -705,7 +709,10 @@ public partial class TapeAgentBase
             //  from "the volume holds fewer sets than the count demanded" — that needs the set
             //  accounting, which THIS layer has.
             if (!endAnchored || Navigator.CurrentContentSet != 0)
+            {
+                NoteVolumeWithoutToc(setNotify);
                 return true;    // ordinary success, nothing ambiguous
+            }
 
             if (TOC.CurrentSetIndexOnVolume == 0)
             {
@@ -717,6 +724,7 @@ public partial class TapeAgentBase
                     "this IS the volume's first set — restoring the end-anchored index",
                     Navigator.TargetContentSet);
                 Navigator.AssumeAtTargetContentSet();
+                NoteVolumeWithoutToc(setNotify);
                 return true;
             }
 
@@ -750,7 +758,7 @@ public partial class TapeAgentBase
             "begin-of-content. This indicates the TAIL of the volume is unreliable",
             TOC.CurrentSetIndex, settledAtBom ? "ran into BOM" : "did not even complete", LastErrorWin32);
 
-        var action = RaiseSetAnomaly(TapeSetHeaderVerdict.Unreadable, header: null, fileNotify,
+        var action = RaiseSetAnomaly(TapeSetHeaderVerdict.Unreadable, header: null, setNotify,
             LastErrorWin32, $"Set #{TOC.CurrentSetIndex} " +
             $"could not be reached by seeking back from end-of-content ({LastErrorWin32}) — " +
             "the volume's tail seems shorter than the TOC describes",
@@ -785,11 +793,11 @@ public partial class TapeAgentBase
             return false;
         }
 
-        NotifySetAnomalyRecovered(fileNotify,
+        NotifySetAnomalyRecovered(setNotify,
             BuildSetAnomaly(TapeSetHeaderVerdict.Unreadable, header: null,
                 TapeSetAnomalyStage.Renavigated, canAttemptRecovery: false,
                 diagnosis: TapeResult.OK));
-
+        NoteVolumeWithoutToc(setNotify);
         return true;
     }
 

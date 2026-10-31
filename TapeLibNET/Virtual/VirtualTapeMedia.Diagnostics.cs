@@ -371,6 +371,40 @@ public partial class VirtualTapeMedia
     }
 
     /// <summary>
+    /// Every data byte on this medium, in tape order, marks skipped — what a raw read of the cartridge would yield. For
+    ///  "no plaintext on tape" assertions (Design-Encryption §15.4). Restores the stream position.
+    /// </summary>
+    internal byte[] DumpData()
+    {
+        long total = 0;
+        foreach (var vb in m_virtualBlocks)
+        {
+            if (!vb.IsMark)
+                total += vb.DataLength;
+        }
+
+        var all = new byte[checked((int)total)];
+        long saved = m_stream.Position;
+        try
+        {
+            int pos = 0;
+            foreach (var vb in m_virtualBlocks)
+            {
+                if (vb.IsMark)
+                    continue;
+                m_stream.Position = vb.StreamOffset;
+                m_stream.ReadExactly(all, pos, (int)vb.DataLength);
+                pos += (int)vb.DataLength;
+            }
+        }
+        finally
+        {
+            m_stream.Position = saved;
+        }
+        return all;
+    }
+
+    /// <summary>
     /// Formats a hex dump of bytes from <paramref name="startIdx"/> to <paramref name="endIdx"/> (inclusive),
     /// marking the byte at <paramref name="diffIdx"/> with square brackets.
     /// </summary>
@@ -650,8 +684,14 @@ public partial class VirtualTapeMedia
     ///  — nothing is committed, so there is nothing to leave half-written — and is treated as
     ///  <see cref="VirtualFaultMode.Fail"/>.
     /// </summary>
-    private int ApplyInjectedReadFault(VirtualMediaFaultInjector rf, byte[] buffer, int offset, int count)
+    /// <param name="markEncountered">
+    /// The mark the delivered part of the read ran into — passed through, so a corrupted or short read still tells its
+    ///  caller where the head stands, exactly as a real drive does.
+    /// </param>
+    private int ApplyInjectedReadFault(VirtualMediaFaultInjector rf, byte[] buffer, int offset, int count,
+        out TapeMarkType markEncountered)
     {
+        markEncountered = TapeMarkType.None;
         switch (rf.Mode)
         {
             case VirtualFaultMode.Partial:
@@ -660,30 +700,26 @@ public partial class VirtualTapeMedia
                     int partialCount = (int)Math.Min(partialBytes, count);
                     if (partialCount <= 0)
                         goto default;
-
                     bool armed = rf.Enabled;
                     rf.Enabled = false;
                     int read;
-                    try { read = ReadBlocks(buffer, offset, partialCount, out _); }
+                    try { read = ReadBlocks(buffer, offset, partialCount, out markEncountered); }
                     finally { rf.Enabled = armed; }
-
+                    if (markEncountered != TapeMarkType.None)
+                        return read;            // the prefix ran into a mark: report THAT, as the drive would
                     SetError(rf.Error, $"INJECTED short read: {read} of {count} B read, then faulted");
                     LogErrorAsDebug("Injected short read");
                     return read;
                 }
-
             case VirtualFaultMode.Corrupt:
                 {
                     // Models corruption on the RETURN path (HBA, driver, cable, RAM) — the tape itself is
-                    //  undamaged, so a caller that re-reads gets clean data. Contrast write-side Corrupt,
-                    //  which is permanent. Together they let a test distinguish "the medium is bad" from
-                    //  "the path is bad" — a distinction no error code ever surfaces.
+                    //  undamaged, so a caller that re-reads gets clean data. Positioning and marks are untouched.
                     bool armed = rf.Enabled;
                     rf.Enabled = false;
                     int read;
-                    try { read = ReadBlocks(buffer, offset, count, out _); }
+                    try { read = ReadBlocks(buffer, offset, count, out markEncountered); }
                     finally { rf.Enabled = armed; }
-
                     if (read > 0)
                     {
                         // Corrupt only what was actually delivered, in place, at the caller's offset.
@@ -691,14 +727,12 @@ public partial class VirtualTapeMedia
                         Array.Copy(buffer, offset, delivered, 0, read);
                         rf.ApplyCorruption(delivered, (int)m_blockSize);
                         Array.Copy(delivered, 0, buffer, offset, read);
+                        m_logger.LogTrace("{Prefix}: INJECTED read corruption — {Bits} bit(s) flipped in {Read} B",
+                            LogPrefix, rf.CorruptBits, read);
                     }
-
-                    // Deliberately NO SetError: the drive is happy, the library is happy, the bytes are wrong.
-                    m_logger.LogTrace("{Prefix}: INJECTED read corruption — {Bits} bit(s) flipped in {Read} B",
-                        LogPrefix, rf.CorruptBits, read);
+                    // Deliberately NO SetError of our own: the inner read's state (a mark, a size mismatch) stands.
                     return read;
                 }
-
             default:
                 SetError(rf.Error, "INJECTED read fault");
                 LogErrorAsDebug("Injected read fault");

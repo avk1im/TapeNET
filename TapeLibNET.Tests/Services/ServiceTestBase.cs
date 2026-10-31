@@ -100,6 +100,7 @@ public abstract class ServiceTestBase : IDisposable
             {
                 Assert.Empty(host.MediaMismatchPrompts);   // happy-path hosts: provably silent
                 Assert.Empty(host.SetAnomalyPrompts);
+                Assert.Empty(host.VolumeErrorPrompts);
             }
 
         GC.SuppressFinalize(this);
@@ -120,25 +121,32 @@ public abstract class ServiceTestBase : IDisposable
     }
 
     /// <summary>
+    /// The drive capabilities for <paramref name="media"/>: those of <paramref name="profile"/> (the same presets the agent
+    ///  fixtures use), else — the default — Partitions or Setmarks by whether the media has an initiator partition.
+    /// </summary>
+    protected static VirtualTapeDriveCapabilities CapsFor(TempVirtualMedia media, DriveProfile? profile = null)
+    {
+        if (profile is not { } p)
+            return media.HasInitiator ? VirtualTapeDriveCapabilities.WithPartitions : VirtualTapeDriveCapabilities.WithSetmarks;
+        Assert.True((p == DriveProfile.Partitions) == media.HasInitiator,
+            $"Profile {p} needs media {(p == DriveProfile.Partitions ? "with" : "without")} an initiator partition");
+        return VirtualTapeFixture.ProfileToCapabilities(p);
+    }
+
+    /// <summary>The descriptor of <paramref name="media"/>.</summary>
+    protected static VirtualMediaDescriptor VmdFor(TempVirtualMedia media) => new(
+        media.ContentPath, media.ContentCapacity, media.InitiatorPath, media.HasInitiator ? media.InitiatorCapacity : 0);
+
+    /// <summary>
     /// Opens a file-backed virtual drive, formats it, and leaves the service
     ///  in the post-format state (media loaded, TOC available).
     /// </summary>
     protected async Task<(TestTapeService service, TestTapeServiceHost host)> OpenAndFormatAsync(
-        TempVirtualMedia media)
+        TempVirtualMedia media, DriveProfile? profile = null)
     {
         var (service, host) = CreateService();
 
-        var caps = media.HasInitiator
-            ? VirtualTapeDriveCapabilities.WithPartitions
-            : VirtualTapeDriveCapabilities.WithSetmarks;
-
-        var vmd = new VirtualMediaDescriptor(
-            media.ContentPath,
-            media.ContentCapacity,
-            media.InitiatorPath,
-            media.HasInitiator ? media.InitiatorCapacity : 0);
-
-        Assert.True(await service.OpenVirtualDriveAsync(caps, vmd, FileMode.Create),
+        Assert.True(await service.OpenVirtualDriveAsync(CapsFor(media, profile), VmdFor(media), FileMode.Create),
             $"OpenVirtualDriveAsync failed: {service.LastError}");
         Assert.True(await service.LoadMediaAsync(),
             $"LoadMediaAsync (post-create) failed: {service.LastError}");
@@ -162,24 +170,16 @@ public abstract class ServiceTestBase : IDisposable
     /// </param>
     protected async Task<(TestTapeService service, TestTapeServiceHost host)> ReopenAsync(
         TempVirtualMedia media,
-        bool restoreTOC = true)
+        bool restoreTOC = true,
+        DriveProfile? profile = null)
     {
         var (service, host) = CreateService();
 
-        var caps = media.HasInitiator
-            ? VirtualTapeDriveCapabilities.WithPartitions
-            : VirtualTapeDriveCapabilities.WithSetmarks;
-
-        var vmd = new VirtualMediaDescriptor(
-            media.ContentPath,
-            media.ContentCapacity,
-            media.InitiatorPath,
-            media.HasInitiator ? media.InitiatorCapacity : 0);
-
-        Assert.True(await service.OpenVirtualDriveAsync(caps, vmd, FileMode.Open),
+        Assert.True(await service.OpenVirtualDriveAsync(CapsFor(media, profile), VmdFor(media), FileMode.Open),
             $"OpenVirtualDriveAsync (reopen) failed: {service.LastError}");
         Assert.True(await service.LoadMediaAsync(),
             $"LoadMediaAsync (reopen) failed: {service.LastError}");
+
         if (restoreTOC)
             Assert.True(await service.RestoreTOCAsync(),
                 $"RestoreTOCAsync failed: {service.LastError}");
@@ -238,22 +238,13 @@ public abstract class ServiceTestBase : IDisposable
     /// </summary>
     protected async Task<(TestTapeService service, MultiVolumeTapeServiceHost host)>
         OpenAndFormatMultiVolumeAsync(
-            IReadOnlyList<TempVirtualMedia> volumes)
+            IReadOnlyList<TempVirtualMedia> volumes,
+            DriveProfile? profile = null)
     {
         var (service, host) = CreateMultiVolumeService(volumes);
-
         var first = volumes[0];
-        var caps = first.HasInitiator
-            ? VirtualTapeDriveCapabilities.WithPartitions
-            : VirtualTapeDriveCapabilities.WithSetmarks;
 
-        var vmd = new VirtualMediaDescriptor(
-            first.ContentPath,
-            first.ContentCapacity,
-            first.InitiatorPath,
-            first.HasInitiator ? first.InitiatorCapacity : 0);
-
-        Assert.True(await service.OpenVirtualDriveAsync(caps, vmd, FileMode.Create),
+        Assert.True(await service.OpenVirtualDriveAsync(CapsFor(first, profile), VmdFor(first), FileMode.Create),
             $"OpenVirtualDriveAsync (multi-vol, vol-1) failed: {service.LastError}");
         Assert.True(await service.LoadMediaAsync(),
             $"LoadMediaAsync (multi-vol, vol-1) failed: {service.LastError}");
@@ -276,24 +267,16 @@ public abstract class ServiceTestBase : IDisposable
     /// </summary>
     protected async Task<(TestTapeService service, MultiVolumeTapeServiceHost host)>
         ReopenMultiVolumeAsync(
-            IReadOnlyList<TempVirtualMedia> volumes)
+            IReadOnlyList<TempVirtualMedia> volumes,
+            DriveProfile? profile = null)
     {
         var (service, host) = CreateMultiVolumeService(volumes);
 
         // The complete TOC lives on the last volume; open it first so the restore
         //  agent has the full set list and can request earlier volumes as needed.
         var last = volumes[^1];
-        var caps = last.HasInitiator
-            ? VirtualTapeDriveCapabilities.WithPartitions
-            : VirtualTapeDriveCapabilities.WithSetmarks;
 
-        var vmd = new VirtualMediaDescriptor(
-            last.ContentPath,
-            last.ContentCapacity,
-            last.InitiatorPath,
-            last.HasInitiator ? last.InitiatorCapacity : 0);
-
-        Assert.True(await service.OpenVirtualDriveAsync(caps, vmd, FileMode.Open),
+        Assert.True(await service.OpenVirtualDriveAsync(CapsFor(last, profile), VmdFor(last), FileMode.Open),
             $"OpenVirtualDriveAsync (multi-vol reopen) failed: {service.LastError}");
         Assert.True(await service.LoadMediaAsync(),
             $"LoadMediaAsync (multi-vol reopen) failed: {service.LastError}");

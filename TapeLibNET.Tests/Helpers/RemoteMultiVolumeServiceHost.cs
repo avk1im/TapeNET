@@ -78,11 +78,11 @@ public sealed class RemoteMultiVolumeServiceHost(
 
     /// <inheritdoc/>
     /// <remarks>
-    /// Always agrees to continue — the actual media swap happens in
+    /// Always agrees to insert and continue — the actual media swap happens in
     ///  <see cref="OnInsertMediaConfirm"/>.
     /// </remarks>
-    public override bool OnVolumeContinueConfirm(int volumeNeeded, RestoreMode mode)
-        => true;
+    public override VolumeAction OnVolumeContinueSelect(int volumeNeeded, RestoreMode mode)
+        => VolumeAction.Insert;
 
     /// <inheritdoc/>
     /// <remarks>

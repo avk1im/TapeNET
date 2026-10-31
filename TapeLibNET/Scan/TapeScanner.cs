@@ -151,6 +151,60 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
         }
     }
 
+    /// <summary>
+    /// Walks ONE partition forward from <paramref name="block"/> to its end of data — the TOC search's S2 and S4
+    ///  (Design-TocLocation §4.2). Same identification, same mark handling as <see cref="Scan"/>; no BOM ceremony, no second
+    ///  partition.
+    /// </summary>
+    /// <param name="progress">Optional sink — fired once at the start (<see cref="TapeScanProgress.PhaseSearchingToc"/>),
+    ///  then once per final fragment.</param>
+    /// <returns>The fragments met; <see langword="null"/> when the start could not be reached (see <see cref="LastResult"/>).</returns>
+    /// <remarks>
+    /// Set <see cref="ScanMediaOptions.HarvestTocCopies"/> false to only peek. Read-only; restores the block size. Stops at
+    ///  <see cref="ScanMediaOptions.AbortPoll"/> like at <see cref="IsAbortRequested"/>.
+    /// </remarks>
+    internal IReadOnlyList<TapeMediaFragment>? WalkFrom(MediaPartition partition, long block,
+        IProgress<TapeScanProgress>? progress = null)
+    {
+        ResetError();
+        ResetLatchedFailure();
+        IsAbortRequested = false;
+        if (!Drive.IsMediaLoaded)
+        {
+            SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
+            LatchFailure();
+            return null;
+        }
+
+        TapeMediaLayout layout = TapeMediaLayout.Predict(Drive);
+        BlockSizeGuard guard = new(this);
+        try
+        {
+            if (!MoveTo(partition, block))
+            {
+                SyncErrorFrom(Drive);
+                LatchFailure();
+                return null;
+            }
+            ReportPhase(progress, TapeScanProgress.PhaseSearchingToc, 0);
+            List<TapeMediaFragment> fragments = [];
+            bool ours = false;
+            WalkPartition(partition, layout, fragments, progress, crossFirstClosingMark: false, ref ours);
+            return fragments;
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            LatchFailure();
+            m_logger.LogError(ex, "{Prefix}: Walk: unexpected exception", LogPrefix);
+            return null;
+        }
+        finally
+        {
+            guard.Restore();
+        }
+    }
+
     #endregion
 
     #region *** The walk ***
@@ -212,8 +266,17 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
             }
 
             ours |= IsOurs(first);
-            partitions.Add(WalkPartition(MediaPartition.Content, layout, fragments, progress,
-                crossFirstClosingMark: true, ref ours));
+
+            // Block 0 is identified like every other block — a TOC copy there is harvested like every other copy.
+            if (first.Kind == FragmentKind.TOC && Options.HarvestTocCopies && !HarvestLastTocCopy(fragments, progress))
+            {
+                LatchFailure();
+                partitions.Add(new ScannedPartition(MediaPartition.Content, FragmentCount: 1, Truncated: true,
+                    TerminatorWin32: (uint)LastErrorWin32));
+            }
+            else
+                partitions.Add(WalkPartition(MediaPartition.Content, layout, fragments, progress,
+                    crossFirstClosingMark: true, ref ours));
         }
 
         // ── Initiator partition ────────────────────────────────────────────────────────────────────────
@@ -308,12 +371,14 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
 
         bool crossClosingMark = crossFirstClosingMark;
         int runMarks = 0;               // adjacent marks read since the last data fragment
+        int tocCopies = 0;
         long runStart = -1L;            // block of the first of them
 
         do // while (true)
         {
-            if (IsAbortRequested)
+            if (IsAbortRequested || options.AbortPoll?.Invoke() == true)
             {
+                IsAbortRequested = true;
                 SetError(WIN32_ERROR.ERROR_CANCELLED);
                 LatchFailure();
                 m_logger.LogWarning("{Prefix}: Scan aborted by caller after {N} fragment(s)", LogPrefix, fragments.Count);
@@ -401,6 +466,11 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
             }
 
             ours |= IsOurs(fragment);
+
+            if (fragment.Kind == FragmentKind.TOC && options.StopAfterTocCopies > 0
+                && ++tocCopies >= options.StopAfterTocCopies)
+                break;                              // enough copies for the TOC search (§4.4)
+
             crossClosingMark = true;
 
         } while (true);
@@ -436,7 +506,8 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
     /// <summary>Which mark closes a fragment — by convention where one applies, the nearest mark where none does.</summary>
     /// <remarks>
     /// <para>
-    /// <b>Filemark-only layouts</b> have one mark type: nothing to decide.
+    /// <b>Filemark-only layouts</b> have one mark type: nothing to decide. Neither does a walk that starts past the last
+    ///  setmark (<see cref="ScanMediaOptions.NoSetmarksAhead"/>): only filemarks can follow.
     /// </para>
     /// <para>
     /// <b>The kind decides first.</b> A media header (<see cref="TapeHeaderBlock.WritesTrailingMark"/>) and a TOC copy are
@@ -454,10 +525,11 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
     ///  Mark runs and TOC marks never reach here: they consist of marks already crossed.
     /// </para>
     /// </remarks>
-    private static ClosingMark ClosingMarkOf(TapeMediaFragment fragment, TapeMediaLayout layout)
+    private static ClosingMark ClosingMarkOf(TapeMediaFragment fragment, TapeMediaLayout layout, ScanMediaOptions options)
     {
-        if (!layout.UseSmks)
+        if (!layout.UseSmks || options.NoSetmarksAhead)
             return ClosingMark.Filemark;
+
         return fragment.Kind switch
         {
             FragmentKind.MediaHeader or FragmentKind.TOC => ClosingMark.Filemark,
@@ -474,14 +546,30 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
     /// False when no closing mark was found. The scanner's error then carries the DRIVE's reason, so the caller can tell
     ///  a positional end from a transport fault.
     /// </returns>
+    /// <remarks>
+    /// With <see cref="ScanMediaOptions.SetmarkFallbackToFilemark"/>, a setmark that is not there (a positional end) is
+    ///  replaced by the next filemark: the set's closing setmark is lost, and what follows it — a TOC copy — is still
+    ///  reachable that way.
+    /// </remarks>
     private bool CrossClosingMark(TapeMediaFragment current, TapeMediaLayout layout)
     {
-        bool hopped = ClosingMarkOf(current, layout) switch
+        ClosingMark mark = ClosingMarkOf(current, layout, Options);
+        long start = Drive.CurrentBlock;
+        bool hopped = mark switch
         {
             ClosingMark.Filemark => Drive.MoveToNextFilemark(1),
             ClosingMark.Setmark => Drive.MoveToNextSetmark(1),
             _ => CrossNearestMark(current.Partition),
         };
+
+        if (!hopped && mark == ClosingMark.Setmark && Options.SetmarkFallbackToFilemark
+            && IsPositionalEnd(Drive.LastErrorWin32))
+        {
+            m_logger.LogTrace("{Prefix}: Scan: no setmark closes {Fragment} — crossing the next filemark instead",
+                LogPrefix, current);
+            Drive.ResetError();
+            hopped = MoveTo(current.Partition, start) && Drive.MoveToNextFilemark(1);
+        }
 
         if (!hopped)
         {
@@ -489,6 +577,7 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
             SyncErrorFrom(Drive);
             return false;
         }
+
         ResetError();
         return true;
     }
@@ -567,10 +656,7 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
     /// Moves to <paramref name="block"/> of <paramref name="partition"/> — a combined locate on partitioned media, a plain
     ///  block locate otherwise. The scanner's only way back to a position it left (SM-12).
     /// </summary>
-    private bool MoveTo(MediaPartition partition, long block)
-        => Drive.PartitionCount > 1
-            ? Drive.MoveToPartition(partition, block)
-            : Drive.MoveToBlock(block);
+    private bool MoveTo(MediaPartition partition, long block) => Drive.MoveToBlock(partition, block);
 
     /// <summary>
     /// Best-effort: returns the drive to block 0 of the content partition after a scan of a partitioned cartridge, where
@@ -767,8 +853,8 @@ public sealed partial class TapeScanner : TapeDriveHolder<TapeScanner>
 
     /// <summary>Restores the drive's block size on the way out (SM-9), whatever happened in between.</summary>
     /// <remarks>
-    /// <see cref="TapeHeaderBlock.Read"/> restores its own, but the small-block fallback and the TOC harvest both set the
-    ///  size deliberately. Mirrors <c>TapeCalibrator.RunGuard</c> in shape.
+    /// <see cref="TapeHeaderBlock.Read"/> restores its own, but the small-block fallback and
+    ///  the TOC harvest both set the size deliberately. Mirrors <see cref="TapeCalibrator.RunGuard"/> in shape.
     /// </remarks>
     private readonly struct BlockSizeGuard(TapeScanner scanner)
     {

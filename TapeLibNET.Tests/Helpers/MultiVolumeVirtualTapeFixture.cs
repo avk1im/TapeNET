@@ -1,11 +1,11 @@
 ﻿using Microsoft.Extensions.Logging;
-
-using TapeLibNET.Drive;
-using TapeLibNET.Virtual;
-using TapeLibNET.Headers;
-using TapeLibNET.Toc;
-using TapeLibNET.Media;
 using TapeLibNET.Agents;
+using TapeLibNET.Drive;
+using TapeLibNET.Encryption;
+using TapeLibNET.Headers;
+using TapeLibNET.Media;
+using TapeLibNET.Toc;
+using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests.Helpers;
 
@@ -70,19 +70,23 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     public const long DefaultContentCapacity = 256L * 1024;
 
     /// <summary>Default initiator partition capacity for Partitions profile.</summary>
-    public const long DefaultInitiatorCapacity = 64L * 1024;
+    /// <remarks>
+    /// Why not just 64 KiB: With a TOC budget (Design-TocReserve §9), 64 KiB leaves 48 KiB for both copies — one block each,
+    ///  ~100 entries; several existing Partitions tests write more (e.g. MixedVolumeSizes_… with 120 files).
+    /// </remarks>
+    public const long DefaultInitiatorCapacity = 256L * 1024;
+
+    /// <summary>The size of one TOC copy in these tests: one header block — the test TOCs stay well below 16 KiB.</summary>
+    private const long TestTocCopyBytes = 16L * 1024;
+
+    /// <summary>Room for the marks that close the TOC area, so a full volume keeps BOTH copies, closing marks included.</summary>
+    private const long TocMarkAllowance = 16L * 1024;
 
     /// <summary>
-    /// Default TOC capacity override for tests — small enough to keep
-    ///  <c>CapacityForCurrentSet</c> positive on small volumes so the library's
-    ///  software capacity check triggers volume transitions before the tape physically
-    ///  fills.
-    /// <para>
-    ///  32 KB ≈ 2 blocks at 16 KB block size, plenty for the test TOC.
-    /// </para>
+    /// The reserve of the earlier fixture: exactly two one-block copies, no room for the TOC mark's gap file nor for copy
+    ///  2's closing filemark. For tests that WANT a full volume to keep one copy only, or no closing mark.
     /// </summary>
-    public const long DefaultTOCCapacity = 32L * 1024;
-
+    public const long SingleCopyTOCCapacity = 32L * 1024;
     #endregion
 
     #region *** Properties ***
@@ -110,13 +114,62 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
 
     /// <summary>Content capacity per volume in bytes.</summary>
     public long ContentCapacity { get; }
+    /// <summary>The TOC (initiator) partition capacity of every volume, on Partitions profiles.</summary>
+    public long InitiatorCapacity { get; }
 
     /// <summary>
-    /// TOC capacity override applied to each agent's navigator.
-    /// Defaults to <see cref="DefaultTOCCapacity"/> (32 KB) so the library's
-    /// software capacity check works correctly on small test volumes.
+    /// The content capacity of each volume by number (1-based); <see langword="null"/> = every volume
+    ///  <see cref="ContentCapacity"/>.
     /// </summary>
-    public long TOCCapacityOverride { get; set; } = DefaultTOCCapacity;
+    /// <remarks>
+    /// A real series mixes at most a couple of cartridge sizes (one drive, two generations);
+    ///  keep ratios realistic (≈2×).
+    /// </remarks>
+    public Func<int, long>? VolumeCapacity { get; }
+
+    /// <summary>The content capacity of <paramref name="volume"/>.</summary>
+    public long CapacityOfVolume(int volume) => VolumeCapacity?.Invoke(volume) ?? ContentCapacity;
+
+    /// <summary>
+    /// TOC capacity override applied to each agent's navigator; <see langword="null"/> (default) =
+    ///  what this layout needs to write two one-block copies in full: the navigator's own footprint
+    ///  (copies, plus the TOC mark's gap file where the layout has one) and an allowance for
+    ///  the closing marks.
+    /// </summary>
+    /// <remarks>
+    /// Layout-aware, so every profile is tested under the same condition: a full volume holds both
+    ///  TOC copies, each closed by its filemark (guarded by <c>Fixture_EveryVolumeHoldsBothTocCopies</c>).
+    ///  Set it — e.g. to <see cref="SingleCopyTOCCapacity"/> — to test a reserve that is too small on purpose.
+    /// </remarks>
+    public long? TOCCapacityOverride { get; set; }
+
+    /// <summary>
+    /// When <see langword="true"/> and <see cref="TOCCapacityOverride"/> is not set, the agents run with the LIVE TOC
+    ///  reserve (Design-TocReserve): sized from the TOC and raised as the set grows, never below the floor (capped at
+    ///  1/32nd of the volume). Default <see langword="false"/>: the fixed 5d parity reserve.
+    /// </summary>
+    public bool UseLiveTocReserve { get; init; }
+
+    /// <summary>
+    /// The TOC reserve the fixture's agents run with on the loaded medium — for diagnostics and assertion messages.
+    ///  Live:the reserve a set starting now would arm.
+    /// </summary>
+    public long EffectiveTOCCapacity
+    {
+        get
+        {
+            using var probe = new TapeAgentBase(Drive, TOC);
+            return UseLiveTocReserve && TOCCapacityOverride is null
+                ? probe.Navigator.TocReserveFor(TOC.EstimateSerializedSize())
+                : TocReserveFor(probe.Navigator);
+        }
+    }
+
+    /// <summary>
+    /// Whether <c>BackupFiles</c> checks the TOC it just saved (<see cref="TocInvariants"/>).
+    ///  On by default; turn off in tests that write a malformed TOC on purpose.
+    /// </summary>
+    public bool ValidatesTocAfterBackup { get; set; } = true;
 
     #endregion
 
@@ -220,27 +273,22 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     }
 
     /// <summary>
-    /// Saves the current volume snapshot, ejects it, and inserts a fresh
-    /// blank volume with the next volume number. Prepares the drive for writing.
+    /// Saves the current volume snapshot, ejects it, and inserts a fresh blank volume with the next volume number —
+    ///  of the size the series defines for it (<see cref="CapacityOfVolume"/>). Prepares the drive for writing.
     /// </summary>
     /// <returns>The new volume number.</returns>
     public int SwapToNewVolume()
     {
         SaveCurrentVolumeSnapshot();
-
         int newVolume = _volumeSnapshots.Count + 1;
-
         long initCap = Capabilities.SupportsInitiatorPartition
-            ? DefaultInitiatorCapacity : 0;
+            ? InitiatorCapacity : 0;
 
-        var capacity = ContentCapacity;
-        if (!Drive.HasInitiatorPartition)
-            capacity += TapeNavigator.DefaultTOCCapacity(Drive); // ensure enough space for TOC in set
-
-        Backend.InsertMemoryMedia(capacity, initCap);
+        // No padding: every volume has exactly its own capacity, as in a real series. The TOC reserve is the
+        //  backup's business (Design-TocReserve), not the fixture's.
+        Backend.InsertMemoryMedia(CapacityOfVolume(newVolume), initCap);
         Assert.True(Drive.ReloadMedia(), $"Failed to load new volume #{newVolume}");
         Assert.True(Drive.PrepareMedia(), $"Failed to prepare new volume #{newVolume}");
-
         _loadedVolume = newVolume; // important!
         return newVolume;
     }
@@ -273,27 +321,36 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
 
     /// <summary>
     /// Creates a multi-volume fixture with a small content capacity to trigger
-    /// volume boundaries. The first volume is already loaded and prepared.
+    ///  volume boundaries. The first volume is already loaded and prepared.
     /// </summary>
     /// <param name="profile">Drive capability profile to emulate.</param>
     /// <param name="contentCapacity">Content partition capacity per volume.</param>
+    /// <param name="volumeCapacity">Optional function to define capacity by volume number.</param>
     /// <param name="loggerFactory">Optional logger factory.</param>
     /// <param name="mediaDescription">Description for the initial TOC.</param>
     /// <param name="headerMode">How the volumes of the series receive media and set headers.</param>
+    /// <param name="sealPadding">
+    /// Whether encrypted sets are sealed with production padding (64 KiB units, Design-Encryption §5.4). Off by default:
+    ///  the small volumes here could not hold a padded TOC within the TOC reserve.
+    /// </param>
     public MultiVolumeVirtualTapeFixture(
         DriveProfile profile = DriveProfile.Setmarks,
         long contentCapacity = DefaultContentCapacity,
+        Func<int, long>? volumeCapacity = null,
+        long initiatorCapacity = DefaultInitiatorCapacity,
         ILoggerFactory? loggerFactory = null,
         string mediaDescription = "Multi-Volume Test Media",
-        VolumeHeaderMode headerMode = VolumeHeaderMode.None)
+        VolumeHeaderMode headerMode = VolumeHeaderMode.None,
+        bool sealPadding = false)
     {
         ContentCapacity = contentCapacity;
+        VolumeCapacity = volumeCapacity;
+        InitiatorCapacity = initiatorCapacity;
         LoggerFactory = loggerFactory ?? TestLoggerFactory.Default;
         Capabilities = VirtualTapeFixture.ProfileToCapabilities(profile);
         HeaderMode = headerMode;
-
         long initCap = Capabilities.SupportsInitiatorPartition
-            ? DefaultInitiatorCapacity : 0;
+            ? initiatorCapacity : 0;
 
         // The following is NOT needed since we override the default (really large, 32MB) TOC capacity in Navigator,
         //  s. MultiVolumeVirtualTapeFixture.CreateBackupAgent() and .CreateRestoreAgent()
@@ -301,7 +358,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
         //    contentCapacity += TapeNavigator.DefaultTOCCapacity(null); // ensure enough space for TOC in set
 
         Backend = VirtualTapeDriveBackend.CreateMemoryBacked(
-            LoggerFactory, Capabilities, contentCapacity, initCap);
+            LoggerFactory, Capabilities, CapacityOfVolume(1), initCap);
 
         // Disable IO throttling for test speed
         Backend.IoRate = VirtualTapeDriveIoRate.Unlimited;
@@ -315,6 +372,10 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
 
         // Create initial TOC — volume 1
         TOC = new TapeTOC(mediaDescription);
+#if TEST_HOOKS
+        if (!sealPadding)
+            TOC.SealPadUnit = 1;    // small virtual volumes: an unpadded sealed set costs about what a plain one does
+#endif
     }
 
     #endregion
@@ -326,7 +387,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     {
         var agent = new TapeFileBackupAgent(Drive, TOC);
         ApplyHeaderFlagsForVolume(agent, TOC.Volume);
-        agent.Navigator.TOCCapacity = TOCCapacityOverride;
+        ApplyTocCapacity(agent.Navigator);
         return agent;
     }
 
@@ -337,7 +398,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
         TapeHowToHandleExisting handleExisting = TapeHowToHandleExisting.Overwrite)
     {
         var agent = new TapeFileRestoreAgentEx(Drive, targetDir, recurseSubdirs, handleExisting, TOC);
-        agent.Navigator.TOCCapacity = TOCCapacityOverride;
+        ApplyTocCapacity(agent.Navigator);
         return agent;
     }
 
@@ -346,13 +407,28 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     #region *** TOC Helpers ***
 
     /// <summary>
+    /// The TOC reserve this fixture arms on <paramref name="navigator"/>: the override, or the layout-aware default — two
+    ///  one-block copies (plus the TOC mark's gap file where the layout has one) and room for the closing marks.
+    /// </summary>
+    private long TocReserveFor(TapeNavigator navigator)
+        => TOCCapacityOverride ?? navigator.TOCFootprint(TestTocCopyBytes) + TocMarkAllowance;
+
+    /// <summary>
+    /// Applies the TOC reserve to <paramref name="navigator"/> — the override, the default, or none (live).
+    /// </summary>
+    private void ApplyTocCapacity(TapeNavigator navigator)
+        => navigator.TocReserveOverride = UseLiveTocReserve && TOCCapacityOverride is null
+            ? null
+            : TocReserveFor(navigator);
+
+    /// <summary>
     /// Writes the TOC to tape (via agent) and asserts success.
     /// </summary>
     public void SaveTOC()
     {
         using var agent = new TapeAgentBase(Drive, TOC)
             { RecordEmitter = EmitterFor(_loadedVolume) };
-        agent.Navigator.TOCCapacity = TOCCapacityOverride;
+        ApplyTocCapacity(agent.Navigator);
         if (!agent.BackupTOC())
             Assert.True(agent.BackupTOC(enforce: true), "Failed to save TOC to tape (even with enforce)");
     }
@@ -363,7 +439,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     public void LoadTOC()
     {
         using var agent = new TapeAgentBase(Drive, TOC);
-        agent.Navigator.TOCCapacity = TOCCapacityOverride;
+        ApplyTocCapacity(agent.Navigator);
         Assert.True(agent.RestoreTOC(), "Failed to restore TOC from tape");
         TOC = agent.TOC;
     }
@@ -384,50 +460,71 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
 
     /// <summary>
     /// Backs up files with automatic multi-volume handling.
-    /// When the current volume fills up, the method saves the TOC, swaps to a new
-    /// volume, and resumes the backup — mirroring the real-world console app flow.
+    ///  When the current volume fills up, the method saves the TOC, swaps to a new
+    ///  volume, and resumes the backup — mirroring the real-world console app flow.
     /// </summary>
     /// <param name="fileList">Full paths to back up.</param>
     /// <param name="description">Backup set description.</param>
     /// <param name="incremental">Whether the set is incremental.</param>
     /// <param name="hashAlgorithm">Hash algorithm for integrity checking.</param>
     /// <param name="blockSize">Block size (0 = drive default).</param>
-    /// <param name="notifiable">Optional callback handler.</param>
-    /// <returns>Statistics snapshot after the entire backup completes (across all volumes).</returns>
+    /// <param name="notifiable">
+    /// Optional callback handler — for the files, AND for the TOC saves on every volume
+    ///  (to register TOC anomalies).
+    /// </param>
+    /// <param name="password">
+    /// Encrypts the set (Design-Encryption §15.7): a new chain — or, for an incremental on
+    ///  an encrypted previous set, that chain's key. <see langword="null"/> = a plain set.
+    ///  Continuation parts inherit it.
+    /// </param>
+    /// <param name="encryption">The scheme, when <paramref name="password"/> is given.</param>
+    /// <returns>
+    /// Statistics snapshot after the entire backup completes (across all volumes).
+    /// </returns>
     public TapeFileStatistics BackupFiles(
         List<string> fileList,
         string description = "Test Set",
         bool incremental = false,
         TapeHashAlgorithm hashAlgorithm = TapeHashAlgorithm.Crc64,
         uint blockSize = 0,
-        ITapeFileNotifiable? notifiable = null)
+        ITapeFileNotifiable? notifiable = null,
+        string? password = null,
+        TapeEncryption encryption = TapeEncryption.Software)
     {
         // Configure the set
         TOC.AddNewSetTOC(0, incremental);
         TOC.CurrentSetTOC.Description = description;
         TOC.CurrentSetTOC.HashAlgorithm = hashAlgorithm;
         TOC.CurrentSetTOC.BlockSize = blockSize == 0 ? Drive.DefaultBlockSize : blockSize;
+        if (password is not null)
+            EncryptCurrentSet(password, encryption);
 
         using var agent = CreateBackupAgent();
 
-        bool success = agent.BackupFileListToCurrentSet(
+        // Saves the TOC on the current volume: normal first, then enforced (mirrors the console app flow). The
+        //  notifiable sees the TOC anomalies — the same channel the service uses.
+        void SaveToc(string when)
+        {
+            if (!agent.BackupTOC(tocNotify: notifiable))
+                Assert.True(agent.BackupTOC(enforce: true, tocNotify: notifiable),
+                    $"Failed to save TOC {when} (even with enforce)");
+        }
+
+        TapeResult result = agent.BackupFileListToCurrentSet(
             newSet: true,
             fileList,
             ignoreFailures: true,
             fileNotify: notifiable);
 
-        // Multi-volume loop: backup → TOC → swap → resume
-        while (!success && agent.CanResumeToNextVolume)
+        // Multi-volume loop: backup → TOC → swap → resume. A REJECTED continuation cartridge makes
+        //  CanResumeToNextVolume false: the loop ends and the assertion reports why.
+        while (!result.Success && agent.CanResumeToNextVolume)
         {
             // If the empty continuation set has no files, clean it up
             if (TOC.CurrentSetTOC.Count == 0)
                 TOC.RemoveLastEmptySet();
 
-            // Save TOC on the current volume before swapping.
-            //  Try normal first, then enforce (mirrors console app flow).
-            if (!agent.BackupTOC())
-                Assert.True(agent.BackupTOC(enforce: true),
-                    "Failed to save TOC before volume swap (even with enforce)");
+            SaveToc("before volume swap");
 
             // Swap to a fresh volume, then re-stamp the header flags for it — see
             //  ApplyHeaderFlagsForVolume() for why one agent cannot carry them across volumes.
@@ -435,16 +532,16 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
             ApplyHeaderFlagsForVolume(agent, newVolume);
 
             // Resume backup on the new volume
-            success = agent.ResumeBackupToNextVolume();
+            result = agent.ResumeBackupToNextVolume();
         }
 
-        Assert.True(success, "Multi-volume backup failed");
+        Assert.True(result.Success, $"Multi-volume backup failed: {result.ErrorMessage}" +
+            (agent.IsVolumeRejected
+                ? $" (continuation volume #{TOC.Volume + 1} rejected)" : string.Empty));
 
-        // Save TOC on the final volume
-        if (!agent.BackupTOC())
-            Assert.True(agent.BackupTOC(enforce: true),
-                "Failed to save TOC after backup (even with enforce)");
-
+        SaveToc("after backup");
+        if (ValidatesTocAfterBackup)
+            TocInvariants.AssertWellFormed(TOC);
         return agent.Statistics;
     }
 
@@ -459,25 +556,30 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     /// </summary>
     /// <param name="restoreDir">Target directory for restored files.</param>
     /// <param name="notifiable">Optional callback handler.</param>
+    /// <param name="configure">Optional configuration action for the restore agent.</param>
     /// <returns>Statistics snapshot after the entire restore completes.</returns>
     public TapeFileStatistics RestoreAllFilesFromCurrentSet(
         string restoreDir,
-        ITapeFileNotifiable? notifiable = null)
+        ITapeFileNotifiable? notifiable = null,
+        Action<TapeFileRestoreAgentEx>? configure = null)
     {
         using var agent = CreateRestoreAgent(restoreDir);
+        configure?.Invoke(agent);
 
-        bool success = agent.RestoreAllFilesFromCurrentSet(
+        TapeResult result = agent.RestoreAllFilesFromCurrentSet(
             ignoreFailures: true, fileNotify: notifiable);
 
-        // Multi-volume loop
-        while (!success && agent.CanResumeFromAnotherVolume)
+        // Multi-volume loop. A REJECTED volume (e.g. its TOC unreadable) makes CanResumeFromAnotherVolume false:
+        //  the loop ends and the assertion reports why, instead of re-offering the same cartridge forever.
+        while (!result.Success && agent.CanResumeFromAnotherVolume)
         {
             int volumeNeeded = agent.VolumeToResumeFrom;
             SwapToVolume(volumeNeeded);
-            success = agent.ResumeRestoreFromAnotherVolume();
+            result = agent.ResumeRestoreFromAnotherVolume();
         }
 
-        Assert.True(success, "Multi-volume restore failed");
+        Assert.True(result.Success, $"Multi-volume restore failed: {result.ErrorMessage}" +
+            (agent.IsVolumeRejected ? $" (volume #{agent.VolumeToResumeFrom} rejected)" : ""));
 
         return agent.Statistics;
     }
@@ -495,20 +597,72 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     {
         using var agent = CreateRestoreAgent(restoreDir);
 
-        bool success = agent.RestoreFilesFromCurrentSetInc(
+        TapeResult result = agent.RestoreFilesFromCurrentSetInc(
             null, ignoreFailures: true, fileNotify: notifiable);
 
-        // Multi-volume loop
-        while (!success && agent.CanResumeFromAnotherVolume)
+        // Multi-volume loop — see RestoreAllFilesFromCurrentSet
+        while (!result.Success && agent.CanResumeFromAnotherVolume)
         {
             int volumeNeeded = agent.VolumeToResumeFrom;
             SwapToVolume(volumeNeeded);
-            success = agent.ResumeRestoreFromAnotherVolume();
+            result = agent.ResumeRestoreFromAnotherVolume();
         }
 
-        Assert.True(success, "Multi-volume incremental restore failed");
+        Assert.True(result.Success, $"Multi-volume incremental restore failed: {result.ErrorMessage}" +
+            (agent.IsVolumeRejected ? $" (volume #{agent.VolumeToResumeFrom} rejected)" : ""));
 
         return agent.Statistics;
+    }
+
+    #endregion
+
+    #region *** Encryption ***
+
+    /// <summary>PBKDF2 work factor of every set the fixture encrypts — low, so the suite stays fast.</summary>
+    public const int TestIterations = 1_000;
+
+    // The fixture's key ring: holds every chain key it created or unwrapped; disposed with the fixture.
+    private readonly TapeKeyRing m_ring = new();
+
+    /// <summary>
+    /// Unlocks every locked set of <see cref="TOC"/> — by trial with the keys already held, else with
+    ///  <paramref name="password"/> (asserted). Returns how many sets were unlocked.
+    /// </summary>
+    public int UnlockAll(string password)
+    {
+        int lockedBefore = TOC.Count(s => s.IsLocked);
+        m_ring.UnlockAll(TOC);
+        for (int i = 1; i <= TOC.Count; i++)
+        {
+            if (!TOC[i].IsLocked || !TOC[i].IsUnlockable)
+                continue;
+            TapeResult result = m_ring.Unlock(TOC, i, password);
+            Assert.True(result.Success, $"Fixture: unlocking set #{i} failed: {result.ErrorMessage}");
+        }
+        return lockedBefore - TOC.Count(s => s.IsLocked);
+    }
+
+    /// <summary>
+    /// Makes the CURRENT (new, empty) set encrypted: a new chain, or — for an incremental on an encrypted previous set —
+    ///  the previous set's key under a fresh envelope (Design-Encryption §8.2). Continuation parts on later volumes
+    ///  inherit scheme, envelope and key through <c>ToParams</c> (§8.3) — nothing to do here.
+    /// </summary>
+    public void EncryptCurrentSet(string password, TapeEncryption encryption = TapeEncryption.Software)
+    {
+        using var _ = TapeCrypto.UseIterations(TestIterations);
+        TapeSetTOC set = TOC.CurrentSetTOC;
+        TapeSetTOC? previous = TOC.CurrentSetIndex > 1 ? TOC[TOC.CurrentSetIndex - 1] : null;
+
+        if (set.Incremental && previous is { IsEncrypted: true })
+        {
+            TapeSetKey key = previous.Key
+                ?? throw new InvalidOperationException("Fixture: the incremental's base is locked — UnlockAll first");
+            set.EnableEncryption(previous.Encryption, TapeSetEncryption.Wrap(key, password), key);
+            return;
+        }
+
+        var (envelope, fresh) = TapeSetEncryption.CreateChain(password);
+        set.EnableEncryption(encryption, envelope, m_ring.Add(fresh));
     }
 
     #endregion
@@ -518,6 +672,7 @@ public sealed class MultiVolumeVirtualTapeFixture : IDisposable
     public void Dispose()
     {
         Drive.Dispose();
+        m_ring.Dispose();
     }
 
     #endregion
