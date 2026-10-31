@@ -408,7 +408,7 @@ public enum TapeTocAnomalyKind
     CopyUnreadable,         // a copy was found but did not read (torn, CRC)
     ForeignCopySkipped,     // a copy of another series / volume, or implausibly placed
     NoReadableCopy,         // the ladder ended without a readable copy
-    RecordedEndDisputed,    // the end of content the TOC records was not confirmed by the tape, and the marks lead elsewhere
+    RecordedEndDisputed,    // an append was refused: the TOC's recorded end of content is disputed by the tape
 }
 
 /// <summary>Which stage produced — or settled — a TOC anomaly. Mirrors <see cref="TapeSetAnomalyStage"/>.</summary>
@@ -446,7 +446,8 @@ accumulated in the list without a second callback.
 The **statistics** nest in `TapeFileStatistics.Toc`. The **records** live on the agent (`TapeAgentBase.TocAnomalies`),
 for the same aliasing reason as set anomalies.
 
-A disputed append is recorded as `RecordedEndDisputed`; the service advises Scan Media or reloading the TOC.
+`RecordedEndDisputed` is detection-only: nothing in the operation settles it — the dispute stays on tape until the user
+scans the media or reloads the TOC. Its `Block` is the recorded end, its diagnosis the refusal.
 
 ### 5.2 Notifiable hierarchy
 
@@ -498,6 +499,7 @@ Every entry names its volume, so the final report covers the whole operation.
 |---|---|---|
 | `TocLost` | `NoCopyWritten` | *"Volume #n carries no table of contents"* / *"Export the TOC to a file now; the files remain restorable through it"* + Help |
 | `SingleCopyReserve` | `CopyWriteFailed` with EOM / EW, TOC in set | *"Only one TOC copy fit on volume #n"* / *"Export the TOC to a file now; calibrate the drive for this media to prevent it"* + Help |
+| `EndOfContentDisputed` | `RecordedEndDisputed` | _"The end of content on volume #n does not match its table of contents — nothing was written"_ / _"Scan the media (Media \| Scan Media) and adopt the TOC it recovers, or reload the TOC; then retry the backup"_ |
 | `TocPartitionFull` | `CopyWriteFailed` with EOM, TOC in partition | *"The TOC no longer fits its partition"* / *"Export the TOC to a file now; back up fewer files per set or volume"* + Help |
 | `SingleCopyDamaged` | `CopyWriteFailed` with another error, or `CopyUnreadable` | *"A TOC copy on volume #n is damaged"* / *"Re-save the TOC (rename the media) to restore both copies; retire the cartridge if this recurs"* |
 | `TocFoundBySearch` | any recovery event | *"The TOC of volume #n was found only by searching"* / *"Re-save the TOC so it can be found directly again"* |
@@ -505,6 +507,8 @@ Every entry names its volume, so the final report covers the whole operation.
 
 Reported by `ReportTocAnomalyOutcome`, right after `ReportSetAnomalyOutcome`, in backup, restore, identify and delete.
 The Help topic "TOC space" is listed in §0.4.
+
+Ranked after `TocUnreadable`, before the one-copy advices: the user was blocked right now.
 
 ---
 
@@ -553,7 +557,18 @@ step 1, on headerless 2.1 media via step 3.
 | "Blank" | only with positive evidence: EOD at BOM, or right after media header + FM |
 | `ClosedByEom` on the last set | volume full → next volume (F32, unchanged) |
 
-A disputed append is recorded as `RecordedEndDisputed`; the service advises Scan Media or reloading the TOC.
+**Three outcomes, all tested** (`TapeNavigatorEndOfContentTests`, all TOC-in-set layouts, with and without headers):
+
+| The tape at the recorded end | The marks | Outcome |
+|---|---|---|
+| the layout's closing mark before, the TOC area at it | not asked | **Confirmed** — the append starts there, no mark search |
+| unconfirmed (a damaged copy 1, or the read failed) | lead to the same block | **appends**; `CopyUnreadable` (copy 1, at the recorded block), settled `Retried` by the operation's own TOC write — nothing left to advise |
+| disputed | lead elsewhere | **refused** before anything is written; `ERROR_INVALID_DATA` stating both blocks; `RecordedEndDisputed`; advice `EndOfContentDisputed` |
+
+TOC in partition records nothing to check (`NotApplicable`). A disputed probe leaves no believed position.
+
+**Facts in the agent, advice in the service.** The refusal's message states the two blocks and that nothing was written;
+what to do is `AdviseTocText(EndOfContentDisputed)` — the agent no longer recommends.
 
 ### 8.2 Phase-0 defect fixes
 
@@ -652,6 +667,9 @@ New TEST_HOOKS on `VirtualTapeMedia` (diagnostics partial): `TruncateAfter(i)`, 
 | `Toc_AllMarksAfterSetGone_ExpectedPosition` | S3 by `FirstBlockAfterSet` | 4 |
 | `Toc_ForeignCopy_Skipped`, `Toc_ImplausibleContentEnd_Skipped` | TL-5 | 4 |
 | `Append_OneCopyTape_WritesAtFirstBlockAfterContent` | **the R2 guard** | 4 |
+| `CheckRecordedEnd_TrueEnd_Confirmed_HeadThere`, `_InsideTheSet_Disputed_NothingBelieved`, `_Partitions_NotApplicable` | the probe's verdicts and the position each leaves | 4 (added after 5d) |
+| `Append_RecordedEndDisputed_Refused_TapeUnchanged_AnomalyRecorded` | the refusal: facts-only diagnosis, `RecordedEndDisputed`, tape unchanged | 4 (added after 5d) |
+| `Append_RecordedEndUnconfirmed_MarksAgree_Appends_CopyUnreadableRecorded` | the cross-check: append proceeds, `CopyUnreadable` settled `Retried`, no advice | 4 (added after 5d) |
 | `Resume_VolumeWithoutToc_IdentifiedByHeader` / `_ByFileHeader` | §7 | 4 |
 | existing `MultiVolumeEncryptionTests` | green with the original geometry | 4 |
 | `Toc_TailDestroyed_FullWalk_Confirmed` / `_Declined` | S4 | 5 |
@@ -886,4 +904,14 @@ Each phase's instructions end with a precise list of what the next phase needs. 
   continuation identity by format — 2.1 parts share the SetId; a 2.1 part continuing a legacy part has its own; never
   2.1 → legacy.
   
-> §0.4's "pre-flight check" and §2's TL-8 should reference `Design-TocReserve` instead of describing a fixed reserve.
+##### 12.6.1 Budget for TOC-in-partition
+
+- **TOC partitions get a budget** (Design-TocReserve §9): a volume ends when the next files' TOC entries would not fit
+  the TOC partition twice — before the TOC save, not after. This supersedes §0.4's pre-flight check, which is dropped:
+  what an incremental writes is unknown in advance, and the live tracking counts exactly the files that reach the tape.
+  Advice `TocPartitionFull` keeps its meaning — a copy that still failed to write.
+- **The end-of-content check was untested.** Its three outcomes now have agent- and navigator-level tests (§8.1). The
+  refusal became a TOC anomaly (`RecordedEndDisputed`) with service advice instead of a recommendation in the agent's
+  message.
+- **For the final rewrite:** §0.4 and §2 TL-8 reference Design-TocReserve instead of a fixed reserve; the header's
+  "nothing is implemented yet" status line goes.
