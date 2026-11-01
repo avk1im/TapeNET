@@ -10,20 +10,15 @@ namespace TapeConNET.Ux;
 /// <summary>
 /// Production <see cref="IConsoleUx"/> implementation backed by Spectre.Console.
 /// </summary>
-public sealed class SpectreConsoleUx : IConsoleUx
+public sealed class SpectreConsoleUx(IAnsiConsole? ansi = null) : IConsoleUx
 {
-    private readonly IAnsiConsole _ansi;
-
-    public SpectreConsoleUx(IAnsiConsole? ansi = null)
-    {
-        _ansi = ansi ?? AnsiConsole.Console;
-        // Default NonInteractive when stdout is redirected (piped to file or |).
-        NonInteractive = System.Console.IsOutputRedirected || System.Console.IsInputRedirected;
-    }
+    private readonly IAnsiConsole _ansi = ansi ?? AnsiConsole.Console;
 
     public bool QuietMode { get; set; }
     public bool NoColor { get; set; }
-    public bool NonInteractive { get; set; }
+
+    // Default NonInteractive when stdout is redirected (piped to file or |).
+    public bool NonInteractive { get; set; } = System.Console.IsOutputRedirected || System.Console.IsInputRedirected;
 
     // ─── Logging ─────────────────────────────────────────────────────────────
 
@@ -95,6 +90,15 @@ public sealed class SpectreConsoleUx : IConsoleUx
         else
             prompt.AllowEmpty();
         return _ansi.Prompt(prompt);
+    }
+
+    public string? AskSecret(string question)
+    {
+        if (QuietMode || NonInteractive)
+            return null;
+        var prompt = new TextPrompt<string>(Markup.Escape(question)).Secret().AllowEmpty();
+        string answer = _ansi.Prompt(prompt);
+        return answer.Length == 0 ? null : answer;
     }
 
     // ─── Progress ────────────────────────────────────────────────────────────

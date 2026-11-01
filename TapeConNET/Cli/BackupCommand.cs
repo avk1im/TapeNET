@@ -3,6 +3,7 @@ using TapeConNET.Filtering;
 using TapeConNET.Infrastructure;
 using TapeConNET.Ux;
 using TapeLibNET.Compression;
+using TapeLibNET.Encryption;
 using TapeLibNET.Services;
 using TapeLibNET.Toc;
 
@@ -24,6 +25,7 @@ internal static class BackupCommand
             "Each positional argument is a file path, folder path, or wildcard pattern.");
         GlobalOptions.Attach(cmd);
         FilterOptions.Attach(cmd);
+        PasswordOptions.Attach(cmd);
 
         var filesArg = new Argument<string[]>("files")
         {
@@ -55,8 +57,18 @@ internal static class BackupCommand
         };
         var compressionOption = new Option<string>("--compression", "-c")
         {
-            Description = "Per-file compression. Choices: off/none, hardware, low, medium (default), high, or 1-19 (ZSTD level).",
+            Description = "Per-file compression. Choices: off/none, hardware | drive, low, medium (default), high, or 1-19 (ZSTD level).",
             DefaultValueFactory = _ => CompressionPreset.KeyMedium,
+        };
+        var encryptOption = new Option<bool>("--encrypt", "-e")
+        {
+            Description = "Encrypt the backup set (software, AES-256-GCM). The password comes from --password-file / " +
+                  "--password-env, else it is asked (twice). An incremental on an encrypted set is encrypted anyway.",
+        };
+        var encryptionOption = new Option<string?>("--encryption")
+        {
+            Description = $"Encryption scheme: {SchemeWords.EncryptionChoices}. 'hardware' (drive) is not supported " +
+                          "in this version. Software encryption rules out hardware compression.",
         };
         var appendOption = new Option<bool>("--append", "-a")
         {
@@ -106,6 +118,8 @@ internal static class BackupCommand
         cmd.Options.Add(blockSizeOption);
         cmd.Options.Add(hashOption);
         cmd.Options.Add(compressionOption);
+        cmd.Options.Add(encryptOption);
+        cmd.Options.Add(encryptionOption);
         cmd.Options.Add(appendOption);
         cmd.Options.Add(appendAfterOption);
         cmd.Options.Add(skipErrorsOption);
@@ -148,8 +162,29 @@ internal static class BackupCommand
                 throw new TapeConException(TapeConExitCode.UsageError,
                     "No backup sources specified — at least one path, folder or wildcard pattern is required.");
 
-            if (!CompressionPreset.TryParse(compressionSpec, out var compression, out var compressionLevel, out var compressionError))
+            if (!CompressionPreset.TryParse(SchemeWords.NormalizeCompression(compressionSpec),
+                    out var compression, out var compressionLevel, out var compressionError))
                 throw new TapeConException(TapeConExitCode.UsageError, compressionError);
+
+            // Design-Encryption §11.2 — the scheme, before the drive opens: a refusal costs no tape motion.
+            TapeEncryption encryption = parseResult.GetValue(encryptOption) ? TapeEncryption.Software : TapeEncryption.None;
+            if (parseResult.GetValue(encryptionOption) is { } word)
+            {
+                if (!SchemeWords.TryParseEncryption(word, out var named))
+                    throw new TapeConException(TapeConExitCode.UsageError,
+                        $"Unknown encryption >{word}<. Choices: {SchemeWords.EncryptionChoices}.");
+                if (encryption != TapeEncryption.None && named != encryption)
+                    throw new TapeConException(TapeConExitCode.UsageError, "--encrypt and --encryption disagree.");
+                encryption = named;
+            }
+            if (encryption == TapeEncryption.Hardware)
+                throw new TapeConException(TapeConExitCode.UsageError,
+                    "Hardware (drive) encryption is not supported in this version — use --encrypt (software).");
+            if (encryption != TapeEncryption.None && compression == TapeCompression.Hardware)
+                throw new TapeConException(TapeConExitCode.UsageError,
+                    "Software encryption rules out hardware compression — encrypted data does not compress. " +
+                    "Use software compression (low / medium / high), or none.");
+            char[]? password = PasswordOptions.Resolve(parseResult);
 
             // Append-after implies append
             if (appendAfter.HasValue) append = true;
@@ -185,11 +220,14 @@ internal static class BackupCommand
                 ProceedOnMediaMismatch = overwriteMedia,
                 CorrectSetNavigation = !skipSetCorrection,
                 VerifySetHeader = !skipSetVerify,
+                Encryption = encryption,
+                Password = password,        // also opens an encrypted base of an incremental; cleared by the service
             };
 
             var result = await service.ExecuteBackupAsync(options);
+
             return (int)VerbHost.ToExitCode(result.WasAborted, result.HasFailed || result.FilesFailed > 0,
-                result.SetStats.SetWriteBlocked);
+                result.SetStats.SetWriteBlocked, passwordRequired: result.ErrorCode == VerbHost.ErrorInvalidPassword);
         });
 
         return cmd;

@@ -31,6 +31,7 @@ internal static class RestoreCommand
         var cmd = new Command(name, desc);
         GlobalOptions.Attach(cmd);
         FilterOptions.Attach(cmd);
+        PasswordOptions.Attach(cmd);
 
         var setArg = new Argument<string?>("set")
         {
@@ -124,6 +125,8 @@ internal static class RestoreCommand
             //  explicit --filter / --filter-file into one selection filter.
             var resolved = FilterResolver.ResolveForSelection(rawFilters, filterFcl, filterFile);
 
+            char[]? password = PasswordOptions.Resolve(parseResult);
+
             using var service = VerbHost.BuildAndOpen(parseResult, ux, VerbHost.LifecycleSteps.Full, ct);
 
             int setIndex = 0; // default: latest set
@@ -162,11 +165,13 @@ internal static class RestoreCommand
                 ProceedOnMediaMismatch = skipMediaConfirm,
                 CorrectSetNavigation = !skipSetCorrection,
                 VerifySetHeader = !skipSetVerify,
+                Password = password,
             };
 
             var result = await service.ExecuteRestoreAsync(options);
+
             return (int)VerbHost.ToExitCode(result.WasAborted, result.HasFailed || result.FilesFailed > 0,
-                result.SetStats.SetWriteBlocked);
+                result.SetStats.SetWriteBlocked, passwordRequired: result.SetsLocked > 0);
         });
 
         return cmd;

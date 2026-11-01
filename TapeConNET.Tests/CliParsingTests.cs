@@ -39,6 +39,7 @@ public class CliParsingTests
     [InlineData("toc")]
     [InlineData("docs")]
     [InlineData("demo")]
+    [InlineData("rename-set")]
     public async Task Help_ForVerb_ReturnsOk(string verb)
     {
         var r = await TapeConHost.RunAsync(verb, "--help");

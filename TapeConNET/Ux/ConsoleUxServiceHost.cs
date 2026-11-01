@@ -326,4 +326,35 @@ public sealed class ConsoleUxServiceHost(IConsoleUx ux) : ITapeServiceHost
         => Ask("Rename Backup Set",
                $"Enter a new description for backup set #{setIndex} | {altIndex}:",
                currentDescription);
+
+    // ── ITapeServiceHost — Password prompt (Design-Encryption §10.4) ───────────
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Masked, through <see cref="IConsoleUx.AskSecret"/>. Unattended (non-interactive or quiet): skip, logged — with the
+    ///  unattended way to supply it. The returned array is cleared by the service.
+    /// </remarks>
+    public char[]? OnAskPassword(in PasswordRequest request)
+    {
+        string set = $"backup set #{request.SetIndex} | {request.AltIndex} ({request.SetDisplay})";
+        if (ux.NonInteractive || ux.QuietMode)
+        {
+            ux.Log(WarningLevel.Warning,
+                $"A password is needed for {set} — skipped (non-interactive). Supply it with --password-file or --password-env.");
+            return null;
+        }
+        if (request.LastFailure is { } failure)
+            ux.Log(WarningLevel.Warning, $"{failure.ErrorMessage} (attempt {request.Attempt})");
+        string question = request.Purpose switch
+        {
+            PasswordPurpose.NewSet => $"Password for the new encrypted {set}",
+            PasswordPurpose.NewSetConfirm => "Repeat the password",
+            PasswordPurpose.Incremental => $"Password of {set} — the incremental continues its encryption",
+            PasswordPurpose.Rename => $"Password of {set}",
+            PasswordPurpose.NewPassword => $"New password for {set}",
+            PasswordPurpose.NewPasswordConfirm => "Repeat the new password",
+            _ => $"Password for {set} (Enter to skip)",
+        };
+        return ux.AskSecret(question)?.ToCharArray();
+    }
 }

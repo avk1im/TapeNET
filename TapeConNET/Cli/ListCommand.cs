@@ -30,6 +30,7 @@ internal static class ListCommand
             "List the contents of the loaded media. Optional set range and file patterns may be specified.");
         GlobalOptions.Attach(cmd);
         FilterOptions.Attach(cmd);
+        PasswordOptions.Attach(cmd);
 
         var argsArg = new Argument<string[]>("args")
         {
@@ -68,6 +69,8 @@ internal static class ListCommand
             var filterFcl  = parseResult.GetValue(FilterOptions.Filter);
             var filterFile = parseResult.GetValue(FilterOptions.FilterFile);
 
+            char[]? password = PasswordOptions.Resolve(parseResult);
+
             using var service = VerbHost.BuildAndOpen(parseResult, ux, VerbHost.LifecycleSteps.FullOrCalibration, ct); // was .Full
 
             // Parse leading 0..2 tokens as set indexes; the rest are patterns
@@ -100,7 +103,10 @@ internal static class ListCommand
                 IncrementalOverride: noInc ? false : null,
                 ShowFullPath:        !nameOnly,
                 Filter:              resolved.Filter,
-                Depth:               setsOnly ? ListDepth.SetsOverview : ListDepth.Full);
+                Depth:               setsOnly ? ListDepth.SetsOverview : ListDepth.Full)
+            {
+                Password = password
+            };
 
             var result = await service.ListContentsAsync(options);
 

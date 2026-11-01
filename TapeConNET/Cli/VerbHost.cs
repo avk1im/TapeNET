@@ -179,18 +179,34 @@ internal static class VerbHost
     }
 
     /// <summary>
-    /// Maps a <see cref="BackupResult"/> / <see cref="RestoreResult"/>
-    /// outcome to a <see cref="TapeConExitCode"/>. Used by backup/restore/validate/verify.
+    /// Win32 <c>ERROR_INVALID_PASSWORD</c> — the service's code for "no or wrong password" (Design-Encryption §10.7).
+    /// </summary>
+    public const uint ErrorInvalidPassword = 86;
+
+    /// <summary>
+    /// Maps a <see cref="BackupResult"/> / <see cref="RestoreResult"/> outcome to a <see cref="TapeConExitCode"/>. Used by
+    ///  backup/restore/validate/verify.
     /// </summary>
     /// <param name="setWriteBlocked">
-    /// True when a destructive write was refused by set-header verification (SH-13) — the tape
-    ///  is unchanged. Checked first: a refusal is not the same as a partial failure.
+    /// True when a destructive write was refused by set-header verification (SH-13) — the tape is unchanged. Checked first:
+    ///  a refusal is not the same as a partial failure.
     /// </param>
-    public static TapeConExitCode ToExitCode(bool wasAborted, bool failed, bool setWriteBlocked = false)
+    /// <param name="passwordRequired">
+    /// Locked sets were skipped, or an encrypted backup had no password. After abort and failure: a run that also failed
+    ///  otherwise reports the failure.
+    /// </param>
+    public static TapeConExitCode ToExitCode(bool wasAborted, bool failed, bool setWriteBlocked = false,
+        bool passwordRequired = false)
     {
         if (setWriteBlocked) return TapeConExitCode.WriteRefused;
         if (wasAborted) return TapeConExitCode.Cancelled;
-        if (failed)     return TapeConExitCode.OperationFailed;
+
+        // passwordRequired ranks above failed: an encrypted backup refused for lack of a password, or a restore that
+        //  skipped locked sets, also reports HasFailed / "nothing processed" — the password is the actionable cause.
+        if (passwordRequired) return TapeConExitCode.PasswordRequired;
+        
+        if (failed) return TapeConExitCode.OperationFailed;
+
         return TapeConExitCode.Ok;
     }
 }

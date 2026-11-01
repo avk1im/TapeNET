@@ -61,6 +61,8 @@ public sealed class SilentConsoleUx : IConsoleUx
 
     public string Ask(string question, string? defaultValue = null) => defaultValue ?? string.Empty;
 
+    public string? AskSecret(string question) => null;
+
     public IProgressScope BeginProgress(string title) => new NoopProgressScope();
 
     private sealed class NoopProgressScope : IProgressScope
