@@ -60,6 +60,7 @@ public partial class TapeServiceBase
         ServiceRestoreProgressHandler? progressHandler = null;
         TapeFileRestoreBaseAgent? agent = null;
         TapeResult agentResult = TapeResult.OK;  // Note TapeResult.OK, NOT default — a default TapeResult means FAILURE 
+        int lockedSets = 0;                      // Design-Encryption §10.3: selected sets that stayed locked
 
         // +-------------------------------+--------------------------------------+-----------------------------------------------+
         // | Figure                        | Scope                                | Notes                                         |
@@ -97,9 +98,10 @@ public partial class TapeServiceBase
                 Outcome         = aborted ? ServiceReportLevel.Failed
                                     : failed ? ServiceReportLevel.Error
                                         : ServiceReportLevel.Completed,
-                SetStats = progressHandler?.SetStats ?? new(),
-                TocStats = agent is null ? default : agent.Statistics.TocStats,
-                TocAnomalies = agent is null ? [] : [.. agent.TocAnomalies],
+                SetStats        = progressHandler?.SetStats ?? new(),
+                TocStats        = agent is null ? default : agent.Statistics.TocStats,
+                TocAnomalies    = agent is null ? [] : [.. agent.TocAnomalies],
+                SetsLocked      = lockedSets,
             };
 
         if (_drive is null || !_drive.IsMediaLoaded)
@@ -170,16 +172,31 @@ public partial class TapeServiceBase
                 if (c0 == MediaMismatchChoice.ProceedAlways) suppress = true;
             }
 
-            var setIndexes = request.CheckedFilesBySet.Keys.OrderBy(i => i).ToList();
+            // Design-Encryption §10.3 — unlock BEFORE anything reads a hidden member: the filter pass, the selection, the
+            //  counts and the log below all do. A set that stays locked leaves the selection.
+            var (requested, setsLocked) = UnlockSelection(toc, request.CheckedFilesBySet, request.Password);
+            lockedSets = setsLocked;
+            if (requested.Count == 0)
+            {
+                var none = MakeResult(diagnosis: TapeResult.Fail(
+                    (uint)Windows.Win32.Foundation.WIN32_ERROR.ERROR_INVALID_PASSWORD,
+                    $"{setsLocked} set(s) locked — no password supplied"));
+                ReportFileOperationOutcome(none, modeName);
+                OnStatusUpdate($"{modeName}: nothing to do");
+                return none;
+            }
+            if (setsLocked > 0)
+                LogWarn($"{setsLocked:N0} set(s) skipped — locked");
+
+            var setIndexes = requested.Keys.OrderBy(i => i).ToList();
 
             // Apply the optional FCL/wildcard selection filter to any entry whose value
             //  is "all files in set" (null). Entries with an explicit list are kept as-is.
-            var checkedBySet = request.CheckedFilesBySet;
+            var checkedBySet = requested;
             if (request.Filter is not null)
             {
-                checkedBySet = new Dictionary<int, IReadOnlyList<TapeFileInfo>?>(
-                    request.CheckedFilesBySet.Count);
-                foreach (var kv in request.CheckedFilesBySet)
+                checkedBySet = new Dictionary<int, IReadOnlyList<TapeFileInfo>?>(requested.Count);
+                foreach (var kv in requested)
                 {
                     if (kv.Value is not null)
                     {
@@ -187,8 +204,6 @@ public partial class TapeServiceBase
                         continue;
                     }
                     int stdIdx = toc.SetIndexToStd(kv.Key);
-                    // SelectFiles returns null when the filter matches every file in the
-                    //  set — that maps cleanly back to "all files".
                     checkedBySet[kv.Key] = toc[stdIdx].SelectFiles(request.Filter);
                 }
             }
@@ -237,7 +252,7 @@ public partial class TapeServiceBase
                 toc.CurrentSetIndex = setIndex;
                 var (count, bytes) = perSet.GetValueOrDefault(setIndex);
                 LogInfoSub($"From set #{setIndex} | {toc.SetIndexToAlt(setIndex)}: " +
-                           $"{toc.CurrentSetTOC.Description}: {count:N0} file(s) ({Helpers.BytesToStringLong(bytes)})");
+                           $"{toc.CurrentSetTOC.DisplayName}: {count:N0} file(s) ({Helpers.BytesToStringLong(bytes)})");
             }
 
             if (request.Mode == RestoreMode.Restore && !string.IsNullOrEmpty(request.TargetDirectory))
@@ -420,6 +435,7 @@ public partial class TapeServiceBase
                 //  Set stats change only inside callbacks — the handler's are final.
                 TocStats = agent.Statistics.TocStats,
                 TocAnomalies = [.. agent.TocAnomalies],
+                SetsLocked = lockedSets,
             };
 
             // Ended on a volume that could not be used: no file counter shows it (nothing of that volume was
@@ -457,6 +473,8 @@ public partial class TapeServiceBase
         }
         finally
         {
+            if (request.Password is { } password)
+                Array.Clear(password);
             _agent?.Dispose();
             _agent = null;
         }

@@ -348,7 +348,20 @@ public partial class TapeSetTOC : ITapeLockableSet
         Key = null;
     }
 
-    #endregion
+    /// <summary>
+    /// Gives this unlocked encrypted set a new envelope — a password change (Design-Encryption §9.7). The set counts as
+    ///  modified, so the next save re-seals it.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">A plain or locked set.</exception>
+    internal void ReplaceEnvelope(TapeKeyEnvelope envelope)
+    {
+        ArgumentNullException.ThrowIfNull(envelope);
+        if (!IsEncrypted || IsLocked)
+            throw new InvalidOperationException($"Backup set {SetId:N} is not an unlocked encrypted set");
+        Envelope = envelope;
+    }
+
+    #endregion // *** Unlocking and locking ***
 
     #region *** Loading ***
 

@@ -127,6 +127,17 @@ public interface ITapeServiceHost
     /// <param name="currentDescription">Current set description, pre-populated in the input field.</param>
     string? OnAskBackupSetName(int setIndex, int altIndex, string currentDescription);
 
+    /// <summary>
+    /// Asks for a password (Design-Encryption §10.4). Returns the password — the service clears the array after use — or
+    ///  <see langword="null"/> to skip: the set (and the rest of its chain) is not processed, or the encrypted backup is
+    ///  refused.
+    /// </summary>
+    /// <remarks>
+    /// HOST GUIDANCE: a non-interactive host returns <see langword="null"/> and logs the auto-decision — an unattended run
+    ///  must not stall. This default does exactly that (minus the log), so a host that never asks still compiles.
+    /// </remarks>
+    char[]? OnAskPassword(in PasswordRequest request) => null;
+
     // ── Structured operation prompts ─────────────────────────────────────────
 
     /// <summary>

@@ -481,6 +481,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 _agent?.Dispose();
                 _agent = null;
+                ClearKeys();
                 _toc = null;
                 _drive?.Dispose();
 
@@ -551,6 +552,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 }
 
                 LogOk("Media loaded successfully");
+                ClearKeys();
                 LogMediaInfo();
 
                 RefreshLoadedHeader();     // §10.2 — cheap BOM probe so identity is known at load (UI + later ops)
@@ -705,6 +707,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 _agent?.Dispose();
                 _agent = null;
+                ClearKeys();
                 _toc = null;
                 _drive?.Dispose();
 
@@ -773,6 +776,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 _agent?.Dispose();
                 _agent = null;
+                ClearKeys();
                 _toc = null;
                 _drive?.Dispose();
 
@@ -901,6 +905,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         {
             _agent?.Dispose();
             _agent = null;
+            ClearKeys();
             _toc = null;
             TOCIsFrom = TOCSource.Media;
             TOCFilePath = null;
@@ -924,6 +929,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             bool wasOpen = _drive?.IsDriveOpen ?? false;
             _agent?.Dispose();
             _agent = null;
+            ClearKeys();
             _toc = null;
             _drive?.Dispose();
             _drive = null;
@@ -944,6 +950,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         _disposed = true;
 
         _agent?.Dispose();
+        _keyRing.Dispose();
         _drive?.Dispose();
 
         // Best-effort synchronous cleanup of the persistent remote connection (defined in TapeServiceBase.Remote.cs).
@@ -1028,9 +1035,10 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         {
             int setIndex = _toc.SetIndexToAlt(alt);
             var setTOC = _toc[setIndex];
-            LogInfoSub($"Set #{setIndex} | {alt}: {setTOC.Description} - {setTOC.Count} files" +
-                (setTOC.Incremental ? " [Incremental]" : "") +
-                (setTOC.DataFormat == TapeDataFormat.Legacy ? " [Legacy]" : ""));
+            LogInfoSub($"Set #{setIndex} | {alt}: {setTOC.DisplayName} - {setTOC.DisplayCount} files" +
+                (!setTOC.IsLocked && setTOC.Incremental ? " [Incremental]" : string.Empty) +
+                (setTOC.IsEncrypted ? " [Encrypted]" : string.Empty) +
+                (setTOC.DataFormat == TapeDataFormat.Legacy ? " [Legacy]" : string.Empty));
         }
     }
 
@@ -1126,6 +1134,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                     return false;
                 }
 
+                ClearKeys();
                 _toc = _agent.TOC;
                 TOCIsFrom = TOCSource.Media;
                 TOCFilePath = null;
@@ -1211,6 +1220,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 {
                     case TapeCalibrationHeader:
                         // No TOC on a calibration cartridge — never seek to EOD. Report it and stop.
+                        ClearKeys();
                         _toc = null;
                         // Log just two lines isntead if full LogCalibrationInfo() -- done either by service.list or by main window display
                         LogInfo($"Calibration cartridge — no backup TOC");
@@ -1230,6 +1240,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                         if (choice == MediaMismatchChoice.Abort)
                         {
+                            ClearKeys();
                             _toc = null;
                             LogInfo("Unidentified media — TOC search skipped");
                             OnStatusUpdate("Unidentified media");
@@ -1268,6 +1279,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                     return IdentifyMediaOutcome.Failed;
                 }
 
+                ClearKeys();
                 _toc = _agent.TOC;
                 TOCIsFrom = TOCSource.Media;
                 TOCFilePath = null;
@@ -1331,6 +1343,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                     return false;
                 }
 
+                ClearKeys();
                 _toc = _agent.TOC;
                 TOCIsFrom = TOCSource.Media;
                 TOCFilePath = null;
@@ -1559,6 +1572,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 _agent?.Dispose();
                 _agent = null;
+                ClearKeys();
                 _toc = null;
                 TOCIsFrom = TOCSource.Media;
                 TOCFilePath = null;
@@ -1591,6 +1605,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                     return false;
                 }
 
+                // ClearKeys(); already done above
                 _toc = _agent.TOC;
 
                 if (!_drive.ReloadMedia())
@@ -1636,6 +1651,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// </summary>
     public Task<bool> ImportTOCFromFileAsync(string filePath)
     {
+        ClearKeys();
         _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
         return Task.Run(async () =>
         {
@@ -1658,6 +1674,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                     return false;
                 }
 
+                ClearKeys();
                 _toc = _agent.TOC;
 
                 // Now compare the media header with the loaded _toc acc. to
@@ -1824,6 +1841,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         return await RenameMediaAsync(newName);
     }
 
+    /* Now in TapeServiceBase.Encryption.cs, since it must unlock the set first if encrypted.
     /// <summary>
     /// Renames a backup set by updating the set TOC description and writing the TOC
     ///  back to tape using <see cref="SaveTocCore"/>. A legacy TOC is upgraded to 2.1
@@ -1899,6 +1917,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
         return await RenameBackupSetAsync(setIndex, newName);
     }
+    */
 
     #endregion // TOC operations
 

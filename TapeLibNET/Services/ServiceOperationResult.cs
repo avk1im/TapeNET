@@ -195,6 +195,12 @@ public sealed record RestoreResult : FileOperationResult
     ///  progress handler. Kept for post-operation bookkeeping by callers.
     /// </summary>
     public Dictionary<int, List<TapeFileInfo>> ProcessedFiles { get; init; } = [];
+
+    /// <summary>
+    /// Selected sets skipped because they stayed locked (Design-Encryption §10.3) — no password, or a wrong one.
+    ///  Their files are unknown and appear in no file counter.
+    /// </summary>
+    public int SetsLocked { get; init; }
 }
 
 // ── Calibrate ────────────────────────────────────────────────────────────────

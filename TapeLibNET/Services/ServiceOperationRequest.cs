@@ -1,6 +1,7 @@
 using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
 using TapeLibNET.Compression;
+using TapeLibNET.Encryption;
 using TapeLibNET.Scan; // MediaScanMap
 using TapeLibNET.Toc;
 
@@ -106,6 +107,19 @@ public sealed record BackupRequest(
     ///  for it (§3 of the design), so there is no speed to buy.
     /// </remarks>
     public bool VerifySetHeader { get; init; } = true;
+
+    /// <summary>
+    /// Encrypt the new set (Design-Encryption §10.2). v1: <see cref="TapeEncryption.None"/> or
+    ///  <see cref="TapeEncryption.Software"/>. An incremental on an encrypted set is encrypted like it,
+    ///  whatever this says.
+    /// </summary>
+    public TapeEncryption Encryption { get; init; } = TapeEncryption.None;
+
+    /// <summary>
+    /// The password of a new encrypted set, or of the encrypted base of an incremental. Absent: asked
+    ///  (<see cref="ITapeServiceHost.OnAskPassword"/>). The service clears the array after use.
+    /// </summary>
+    public char[]? Password { get; init; }
 }
 
 // ── Restore ──────────────────────────────────────────────────────────────────
@@ -161,6 +175,11 @@ public sealed record RestoreRequest(
     ///  free, so there is no speed to buy.
     /// </remarks>
     public bool VerifySetHeader { get; init; } = true;
+
+    /// <summary>
+    /// Tried on locked sets before asking (unattended use: CLI <c>--password-file</c>). The service clears it after use.
+    /// </summary>
+    public char[]? Password { get; init; }
 
 }
 
@@ -280,7 +299,13 @@ public sealed record ListRequest(
     bool? IncrementalOverride = null,
     bool ShowFullPath = true,
     ITapeFileFilter? Filter = null,
-    ListDepth Depth = ListDepth.Full) : ServiceOperationRequest;
+    ListDepth Depth = ListDepth.Full) : ServiceOperationRequest
+{
+    /// <summary>
+    /// Tried on locked sets before asking (unattended use: CLI <c>--password-file</c>). The service clears it after use.
+    /// </summary>
+    public char[]? Password { get; init; }
+}
 
 // ── Scan Media ───────────────────────────────────────────────────────────────
 

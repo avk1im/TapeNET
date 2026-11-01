@@ -1,4 +1,5 @@
 using TapeLibNET.Compression;
+using TapeLibNET.Encryption;
 using TapeLibNET.Headers;
 using TapeLibNET.Toc;
 
@@ -134,37 +135,64 @@ public partial class TapeServiceBase
     }
 
     /// <summary>One backup set. Makes it the TOC's current set (the continuation flags are relative to it).</summary>
+    /// <remarks>A locked set shows its plain stub only (Design-Encryption §10.6) — never a hidden value.</remarks>
     /// <param name="setIndex">Standard (1-based) set index.</param>
     public IReadOnlyList<ServiceProperty> DescribeSet(int setIndex)
     {
         if (_toc is not TapeTOC toc)
             return [];
-
         toc.CurrentSetIndex = setIndex;
         var set = toc.CurrentSetTOC;
+        uint blockSize = _drive?.DefaultBlockSize ?? 0;
 
-        return
-        [
+        ServiceProperty encryption = new("Encryption",
+            EncryptionPreset.DisplayName(set.Encryption) + (set.IsLocked ? " — locked" : string.Empty),
+            set.IsLocked ? ServiceReportLevel.Warning : ServiceReportLevel.None);
+        ServiceProperty continuedFrom = new("Continued from Previous Volume",
+            toc.IsCurrentSetContFromPrevVolume ? "Yes, directly"
+            : !set.IsLocked && toc.IsCurrentSetContFromPrevVolumeInc ? "Yes, incrementally"
+            : "No");
+        ServiceProperty continuedOn = new("Continued on Next Volume", YesNo(toc.IsCurrentSetContOnNextVolume));
+
+        long totalFileSizeOnTape = set.ComputeTotalFileSizeOnTape(blockSize);
+
+        if (set.IsLocked)
+        {
+            return
+            [
+                new("Description", set.DisplayName),
+                new("Set Index", $"#{setIndex} | {toc.SetIndexToAlt(setIndex)}"),
+                encryption,
+                new("Total File Size on Media", Helpers.BytesToStringLong(totalFileSizeOnTape)),
+                new("Data Format", DescribeDataFormat(set)),
+                new("Volume", $"#{set.Volume}"),
+                continuedFrom,
+                continuedOn,
+            ];
+        }
+
+        var props = new List<ServiceProperty>
+        {
             new("Description", set.Description ?? "(unnamed)"),
             new("Set Index", $"#{setIndex} | {toc.SetIndexToAlt(setIndex)}"),
             new("Files", set.Count.ToString("N0")),
-            new("Total File Size", Helpers.BytesToStringLong(set.Sum(tfi => tfi.FileDescr.Length))),
-            new("Total File Size on Media",
-                Helpers.BytesToStringLong(set.ComputeTotalFileSizeOnTape(_drive?.DefaultBlockSize ?? 0))),
+            new("Total File Size", Helpers.BytesToStringLong(set.TotalFileSize)),
+            new("Total File Size on Media", Helpers.BytesToStringLong(totalFileSizeOnTape)),
             new("Created On", set.CreationTime.ToLocalTime().ToString("G")),
             new("Last Saved", set.LastSaveTime.ToLocalTime().ToString("G")),
             new("Block Size", Helpers.BytesToStringLong(set.BlockSize)),
             new("Hash Algorithm", set.HashAlgorithm.ToString()),
             new("Compression", CompressionPreset.DisplayName(set.Compression, set.CompressionLevel)),
-            new("Data Format", DescribeDataFormat(set)),
-            new("Incremental", YesNo(set.Incremental)),
-            new("Volume", $"#{set.Volume}"),
-            new("Continued from Previous Volume",
-                toc.IsCurrentSetContFromPrevVolume ? "Yes, directly"
-                : toc.IsCurrentSetContFromPrevVolumeInc ? "Yes, incrementally"
-                : "No"),
-            new("Continued on Next Volume", YesNo(toc.IsCurrentSetContOnNextVolume)),
-        ];
+        };
+
+        if (set.IsEncrypted)
+            props.Add(encryption);
+        props.Add(new("Data Format", DescribeDataFormat(set)));
+        props.Add(new("Incremental", YesNo(set.Incremental)));
+        props.Add(new("Volume", $"#{set.Volume}"));
+        props.Add(continuedFrom);
+        props.Add(continuedOn);
+        return props;
     }
 
     /// <summary>

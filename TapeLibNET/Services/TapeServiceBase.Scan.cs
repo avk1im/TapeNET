@@ -433,6 +433,7 @@ public partial class TapeServiceBase
 
         _agent?.Dispose();
         _agent = null;
+        ClearKeys();
         _toc = toc;
         TOCIsFrom = TOCSource.Recovered;
         TOCFilePath = savedPath;
