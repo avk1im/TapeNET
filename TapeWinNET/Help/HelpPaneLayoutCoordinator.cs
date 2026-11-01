@@ -4,73 +4,108 @@ namespace TapeWinNET.Help;
 
 
 /// <summary>
-/// Handles the geometry negotiation when a HelpPane is opened adjacent to a
-/// dialog window (<see cref="HelpPaneHostMode.Adjacent"/>).
+/// Window geometry for a HelpPane opened adjacent to a dialog
+/// (<see cref="HelpPaneHostMode.Adjacent"/>); used by <see cref="DialogHelpPaneController"/>.
 /// </summary>
 /// <remarks>
-/// Strategy:
+/// Opening:
 /// <list type="number">
-///   <item>Try to expand the window to the right by <c>desiredWidth</c>.</item>
-///   <item>If that runs off the work area, shift the window left until it fits.</item>
-///   <item>If there is still not enough room, clamp the width to whatever remains.</item>
+///   <item>Widen the window to the right by the pane width plus the splitter.</item>
+///   <item>If the window now overruns the work area's right edge, shift it left
+///         (but never past the left edge).</item>
+///   <item>If the window is lower than the minimal height, grow it, shifting it up
+///         if it overruns the bottom edge; the original height is remembered.</item>
 /// </list>
+/// Closing reverses the width change (never below the dialog's content width) and
+///  restores the remembered height. The window is not shifted back, to avoid jarring movement.
+/// <para/>
+/// The pure <c>Compute*</c> functions take an explicit work area and are the testable core;
+///  the <see cref="Window"/> overloads apply their results.
 /// </remarks>
 public static class HelpPaneLayoutCoordinator
 {
-    /// <summary>
-    /// Adjusts <paramref name="window"/>'s position and size so that
-    /// <paramref name="desiredWidth"/> extra pixels fit to its right.
-    /// Uses <see cref="SystemParameters.WorkArea"/> as the available screen area.
-    /// </summary>
-    /// <returns>
-    /// The actual width that was accommodated (may be less than
-    /// <paramref name="desiredWidth"/> when screen space is tight).
-    /// </returns>
-    public static double OpenAdjacent(Window window, double desiredWidth)
-        => OpenAdjacent(window, desiredWidth, SystemParameters.WorkArea);
+    /// <summary>Width of the <c>GridSplitter</c> between dialog content and pane.</summary>
+    public const double SplitterWidth = 4.0;
+
+    /// <summary>Minimal width of the pane column while open.</summary>
+    public const double MinPaneWidth = 200.0;
+
+    /// <summary>Window bounds plus the original height to restore on close (or <c>null</c>).</summary>
+    public readonly record struct Layout(double Left, double Top, double Width, double Height, double? OriginalHeight);
+
+    // ── Pure geometry (testable core) ─────────────────────────────────────────
 
     /// <summary>
-    /// Adjusts <paramref name="window"/>'s position and size so that
-    /// <paramref name="desiredWidth"/> extra pixels fit to its right,
-    /// constraining movement to <paramref name="workArea"/>.
+    /// Computes the window bounds after opening a pane of <paramref name="paneWidth"/>.
     /// </summary>
-    /// <remarks>
-    /// This overload is the testable core; the single-argument public overload
-    /// delegates here supplying <see cref="SystemParameters.WorkArea"/>.
-    /// </remarks>
-    /// <returns>
-    /// The actual width that was accommodated (may be less than
-    /// <paramref name="desiredWidth"/> when screen space is tight).
-    /// </returns>
-    internal static double OpenAdjacent(Window window, double desiredWidth, Rect workArea)
+    internal static Layout ComputeOpen(
+        Rect window, double paneWidth, double minimalHeight, Rect workArea)
     {
-        // Clamp minimum pane width to something usable
-        const double MinPaneWidth = 200;
+        double left   = window.Left;
+        double top    = window.Top;
+        double width  = window.Width + paneWidth + SplitterWidth;
+        double height = window.Height;
+        double? originalHeight = null;
 
-        double windowRight = window.Left + window.Width;
-        double available   = workArea.Right - windowRight;
+        // Shift left if the widened window protrudes beyond the right edge
+        double overhang = (left + width) - workArea.Right;
+        if (overhang > 0)
+            left = Math.Max(workArea.Left, left - overhang);
 
-        if (available >= desiredWidth)
+        // Grow to the minimal height; shift up if it protrudes beyond the bottom edge
+        if (height < minimalHeight)
         {
-            // Enough room to the right — no need to shift
-            return desiredWidth;
+            originalHeight = height;
+            height = minimalHeight;
+
+            overhang = (top + height) - workArea.Bottom;
+            if (overhang > 0)
+                top = Math.Max(workArea.Top, top - overhang);
         }
 
-        // Try shifting the window left to make room
-        double shortfall = desiredWidth - available;
-        double newLeft   = Math.Max(workArea.Left, window.Left - shortfall);
-        double gained    = window.Left - newLeft;
-        available       += gained;
-        window.Left      = newLeft;
-
-        // Clamp to screen edge
-        double actual = Math.Max(MinPaneWidth, Math.Min(desiredWidth, available));
-        return actual;
+        return new Layout(left, top, width, height, originalHeight);
     }
 
     /// <summary>
-    /// Restores a dialog to its original position after the HelpPane is closed.
-    /// Currently a no-op (windows are not shifted back, to avoid jarring movement).
+    /// Computes the window width after closing a pane whose column was
+    /// <paramref name="paneActualWidth"/> wide; never below <paramref name="contentWidth"/>.
     /// </summary>
-    public static void Close(Window window) { /* intentionally empty */ }
+    internal static double ComputeClosedWidth(double windowWidth, double paneActualWidth, double contentWidth)
+        => Math.Max(contentWidth, windowWidth - (paneActualWidth + SplitterWidth));
+
+    // ── Window operations ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Resizes/moves <paramref name="window"/> to make room for a pane of
+    /// <paramref name="paneWidth"/> using <see cref="SystemParameters.WorkArea"/>.
+    /// </summary>
+    /// <returns>The original height to restore on close, or <c>null</c> if unchanged.</returns>
+    public static double? OpenAdjacent(Window window, double paneWidth, double minimalHeight)
+        => OpenAdjacent(window, paneWidth, minimalHeight, SystemParameters.WorkArea);
+
+    /// <inheritdoc cref="OpenAdjacent(Window, double, double)"/>
+    internal static double? OpenAdjacent(Window window, double paneWidth, double minimalHeight, Rect workArea)
+    {
+        var layout = ComputeOpen(
+            new Rect(window.Left, window.Top, window.Width, window.Height),
+            paneWidth, minimalHeight, workArea);
+
+        window.Width  = layout.Width;
+        window.Left   = layout.Left;
+        window.Height = layout.Height;
+        window.Top    = layout.Top;
+        return layout.OriginalHeight;
+    }
+
+    /// <summary>
+    /// Shrinks <paramref name="window"/> back after the pane closes and restores
+    /// <paramref name="originalHeight"/> when supplied.
+    /// </summary>
+    public static void CloseAdjacent(
+        Window window, double paneActualWidth, double contentWidth, double? originalHeight)
+    {
+        window.Width = ComputeClosedWidth(window.Width, paneActualWidth, contentWidth);
+        if (originalHeight is > 0.0)
+            window.Height = originalHeight.Value;
+    }
 }

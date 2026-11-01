@@ -48,7 +48,8 @@ public static class AiSessionFactory
         AiProviderPreferences preferences,
         CancellationToken ct,
         ILogger? logger = null,
-        IAiSecretStore? secretStore = null)
+        IAiSecretStore? secretStore = null,
+        IAiProviderRegistry? registry = null)
     {
         logger ??= NullLogger.Instance;
         AiProviderConfig? config = null;
@@ -119,14 +120,16 @@ public static class AiSessionFactory
         if (config is null || provider is null)
         {
             // ── 3. Run discovery (parallel, with per-provider progress) ─────────
-            var registry = new LanHostsRegistry();
-            var lanHosts = registry.GetAll();
+            // The provider registry, when supplied, is authoritative; the legacy
+            //  flat LAN host list is only a fallback.
+            var lanHosts = registry is null ? new LanHostsRegistry().GetAll() : [];
 
             var options = new AiProviderDiscoveryOptions(
                 ProbeLocalhost: true,
                 LanEndpoints: lanHosts.Count > 0 ? lanHosts : null,
                 CheckEnvironmentVariables: true,
                 SecretStore: secretStore,
+                Registry: registry,
                 KnownCloudEndpoints: preferences.LastEndpoint is { } lastEp &&
                                      preferences.LastProviderKind is { } lastKind
                     ? new Dictionary<AiProviderKind, Uri> { [lastKind] = lastEp }
@@ -189,6 +192,104 @@ public static class AiSessionFactory
 
         Debug.Assert(config is not null, "Config should have been set by provider selection or auto-reuse.");
         Debug.Assert(provider is not null, "Provider should have been resolved from catalog or auto-reuse.");
+
+        return await BuildFromConfigAsync(config, catalog, interaction, ct, logger, secretStore);
+    }
+
+    /// <summary>
+    /// Silently restores the provider / model persisted in <paramref name="preferences"/>:
+    ///  probes it with any stored credential and builds a session when healthy.
+    ///  Never prompts the user.
+    /// </summary>
+    /// <returns>
+    /// A live <see cref="IAiSession"/>, or <c>null</c> when nothing is stored or
+    ///  the stored provider is unavailable, unhealthy, or lacks a stored key.
+    /// </returns>
+    public static async Task<IAiSession?> TryRestoreAsync(
+        IAiProviderCatalog catalog,
+        AiProviderPreferences preferences,
+        CancellationToken ct,
+        ILogger? logger = null,
+        IAiSecretStore? secretStore = null)
+    {
+        logger ??= NullLogger.Instance;
+        if (preferences.LastProviderKind is not { } kind || preferences.LastEndpoint is not { } endpoint)
+            return null;
+
+        var provider = catalog.Find(kind);
+        if (provider is null)
+            return null;
+
+        var apiKey = secretStore?.Load(AiSecretKey.For(kind, endpoint));
+        if (provider.Descriptor.RequiresApiKey && string.IsNullOrEmpty(apiKey))
+        {
+            logger.LogWarning("Stored provider '{Provider}' has no stored key.", provider.Descriptor.DisplayName);
+            return null;
+        }
+
+        AiProviderProbeResult probe;
+        try
+        {
+            probe = await provider.ProbeAsync(endpoint, apiKey, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            logger.LogWarning(ex, "Probing stored provider '{Provider}' failed.", provider.Descriptor.DisplayName);
+            return null;
+        }
+
+        if (!probe.IsHealthy)
+        {
+            logger.LogWarning("Stored provider '{Provider}' is not healthy: {Error}",
+                provider.Descriptor.DisplayName, probe.ErrorMessage ?? "connection failed");
+            return null;
+        }
+
+        // The stored model must still be offered; otherwise the selection no longer works.
+        var chatModelId = preferences.LastChatModelId;
+        if (chatModelId is not null && probe.DiscoveredChatModels.Count > 0 &&
+            !probe.DiscoveredChatModels.Contains(chatModelId))
+        {
+            logger.LogWarning("Stored chat model '{ChatModel}' is no longer offered by '{Provider}'.",
+                chatModelId, provider.Descriptor.DisplayName);
+            return null;
+        }
+
+        var config = new AiProviderConfig(
+            provider.Descriptor, endpoint, apiKey, chatModelId, preferences.LastEmbeddingModelId);
+
+        logger.LogInformation("Restored stored provider '{Provider}'.", config.DisplayLabel);
+        return new AiSession(catalog, config,
+            provider.CreateChatClient(config), provider.CreateEmbeddingGenerator(config));
+    }
+
+    /// <summary>
+    /// Builds a session for an explicitly chosen provider configuration, e.g. one
+    ///  selected by the user in a provider-management UI. Skips discovery and
+    ///  selection; prompts for credentials when required and verifies them.
+    /// </summary>
+    /// <returns>
+    /// A live <see cref="IAiSession"/>, or <c>null</c> if the user cancelled the
+    ///  credential prompt or the provider could not be reached.
+    /// </returns>
+    public static async Task<IAiSession?> BuildFromConfigAsync(
+        AiProviderConfig config,
+        IAiProviderCatalog catalog,
+        IAiInteraction interaction,
+        CancellationToken ct,
+        ILogger? logger = null,
+        IAiSecretStore? secretStore = null)
+    {
+        logger ??= NullLogger.Instance;
+        if (config.IsNone)
+            return null;
+
+        var provider = catalog.Find(config.Descriptor.Kind);
+        if (provider is null)
+        {
+            logger.LogError("No provider registered for kind '{Kind}'.", config.Descriptor.Kind);
+            return null;
+        }
 
         // ── 6. Prompt for credentials and verify — retry until valid or cancelled ──
         //  We loop here so that a failed API-key / bad-endpoint can be corrected

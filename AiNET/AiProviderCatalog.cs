@@ -44,6 +44,7 @@ public sealed class AiProviderCatalog : IAiProviderCatalog
         var catalog = new AiProviderCatalog();
         catalog.Register(new Providers.OllamaProvider());
         catalog.Register(new Providers.LmStudioProvider());
+        catalog.Register(new Providers.OvmsProvider());
         catalog.Register(new Providers.OnnxProvider());
         catalog.Register(new Providers.OpenAiCompatibleProvider());
         catalog.Register(new Providers.OpenAiProvider());

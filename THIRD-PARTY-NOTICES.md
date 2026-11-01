@@ -81,3 +81,11 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
+
+---
+
+## all-MiniLM-L6-v2 (help embedding model, TapeWin only)
+
+**Source:** https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2  
+**Files:** HelpModel\model.onnx, HelpModel\vocab.txt  
+**License:** Apache License 2.0 - https://www.apache.org/licenses/LICENSE-2.0

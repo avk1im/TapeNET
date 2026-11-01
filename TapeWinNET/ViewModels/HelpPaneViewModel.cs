@@ -164,8 +164,7 @@ public sealed class HelpPaneViewModel : ViewModelBase, IAsyncDisposable
     // ── Events ────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Raised by <see cref="CloseCommand"/> to let the host window (or
-    /// <see cref="Controls.HelpPaneWindow"/>) close itself.
+    /// Raised by <see cref="CloseCommand"/> to let the host window close itself.
     /// </summary>
     public event EventHandler? PaneCloseRequested;
 

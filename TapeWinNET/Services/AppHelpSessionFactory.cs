@@ -37,9 +37,9 @@ public static class AppHelpSessionFactory
     public static async Task<IHelpSession> CreateAsync(
         IHelpPaneHost host, string homeTopicId = "home", CancellationToken ct = default)
     {
-        // Obtain the AI session silently — if not yet configured, returns null
-        //  and the session falls back to Lexical mode.
-        var aiSession = await App.AiSessionHost.EnsureAsync(promptUser: false, ct);
+        // Obtain the AI session — restored from settings, or (once per app session)
+        //  set up via the provider manager. If none, the session falls back to Lexical mode.
+        var aiSession = await App.AiSessionHost.EnsureAsync(promptUser: true, ct);
 
         var options = new HelpSessionOptions(
             HomeTopicId:          homeTopicId,
@@ -47,6 +47,6 @@ public static class AppHelpSessionFactory
             MaxConversationTurns: 20);
 
         return await HelpSessionFactory.CreateAsync(
-            ContentSource, aiSession, options, ct: ct);
+            ContentSource, aiSession, options, HelpEmbeddingModelLoader.Options, ct);
     }
 }

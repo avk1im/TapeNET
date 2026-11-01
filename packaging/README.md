@@ -42,6 +42,15 @@ This will:
 | `-Configuration <name>` | Build configuration (default `Release`). |
 | `-Version <x.y.z.b>` | Override the version stamped into installer names/metadata. |
 | `-SkipPublish` | Reuse existing `dist\` output and only recompile the `.iss` scripts. |
+| `-AllowLexicalHelp` | Package TapeWin even if the help embedding model (`HelpModel\`) is missing; help then runs without semantic search. |
+
+### Help embedding model (semantic search)
+
+The TapeWinNET build copies `model.onnx` + `vocab.txt` from `HelpEmbeddingModelDir` (default
+`%USERPROFILE%\ONNX\Models\all-MiniLM-L6-v2`) into `HelpModel\` and embeds the matching vectors;
+`tapewin.iss` installs it with the rest of `dist\tapewin\`. The build machine therefore needs the model
+folder (or `-p:HelpEmbeddingModelDir=...`); otherwise the script stops. Ship the model's license
+(all-MiniLM-L6-v2: Apache-2.0) via `THIRD-PARTY-NOTICES.md`. Details: `docs\Design-HelpContent.md` §5.2.
 
 Examples:
 

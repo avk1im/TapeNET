@@ -28,6 +28,12 @@ namespace AiNET.Tests;
 /// <c>AINET_REMOTE_ENDPOINT</c>, <c>AINET_REMOTE_CHAT_MODEL</c>,
 /// <c>AINET_REMOTE_EMBEDDING_MODEL</c>.
 /// </para>
+/// <para>
+/// The embedding tests cover AiNET's provider embedding API for completeness. Help search
+///  primarily uses the bundled ONNX model (see <c>TapeWinNET.Tests.HelpSemanticSearchWorkflowTests</c>);
+///  a provider generator is only a fallback, and only when it serves the very model the help
+///  bundle was indexed with. They skip unless <c>EmbeddingModel</c> is configured.
+/// </para>
 /// </summary>
 public class OpenAiCompatibleIntegrationTests
 {
@@ -203,7 +209,7 @@ public class OpenAiCompatibleIntegrationTests
     private AiProviderConfig MakeChatConfig(string chatModelId) =>
         new(
             Descriptor:       _provider.Descriptor,
-            Endpoint:         Settings.Endpoint!,
+            Endpoint:         _cachedProbe?.Endpoint ?? Settings.Endpoint!,
             ApiKey:           null,
             ChatModelId:      chatModelId,
             EmbeddingModelId: null);
@@ -211,7 +217,7 @@ public class OpenAiCompatibleIntegrationTests
     private AiProviderConfig MakeEmbeddingConfig(string embeddingModelId) =>
         new(
             Descriptor:       _provider.Descriptor,
-            Endpoint:         Settings.Endpoint!,
+            Endpoint:         _cachedProbe?.Endpoint ?? Settings.Endpoint!,
             ApiKey:           null,
             ChatModelId:      null,
             EmbeddingModelId: embeddingModelId);
