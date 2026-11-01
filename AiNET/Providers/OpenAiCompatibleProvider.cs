@@ -19,9 +19,9 @@ namespace AiNET.Providers;
 /// <see cref="CreateChatClient"/> can route requests correctly without any
 /// additional configuration.
 /// </remarks>
-public sealed class OpenAiCompatibleProvider : IAiProvider
+public class OpenAiCompatibleProvider : IAiProvider
 {
-    private static readonly AiProviderDescriptor _descriptor = new(
+    private static readonly AiProviderDescriptor _defaultDescriptor = new(
         Kind:            AiProviderKind.OpenAiCompatible,
         Location:        AiProviderLocation.LocalNetwork,
         DisplayName:     "OpenAI-compatible (LAN)",
@@ -29,17 +29,36 @@ public sealed class OpenAiCompatibleProvider : IAiProvider
         RequiresApiKey:  false,
         Capabilities:    AiCapabilities.Chat | AiCapabilities.Embeddings | AiCapabilities.Tools);
 
-    /// <inheritdoc/>
-    public AiProviderDescriptor Descriptor => _descriptor;
-
     // Known model-list paths tried in order; first success wins.
     // The associated version-base path is embedded into the returned endpoint
     //  so CreateChatClient/CreateEmbeddingGenerator can pass it verbatim to the
     //  OpenAI SDK without any extra configuration.
     // /v1/models  — standard OpenAI / Ollama / LM Studio
     // /v3/models  — OpenVINO Model Server (OVMS)
-    private static readonly (string ModelsPath, string VersionBase)[] _modelsPaths =
+    private static readonly (string ModelsPath, string VersionBase)[] _defaultModelsPaths =
         [("/v1/models", "/v1"), ("/v3/models", "/v3")];
+
+    private readonly AiProviderDescriptor _descriptor;
+    private readonly (string ModelsPath, string VersionBase)[] _modelsPaths;
+
+    /// <summary>Creates the generic OpenAI-compatible provider (probes /v1, then /v3).</summary>
+    public OpenAiCompatibleProvider()
+        : this(_defaultDescriptor, _defaultModelsPaths) { }
+
+    /// <summary>
+    /// Creates a specialised OpenAI-compatible provider with its own descriptor
+    ///  and model-list paths (e.g. <see cref="OvmsProvider"/>).
+    /// </summary>
+    protected OpenAiCompatibleProvider(
+        AiProviderDescriptor descriptor,
+        (string ModelsPath, string VersionBase)[] modelsPaths)
+    {
+        _descriptor  = descriptor;
+        _modelsPaths = modelsPaths;
+    }
+
+    /// <inheritdoc/>
+    public AiProviderDescriptor Descriptor => _descriptor;
 
     /// <inheritdoc/>
     public async Task<AiProviderProbeResult> ProbeAsync(
@@ -117,6 +136,6 @@ public sealed class OpenAiCompatibleProvider : IAiProvider
             .AsIEmbeddingGenerator();
     }
 
-    private static AiProviderProbeResult Unhealthy(Uri ep, TimeSpan lat, string err) =>
+    private AiProviderProbeResult Unhealthy(Uri ep, TimeSpan lat, string err) =>
         new(_descriptor, ep, false, [], [], lat, err);
 }

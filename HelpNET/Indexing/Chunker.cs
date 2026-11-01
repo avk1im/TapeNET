@@ -112,9 +112,14 @@ public sealed class Chunker
                 overlapTokensAccumulated -= ApproxTokens(oldest);
             }
 
+            // Replay the overlap into the text buffer only — the blocks are already in the
+            //  overlap window, so re-enqueuing them (via AppendBlock) would modify the queue
+            //  during enumeration and duplicate the window.
             foreach (var ob in overlapBuffer)
             {
-                AppendBlock(ob);
+                if (buffer.Length > 0) buffer.Append(' ');
+                buffer.Append(ob);
+                bufferTokens += ApproxTokens(ob);
             }
         }
 

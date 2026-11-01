@@ -2,13 +2,13 @@ using System.Windows;
 
 using TapeWinNET.ViewModels;
 
-namespace TapeWinNET.Controls;
+namespace TapeWinNET.Tests;
 
 
 /// <summary>
-/// Lightweight tool window that hosts a <see cref="HelpPane"/> for dialogs
-/// that use <see cref="Help.HelpPaneHostMode.Adjacent"/> mode.
-/// The window is owned by the calling dialog so it moves/minimises with it.
+/// Test-only tool window that hosts a <see cref="Controls.HelpPane"/>; handy for
+/// manually exercising the pane and <see cref="Help.HelpPaneLayoutCoordinator"/>
+/// outside a production dialog. Not shipped with TapeWinNET.
 /// </summary>
 public partial class HelpPaneWindow : Window
 {

@@ -49,4 +49,12 @@ public sealed class AiProviderPreferences
     /// </summary>
     [JsonPropertyName("lastEmbeddingModelId")]
     public string? LastEmbeddingModelId { get; set; }
+
+    /// <summary>
+    /// <see langword="true"/> when the user explicitly chose "none" (no AI
+    ///  assistance), as opposed to no provider being configured or the stored
+    ///  one failing. Hosts should then not prompt for a provider on their own.
+    /// </summary>
+    [JsonPropertyName("userChoseNone")]
+    public bool UserChoseNone { get; set; }
 }

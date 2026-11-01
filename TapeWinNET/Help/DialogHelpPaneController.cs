@@ -29,9 +29,7 @@ namespace TapeWinNET.Help;
 /// </remarks>
 public sealed class DialogHelpPaneController
 {
-    private const double SplitterWidth = 4.0;
-
-    // Help-button labels for each state. The Help/Close labels carry the access
+    // Help-button labels
     //  key on "Help"; the Loading label needs none since the button is disabled.
     private const string IdleLabel    = "_Help ▶";
     private const string LoadingLabel = "Loading\u2026";
@@ -46,7 +44,7 @@ public sealed class DialogHelpPaneController
     private readonly double             _defaultWidth;
     private readonly double             _mininimalHeight;
 
-    private double _originalHeight = -1.0; // captured on first pane open, used to restore window height when the pane closes
+    private double? _originalHeight; // set when opening the pane grew the window, restored on close
 
     // Optional toggle button this controller drives (label + enabled state).
     private readonly Button?            _helpButton;
@@ -127,32 +125,12 @@ public sealed class DialogHelpPaneController
     /// <summary>Expands the window to the right to reveal the pane, shifting left if needed.</summary>
     public void OnPaneOpening(double desiredWidth)
     {
-        // Expand the dialog to the right to make room for splitter + pane
-        _window.Width += desiredWidth + SplitterWidth;
-
-        // If the window now protrudes beyond the right edge of the work area,
-        //  shift it left until it fits (or clamp to the left edge)
-        var workArea = SystemParameters.WorkArea;
-        var overhang = (_window.Left + _window.Width) - workArea.Right;
-        if (overhang > 0)
-            _window.Left = Math.Max(workArea.Left, _window.Left - overhang);
-
-        // Check if the dialog height is at least _minimalHeight, expand downwards otehrwise
-        if (_window.Height < _mininimalHeight)
-        {
-            _originalHeight = _window.Height; // capture the original height on first open
-            _window.Height = _mininimalHeight;
-
-            // If the window now protrudes beyond the bottom edge of the work area,
-            // shift it up until it fits
-            overhang = (_window.Top + _window.Height) - workArea.Bottom;
-            if (overhang > 0)
-                _window.Top = Math.Max(workArea.Top, _window.Top - overhang);
-        }
+        // Expand (and if needed shift / heighten) the dialog to make room for splitter + pane
+        _originalHeight = HelpPaneLayoutCoordinator.OpenAdjacent(_window, desiredWidth, _mininimalHeight);
 
         // Reveal the new column and splitter
         _paneColumn.Width    = new GridLength(desiredWidth, GridUnitType.Pixel);
-        _paneColumn.MinWidth = 200;
+        _paneColumn.MinWidth = HelpPaneLayoutCoordinator.MinPaneWidth;
         _splitter.Visibility = Visibility.Visible;
     }
 
@@ -175,15 +153,10 @@ public sealed class DialogHelpPaneController
             return; // CloseCommand → ExecuteClose → OnPaneClosed re-enters with IsPaneOpen = false
         }
 
-        // Shrink the window back to the dialog-content-only width...
-        var removedWidth = _paneColumn.ActualWidth + SplitterWidth; // pane + splitter
-        _window.Width = Math.Max(_dialogContentWidth, _window.Width - removedWidth);
-        //  ...and original height
-        if (_originalHeight > 0.0)
-        {
-            _window.Height = _originalHeight;
-            _originalHeight = -1.0; // reset
-        }
+        // Shrink the window back to the dialog-content-only width and original height
+        HelpPaneLayoutCoordinator.CloseAdjacent(
+            _window, _paneColumn.ActualWidth, _dialogContentWidth, _originalHeight);
+        _originalHeight = null;
 
         _paneColumn.Width    = new GridLength(0);
         _paneColumn.MinWidth = 0;

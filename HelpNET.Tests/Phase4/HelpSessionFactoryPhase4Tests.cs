@@ -163,10 +163,10 @@ public class HelpSessionFactoryPhase4Tests
     }
 
     [Fact]
-    public async Task ProviderEmbeddings_PreferDisabled_ModelIdMatches_IgnoresProvider()
+    public async Task ProviderEmbeddings_PreferDisabled_ModelIdMatches_IsRag()
     {
-        // PreferProviderEmbeddings is false → provider embedding generator is ignored,
-        // no ONNX options supplied → no embedding gen → Rag (lexical-only).
+        // PreferProviderEmbeddings is false and no ONNX options → the matching provider
+        // generator serves as fallback → Rag (hybrid retrieval).
         var (bundle, _) = await BundleBuilder.BuildFromFixtureAsync();
 
         var aiSession = new FakeAiSession(
@@ -182,8 +182,35 @@ public class HelpSessionFactoryPhase4Tests
             options,
             ct: CancellationToken.None);
 
-        // PreferProviderEmbeddings is false and no ONNX options → lexical-only Rag.
         Assert.Equal(HelpAssistantMode.Rag, session.AssistantMode);
+    }
+
+    [Fact]
+    public async Task ProviderEmbeddings_NoOnnx_ModelIdMatches_FallsBackToProvider_IsSemantic()
+    {
+        // Bundled ONNX model unavailable → provider serving the bundle's model is the fallback.
+        var (bundle, _) = await BundleBuilder.BuildFromFixtureAsync();
+        var source      = new BundledInMemorySource(TestContentFixture.CreateSource(), bundle);
+        var aiSession   = new FakeAiSession(AiCapabilities.Embeddings, BundleBuilder.TestModelId);
+
+        await using var session = await HelpSessionFactory.CreateAsync(
+            source, aiSession, new HelpSessionOptions(), onnxOptions: null, ct: CancellationToken.None);
+
+        Assert.Equal(HelpAssistantMode.Semantic, session.AssistantMode);
+    }
+
+    [Fact]
+    public async Task ProviderEmbeddings_NoOnnx_ModelIdMismatch_IsLexical()
+    {
+        // A different embedding model lives in an incompatible vector space → never used.
+        var (bundle, _) = await BundleBuilder.BuildFromFixtureAsync();
+        var source      = new BundledInMemorySource(TestContentFixture.CreateSource(), bundle);
+        var aiSession   = new FakeAiSession(AiCapabilities.Embeddings, "some-other-model");
+
+        await using var session = await HelpSessionFactory.CreateAsync(
+            source, aiSession, new HelpSessionOptions(), onnxOptions: null, ct: CancellationToken.None);
+
+        Assert.Equal(HelpAssistantMode.Lexical, session.AssistantMode);
     }
 
     // ── 6. No bundle → always Lexical or Rag (chat determines) ──────────────

@@ -70,11 +70,19 @@ public interface IAiInteraction
     ///  and the host owns the presentation.
     /// <para>
     /// The default implementation is a no-op, so console and headless hosts
-    ///  need not provide management UI. Mutations persist as they are made,
-    ///  so there is no result to return: the caller simply re-reads the
-    ///  registry after this task completes.
+    ///  need not provide management UI. Registry mutations persist as they are
+    ///  made, independently of the returned selection.
     /// </para>
     /// </remarks>
-    Task ManageProvidersAsync(IAiProviderRegistry registry, CancellationToken ct)
-        => Task.CompletedTask;
+    /// <param name="registry">The provider registry to manage.</param>
+    /// <param name="current">The configuration currently in use, if any, so the host can preselect it.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>
+    /// The provider configuration the user selected for use,
+    ///  <see cref="AiProviderConfig.NoAiProvider"/> when they chose to disable AI,
+    ///  or <c>null</c> when they cancelled (keep the current selection).
+    /// </returns>
+    Task<AiProviderConfig?> ManageProvidersAsync(
+        IAiProviderRegistry registry, AiProviderConfig? current, CancellationToken ct)
+        => Task.FromResult<AiProviderConfig?>(null);
 }

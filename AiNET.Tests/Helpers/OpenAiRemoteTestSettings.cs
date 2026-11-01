@@ -152,7 +152,21 @@ public sealed class OpenAiRemoteTestSettings
         var sb = new System.Text.StringBuilder(json.Length);
         foreach (var line in json.Split('\n'))
         {
-            int commentIdx = line.IndexOf("//", StringComparison.Ordinal);
+            // Only treat // as a comment when outside a JSON string, so URLs
+            // like "http://host:port" are preserved.
+            int commentIdx = -1;
+            bool inString = false;
+            for (int i = 0; i < line.Length; i++)
+            {
+                char c = line[i];
+                if (c == '\\' && inString) { i++; continue; }
+                if (c == '"') inString = !inString;
+                else if (!inString && c == '/' && i + 1 < line.Length && line[i + 1] == '/')
+                {
+                    commentIdx = i;
+                    break;
+                }
+            }
             sb.AppendLine(commentIdx >= 0 ? line[..commentIdx] : line);
         }
         return sb.ToString();

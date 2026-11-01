@@ -141,12 +141,16 @@ public sealed class AiProviderRegistry : IAiProviderRegistry
     public void SetEndpoint(AiProviderEntry entry, Uri endpoint)
     {
         ArgumentNullException.ThrowIfNull(endpoint);
-        // Built-in entries deliberately track the descriptor default, so an
-        //  explicit endpoint is only meaningful for user-added entries.
-        if (entry.IsBuiltIn)
+        Mutate(entry, e => e with { Endpoint = endpoint });
+    }
+
+    public void ResetEndpoint(AiProviderEntry entry)
+    {
+        // Only built-ins have a default to fall back to.
+        if (!entry.IsBuiltIn)
             return;
 
-        Mutate(entry, e => e with { Endpoint = endpoint });
+        Mutate(entry, e => e with { Endpoint = null });
     }
 
     public void SetPinnedChatModel(AiProviderEntry entry, string? chatModelId) =>
@@ -170,7 +174,7 @@ public sealed class AiProviderRegistry : IAiProviderRegistry
 
             _entries.Clear();
             _entries.AddRange(reordered);
-            Renumber();
+            RenumberInListOrder();
             SaveLocked();
         }
     }
@@ -208,7 +212,7 @@ public sealed class AiProviderRegistry : IAiProviderRegistry
         {
             _entries.RemoveAll(e => !e.IsBuiltIn);
             for (var i = 0; i < _entries.Count; i++)
-                _entries[i] = _entries[i] with { IsEnabled = true };
+                _entries[i] = _entries[i] with { IsEnabled = true, Endpoint = null };
 
             // Restore catalog order rather than whatever the user had.
             var catalogOrder = _catalog.Providers
@@ -221,12 +225,12 @@ public sealed class AiProviderRegistry : IAiProviderRegistry
 
             _entries.Clear();
             _entries.AddRange(ordered);
-            Renumber();
+            RenumberInListOrder();
             SaveLocked();
         }
     }
 
-    // ───────────────────────────────────────────────────────────────────────
+    // ──
     //  Seeding and migration
     // ───────────────────────────────────────────────────────────────────────
 
@@ -319,6 +323,17 @@ public sealed class AiProviderRegistry : IAiProviderRegistry
 
         _entries.Clear();
         _entries.AddRange(ordered);
+    }
+
+    /// <summary>
+    /// Assigns SortOrder densely from zero following the current list order,
+    ///  so a freshly built order is not undone by stale SortOrder values.
+    ///  Caller must hold the lock.
+    /// </summary>
+    private void RenumberInListOrder()
+    {
+        for (var i = 0; i < _entries.Count; i++)
+            _entries[i] = _entries[i] with { SortOrder = i };
     }
 
     /// <summary>Caller must hold the lock.</summary>

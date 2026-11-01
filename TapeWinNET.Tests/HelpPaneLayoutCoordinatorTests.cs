@@ -6,120 +6,88 @@ namespace TapeWinNET.Tests;
 
 
 /// <summary>
-/// Unit tests for <see cref="HelpPaneLayoutCoordinator.OpenAdjacent"/>.
-/// These tests use the <c>internal</c> overload that accepts an explicit
-/// <see cref="Rect"/> work-area, so no real screen is needed.
-/// <para/>
-/// WPF <see cref="Window"/> requires an STA thread; all facts use
-/// <see cref="StaFactAttribute"/>.
+/// Unit tests for <see cref="HelpPaneLayoutCoordinator"/>. The pure <c>Compute*</c>
+/// functions take an explicit work area, so no real screen is needed; the
+/// <see cref="Window"/> round-trip tests use <see cref="StaFactAttribute"/>.
 /// </summary>
 public sealed class HelpPaneLayoutCoordinatorTests
 {
     // A 1920×1080 work area starting at (0,0) — typical desktop.
-    private static readonly Rect StandardWorkArea = new(0, 0, 1920, 1080);
+    private static readonly Rect WorkArea = new(0, 0, 1920, 1080);
+    private const double Splitter = HelpPaneLayoutCoordinator.SplitterWidth;
 
-    // ── Expand-right (fits without moving) ───────────────────────────────────
+    // ── Opening: width ────────────────────────────────────────────────────────
 
-    [StaFact]
-    public void OpenAdjacent_RoomToTheRight_ReturnsDesiredWidth_WithoutMovingWindow()
+    [Fact]
+    public void Open_RoomToTheRight_WidensWithoutMoving()
     {
-        // Window at x=100, width=600  →  right edge=700.  Work area right=1920.
-        // Available = 1220 ≥ desired 400 → should fit without shifting.
-        var window = MakeWindow(left: 100, width: 600);
-        double desired = 400;
+        var l = HelpPaneLayoutCoordinator.ComputeOpen(new Rect(100, 100, 600, 400), 340, 300, WorkArea);
 
-        double actual = HelpPaneLayoutCoordinator.OpenAdjacent(window, desired, StandardWorkArea);
-
-        Assert.Equal(desired, actual);
-        Assert.Equal(100, window.Left); // window must not have moved
+        Assert.Equal(600 + 340 + Splitter, l.Width);
+        Assert.Equal(100, l.Left);
+        Assert.Equal(100, l.Top);
+        Assert.Equal(400, l.Height);
+        Assert.Null(l.OriginalHeight);
     }
 
-    [StaFact]
-    public void OpenAdjacent_ExactFit_ReturnsDesiredWidth()
+    [Fact]
+    public void Open_OverrunsRightEdge_ShiftsLeftToFit()
     {
-        // Window at x=1520, width=400  →  right edge=1920 = work area right.
-        // Available = 0 before shift; after shifting left by 300, available=300.
-        // Actually: available=0 < desired=300. Shift left: shortfall=300, newLeft = max(0,1520-300)=1220.
-        // gained=300, available=300, actual=300.
-        var window = MakeWindow(left: 1520, width: 400);
-        double desired = 300;
+        var l = HelpPaneLayoutCoordinator.ComputeOpen(new Rect(1500, 100, 400, 400), 340, 300, WorkArea);
 
-        double actual = HelpPaneLayoutCoordinator.OpenAdjacent(window, desired, StandardWorkArea);
-
-        Assert.Equal(desired, actual);
+        Assert.Equal(WorkArea.Right, l.Left + l.Width);
     }
 
-    // ── Shift-left to make room ───────────────────────────────────────────────
-
-    [StaFact]
-    public void OpenAdjacent_NotEnoughRoomRight_ShiftsWindowLeft()
+    [Fact]
+    public void Open_WiderThanWorkArea_ClampsToLeftEdge()
     {
-        // Window at x=1700, width=200  →  right edge=1900.  Available=20 < desired=300.
-        // shortfall=280; newLeft=max(0, 1700-280)=1420. window shifts to 1420.
-        var window = MakeWindow(left: 1700, width: 200);
+        var l = HelpPaneLayoutCoordinator.ComputeOpen(new Rect(50, 100, 1800, 400), 340, 300, WorkArea);
 
-        HelpPaneLayoutCoordinator.OpenAdjacent(window, 300, StandardWorkArea);
-
-        Assert.True(window.Left < 1700, "Window should have been shifted left.");
+        Assert.Equal(WorkArea.Left, l.Left);
+        Assert.Equal(1800 + 340 + Splitter, l.Width);
     }
 
-    [StaFact]
-    public void OpenAdjacent_ShiftLeft_ReturnsDesiredWidth_WhenRoomAfterShift()
+    // ── Opening: height ───────────────────────────────────────────────────────
+
+    [Fact]
+    public void Open_LowerThanMinimal_GrowsAndRemembersOriginal()
     {
-        // Window at x=1700, width=200  →  right edge=1900.  Available=20.
-        // desired=300, shortfall=280, newLeft=1420, gained=280, available=300.
-        var window = MakeWindow(left: 1700, width: 200);
-        double desired = 300;
+        var l = HelpPaneLayoutCoordinator.ComputeOpen(new Rect(100, 100, 600, 200), 340, 300, WorkArea);
 
-        double actual = HelpPaneLayoutCoordinator.OpenAdjacent(window, desired, StandardWorkArea);
-
-        Assert.Equal(desired, actual);
+        Assert.Equal(300, l.Height);
+        Assert.Equal(200, l.OriginalHeight);
+        Assert.Equal(100, l.Top);
     }
 
-    // ── Clamp when there's still not enough room ──────────────────────────────
-
-    [StaFact]
-    public void OpenAdjacent_InsufficientRoom_ClampsToAvailable()
+    [Fact]
+    public void Open_GrowOverrunsBottom_ShiftsUp()
     {
-        // Window occupies almost the entire work area.
-        // Left=10, Width=1900  →  right edge=1910.  Available=10 < desired=800.
-        // shortfall=790; newLeft=max(0, 10-790)=0. gained=10, available=20.
-        // Clamped: max(200, min(800, 20)) = 200 (MinPaneWidth floor).
-        var window = MakeWindow(left: 10, width: 1900);
+        var l = HelpPaneLayoutCoordinator.ComputeOpen(new Rect(100, 900, 600, 150), 340, 300, WorkArea);
 
-        double actual = HelpPaneLayoutCoordinator.OpenAdjacent(window, 800, StandardWorkArea);
-
-        Assert.True(actual < 800, "Width should have been clamped below the desired value.");
-        Assert.True(actual >= 200, "Width should not go below the minimum pane width (200).");
+        Assert.Equal(WorkArea.Bottom, l.Top + l.Height);
     }
 
+    // ── Closing ───────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void ClosedWidth_RemovesPaneAndSplitter()
+        => Assert.Equal(600, HelpPaneLayoutCoordinator.ComputeClosedWidth(600 + 400 + Splitter, 400, 600));
+
+    [Fact]
+    public void ClosedWidth_NeverBelowContentWidth()
+        => Assert.Equal(600, HelpPaneLayoutCoordinator.ComputeClosedWidth(700, 400, 600));
+
     [StaFact]
-    public void OpenAdjacent_NeverInflatesDesiredWidth()
+    public void OpenThenClose_RestoresWidthAndHeight()
     {
-        // Plenty of room — actual must never exceed desired.
-        var window = MakeWindow(left: 0, width: 100);
+        var window = new Window { Left = 100, Top = 100, Width = 600, Height = 200, ShowInTaskbar = false };
 
-        double actual = HelpPaneLayoutCoordinator.OpenAdjacent(window, 400, StandardWorkArea);
+        var original = HelpPaneLayoutCoordinator.OpenAdjacent(window, 340, 300, WorkArea);
+        Assert.Equal(944, window.Width);
+        Assert.Equal(300, window.Height);
 
-        Assert.True(actual <= 400, "Returned width must never exceed the requested desired width.");
-    }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    /// <summary>Creates a minimal WPF <see cref="Window"/> with the given position/size.</summary>
-    private static Window MakeWindow(double left, double width)
-    {
-        var w = new Window
-        {
-            Left  = left,
-            Width = width,
-            // Height and Top do not affect the horizontal-only layout logic.
-            Top    = 100,
-            Height = 400,
-            // Don't show the window during tests.
-            ShowInTaskbar = false,
-            WindowStyle   = WindowStyle.None
-        };
-        return w;
+        HelpPaneLayoutCoordinator.CloseAdjacent(window, 340, 600, original);
+        Assert.Equal(600, window.Width);
+        Assert.Equal(200, window.Height);
     }
 }
