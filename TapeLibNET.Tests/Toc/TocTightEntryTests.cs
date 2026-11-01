@@ -180,30 +180,40 @@ public class TocTightEntryTests
         Assert.Equal(before + measured, toc.EstimateSerializedSize());
     }
 
-    /// <summary>TB-4: measuring and accepting allocates nothing per file.</summary>
+    /// <summary>
+    /// TB-4: measuring and accepting allocates nothing PER FILE. Measured as a slope — the bytes 10 000 more files add —
+    ///  so one-off allocations (tiered JIT promotion, OSR, runtime bookkeeping that lands on the measuring thread) cancel
+    ///  out. The smallest of three trials absorbs a promotion that falls inside one pass.
+    /// </summary>
     [Fact]
     public void Meter_AllocatesNothingPerFile()
     {
-        TapeFileInfo[] files = [.. Enumerable.Range(0, 10_000).Select(f => File((ulong)f + 1, Deep(f)))];
+        TapeFileInfo[] files = [.. Enumerable.Range(0, 20_000).Select(f => File((ulong)f + 1, Deep(f)))];
         TapeTOC toc = Toc(0, Deep);
         var meter = new TocEntryMeter();
-        meter.Reset(toc.CurrentSetTOC);
-        for (int i = 0; i < 1_000; i++)                                    // warm-up: JIT, tiering
+
+        long Pass(int count)
         {
-            meter.Measure(files[i]);
-            meter.Accept();
+            meter.Reset(toc.CurrentSetTOC);
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            long total = 0;
+            for (int i = 0; i < count; i++)
+            {
+                total += meter.Measure(files[i]);
+                meter.Accept();
+            }
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.True(total > 0);
+            return allocated;
         }
-        meter.Reset(toc.CurrentSetTOC);
-        long before = GC.GetAllocatedBytesForCurrentThread();
-        long total = 0;
-        foreach (TapeFileInfo file in files)
-        {
-            total += meter.Measure(file);
-            meter.Accept();
-        }
-        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-        Assert.True(total > 0);
-        Assert.True(allocated <= 256, $"{allocated} B allocated over {files.Length} files");
+
+        Pass(files.Length);                                                 // warm-up: JIT, tiering
+        long perExtraFiles = long.MaxValue;
+        for (int trial = 0; trial < 3 && perExtraFiles > 0; trial++)
+            perExtraFiles = Math.Min(perExtraFiles, Pass(20_000) - Pass(10_000));
+
+        // One object per file would be ≥ 24 B × 10 000 = 240 KB; allow a few hundred bytes of noise.
+        Assert.True(perExtraFiles <= 256, $"{perExtraFiles} B allocated by 10 000 additional files");
     }
 
     #endregion
