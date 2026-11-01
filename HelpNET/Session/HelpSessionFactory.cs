@@ -40,6 +40,11 @@ namespace HelpNET.Session;
 /// </remarks>
 public static class HelpSessionFactory
 {
+    // One ONNX generator per host-supplied options instance: the model is loaded once
+    //  and shared by all sessions (help panes) that pass the same options object.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<
+        OnnxEmbeddingOptions, HelpOnnxEmbeddingGenerator> _onnxGenerators = new();
+
     // ── Public API ────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -143,8 +148,12 @@ public static class HelpSessionFactory
     ///   <see cref="AiProviderConfig.EmbeddingModelId"/>.</item>
     ///  <item>Built-in ONNX generator — from host-supplied <see cref="OnnxEmbeddingOptions"/>
     ///   when the bundle's ModelId matches.</item>
+    ///  <item>Provider generator as fallback — when the ONNX model is missing or fails to load,
+    ///   but the provider serves the very model the bundle was indexed with.</item>
     ///  <item><c>null</c> — no usable generator available; caller falls back to Lexical.</item>
     /// </list>
+    /// Query embeddings must come from the same model as the bundle: vectors of different
+    ///  models live in incompatible spaces, hence every candidate is matched by model id.
     /// </summary>
     private static IEmbeddingGenerator<string, Embedding<float>>? TryResolveEmbeddingGenerator(
         HelpEmbeddingBundle?  bundle,
@@ -154,29 +163,40 @@ public static class HelpSessionFactory
     {
         if (bundle is null) return null;
 
+        var providerGen = TryGetMatchingProviderGenerator(bundle, aiSession);
+
         // Strategy A.1 — provider generator (opt-in).
-        if (options.PreferProviderEmbeddings
-            && aiSession?.EmbeddingGenerator is not null
-            && aiSession.Capabilities.HasFlag(AiCapabilities.Embeddings))
-        {
-            string? providerModelId = aiSession.Config.EmbeddingModelId;
-            if (providerModelId is not null &&
-                string.Equals(providerModelId, bundle.ModelId, StringComparison.OrdinalIgnoreCase))
-            {
-                return aiSession.EmbeddingGenerator;
-            }
-        }
+        if (options.PreferProviderEmbeddings && providerGen is not null)
+            return providerGen;
 
         // Strategy A.2 — built-in ONNX generator.
         if (onnxOptions is not null &&
             string.Equals(onnxOptions.ModelId, bundle.ModelId, StringComparison.OrdinalIgnoreCase))
         {
-            try { return new HelpOnnxEmbeddingGenerator(onnxOptions); }
+            try { return _onnxGenerators.GetValue(onnxOptions, o => new HelpOnnxEmbeddingGenerator(o)); }
             catch { /* bad model file / wrong platform — fall through */ }
         }
 
-        // Strategy A.3 — no usable generator.
-        return null;
+        // Strategy A.3 — provider generator as fallback (null if none matches).
+        return providerGen;
+    }
+
+    /// <summary>
+    /// The session's embedding generator if the provider's embedding model is the one
+    ///  the bundle was indexed with; <c>null</c> otherwise.
+    /// </summary>
+    private static IEmbeddingGenerator<string, Embedding<float>>? TryGetMatchingProviderGenerator(
+        HelpEmbeddingBundle bundle, IAiSession? aiSession)
+    {
+        if (aiSession?.EmbeddingGenerator is null
+            || !aiSession.Capabilities.HasFlag(AiCapabilities.Embeddings))
+            return null;
+
+        string? providerModelId = aiSession.Config.EmbeddingModelId;
+        return providerModelId is not null
+            && string.Equals(providerModelId, bundle.ModelId, StringComparison.OrdinalIgnoreCase)
+            ? aiSession.EmbeddingGenerator
+            : null;
     }
 
     // ── Provider-change handler ───────────────────────────────────────────────

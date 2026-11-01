@@ -30,5 +30,8 @@ public enum AiProviderKind
     Anthropic,
 
     /// <summary>Extensibility placeholder for host-supplied custom providers.</summary>
-    Custom
+    Custom,
+
+    /// <summary>Local OpenVINO Model Server (<c>http://localhost:8000</c>, API under <c>/v3</c>).</summary>
+    Ovms
 }

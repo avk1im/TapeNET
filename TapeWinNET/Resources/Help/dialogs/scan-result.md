@@ -30,3 +30,10 @@ blocks. Select a **table of contents** row to act on it.
 ## Advice buttons
 
 Suggested follow-ups, most useful first. **Save map...** stores the whole map as a file.
+
+## Controls
+
+**Result banner** — Summary of the scan outcome.
+**Fragment list** — Every fragment found, in tape order. Amber rows are suspicious and red rows are damaged.
+**TOC actions** — For a selected table-of-contents row: **Use this TOC** or **Save as...**.
+**Advice** — Suggested follow-up actions, plus **Save map...**.

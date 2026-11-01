@@ -37,7 +37,8 @@
 param(
 	[string]$Configuration = 'Release',
 	[string]$Version,
-	[switch]$SkipPublish
+	[switch]$SkipPublish,
+	[switch]$AllowLexicalHelp
 )
 
 $ErrorActionPreference = 'Stop'
@@ -137,6 +138,14 @@ if (-not $SkipPublish) {
 }
 else {
 	Write-Step 'Skipping publish (-SkipPublish); reusing existing dist\ output.'
+}
+
+# Semantic help search needs the ONNX model staged by the TapeWinNET build (HelpModel\).
+#  Without it the app silently falls back to lexical help, so refuse unless explicitly allowed.
+if (-not (Test-Path (Join-Path $winDist 'HelpModel\model.onnx'))) {
+	$msg = 'TapeWin help embedding model (HelpModel\model.onnx) is missing from the publish output. ' +
+		'Set -p:HelpEmbeddingModelDir (see docs\Design-HelpContent.md section 5.2), or pass -AllowLexicalHelp.'
+	if ($AllowLexicalHelp) { Write-Warning $msg } else { throw $msg }
 }
 
 # Resolve the installer version: explicit -Version wins, otherwise read the exe.

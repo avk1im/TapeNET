@@ -1,4 +1,4 @@
-using HelpNET.Content;
+﻿using HelpNET.Content;
 using HelpNET.Indexing;
 using Xunit;
 
@@ -95,6 +95,21 @@ public class ChunkerTests
     }
 
     // ── Heading tracking ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void Chunk_SeveralShortBlocksInOverlapWindow_DoesNotThrow()
+    {
+        // Short blocks keep several entries in the overlap window when a chunk is
+         // emitted; replaying them must not modify the window during enumeration.
+        var paragraphs = Enumerable.Range(1, 40)
+            .Select(i => $"short block {i} with five words");
+        var topic  = MakeTopic("t", string.Join("\n\n", paragraphs));
+        var chunks = new Chunker(maxTokens: 60, overlapTokens: 30).Chunk(topic);
+
+        Assert.True(chunks.Count > 1, $"Expected multiple chunks, got {chunks.Count}.");
+        for (int i = 0; i < chunks.Count; i++)
+            Assert.Equal(i, chunks[i].Index);
+    }
 
     [Fact]
     public void Chunk_HeadingUpdatedPerSection()

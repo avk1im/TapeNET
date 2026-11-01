@@ -122,8 +122,8 @@ public sealed class EmbeddedResourceHelpContentSource : IHelpContentSource
         await binStream.CopyToAsync(ms, ct);
         var blob = new ReadOnlyMemory<byte>(ms.ToArray());
 
-        // Read JSON metadata
-        var meta = await JsonSerializer.DeserializeAsync<EmbeddingMeta>(metaStream,
+        // Read JSON metadata (HelpIndexBuilder writes camelCase names)
+        var meta = await JsonSerializer.DeserializeAsync<EmbeddingMeta>(metaStream, MetaJsonOptions,
             cancellationToken: ct) ?? throw new InvalidDataException("embeddings.meta.json is empty.");
 
         using var indexReader = new StreamReader(indexStream);
@@ -165,6 +165,8 @@ public sealed class EmbeddedResourceHelpContentSource : IHelpContentSource
     }
 
     /// <summary>Minimal deserialization model for embeddings.meta.json.</summary>
+    private static readonly JsonSerializerOptions MetaJsonOptions = new() { PropertyNameCaseInsensitive = true };
+
     private sealed class EmbeddingMeta
     {
         public string ModelId   { get; init; } = string.Empty;

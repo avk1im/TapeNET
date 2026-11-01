@@ -14,9 +14,9 @@ namespace AiNET;
 ///  configured, and is persisted to disk.
 /// <para>
 /// Built-in entries (<see cref="IsBuiltIn"/>) are materialised from the
-///  catalog on first run. They may be disabled or reordered but never
-///  removed, so that a user cannot permanently lose access to a provider
-///  that ships with the app.
+///  catalog on first run. They may be disabled, reordered or have their
+///  endpoint overridden, but never removed, so that a user cannot permanently
+///  lose access to a provider that ships with the app.
 /// </para>
 /// </remarks>
 /// <param name="Kind">Provider type discriminator.</param>
@@ -59,10 +59,15 @@ public sealed record AiProviderEntry(
     ///  endpoint origin. Endpoints are compared on scheme+host+port only,
     ///  so <c>http://box:11434</c> and <c>http://box:11434/v1</c> do not
     ///  produce duplicate rows.
+    /// <para>
+    /// Built-in entries exist once per kind, so their identity is the bare kind
+    ///  regardless of any endpoint override; this keeps an edited built-in from
+    ///  being re-seeded as a duplicate.
+    /// </para>
     /// </remarks>
     [JsonIgnore]
     public string Identity =>
-        Endpoint is null
+        IsBuiltIn || Endpoint is null
             ? $"{Kind}"
             : $"{Kind}|{Endpoint.GetLeftPart(UriPartial.Authority).ToLowerInvariant()}";
 

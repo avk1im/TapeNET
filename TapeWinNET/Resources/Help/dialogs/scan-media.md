@@ -28,3 +28,7 @@ needing a table of contents. **Nothing is written to the tape.**
   also save it later from the result window.
 
 While scanning, use **Abort Scan** to stop; the partial map found so far is still shown.
+
+## Controls
+
+**Options** — Scan options: whether to try recovering the table of contents, and where to save the scan map.

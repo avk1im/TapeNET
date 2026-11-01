@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using HelpNET.Content;
@@ -29,17 +29,17 @@ namespace HelpIndexBuilder;
 /// </code>
 /// Outputs in the specified directory:
 /// <list type="bullet">
-///  <item><c>embeddings.bin</c>  — packed little-endian float32 array, chunk-major.</item>
-///  <item><c>embeddings.meta.json</c> — model id, hash, dimension, chunk catalog.</item>
+///  <item><c>embeddings.bin</c>  â€” packed little-endian float32 array, chunk-major.</item>
+///  <item><c>embeddings.meta.json</c> â€” model id, hash, dimension, chunk catalog.</item>
 /// </list>
 /// </remarks>
 internal static class Program
 {
-    // ── Entry point ───────────────────────────────────────────────────────────
+    // â”€â”€ Entry point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     internal static async Task<int> Main(string[] args)
     {
-        // ── Parse args ────────────────────────────────────────────────────────
+        // â”€â”€ Parse args â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         var parsed = ParseArgs(args);
         if (parsed is null)
         {
@@ -53,7 +53,7 @@ internal static class Program
         Console.WriteLine($"[HelpIndexBuilder] Model-id: {parsed.ModelId}");
         Console.WriteLine($"[HelpIndexBuilder] Dim     : {parsed.Dimension}");
         Console.WriteLine($"[HelpIndexBuilder] Output  : {parsed.OutputDir}");
-        if (parsed.DryRun) Console.WriteLine("[HelpIndexBuilder] *** DRY RUN — no files written ***");
+        if (parsed.DryRun) Console.WriteLine("[HelpIndexBuilder] *** DRY RUN â€” no files written ***");
 
         try
         {
@@ -63,12 +63,12 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[HelpIndexBuilder] FATAL: {ex.Message}");
+            Console.Error.WriteLine($"[HelpIndexBuilder] FATAL: {ex}");
             return 2;
         }
     }
 
-    // ── Core pipeline ─────────────────────────────────────────────────────────
+    // â”€â”€ Core pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private static async Task RunAsync(BuilderOptions opts)
     {
@@ -91,12 +91,12 @@ internal static class Program
 
         if (chunks.Count == 0)
         {
-            Console.WriteLine("[HelpIndexBuilder] No chunks to embed — nothing written.");
+            Console.WriteLine("[HelpIndexBuilder] No chunks to embed â€” nothing written.");
             return;
         }
 
         // 3. Load the ONNX model.
-        Console.WriteLine("[HelpIndexBuilder] Loading ONNX model…");
+        Console.WriteLine("[HelpIndexBuilder] Loading ONNX modelâ€¦");
         await using var modelStream = File.OpenRead(opts.ModelPath);
         await using var vocabStream = File.OpenRead(opts.VocabPath);
 
@@ -111,7 +111,7 @@ internal static class Program
             new HelpOnnxEmbeddingGenerator(onnxOptions);
 
         // 4. Embed all chunks (in small batches to show progress).
-        Console.WriteLine("[HelpIndexBuilder] Embedding chunks…");
+        Console.WriteLine("[HelpIndexBuilder] Embedding chunksâ€¦");
         const int BatchSize = 32;
         var allVectors      = new List<float[]>(chunks.Count);
 
@@ -196,7 +196,7 @@ internal static class Program
         }
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private static string ComputeFileHash(string path)
     {
@@ -242,7 +242,7 @@ internal static class Program
     private static void PrintUsage()
     {
         Console.WriteLine("""
-            HelpIndexBuilder — generates precomputed embeddings for HelpNET.
+            HelpIndexBuilder â€” generates precomputed embeddings for HelpNET.
 
             Usage:
               HelpIndexBuilder
@@ -262,7 +262,7 @@ internal static class Program
             """);
     }
 
-    // ── Option bag ────────────────────────────────────────────────────────────
+    // â”€â”€ Option bag â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private sealed record BuilderOptions(
         string ContentDir,

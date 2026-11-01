@@ -37,6 +37,57 @@
     <EmbeddedResource Include="Resources\Help\**\*.md" />
   </ItemGroup>
 	
+  <!--
+	Semantic help search (see docs/Design-TapeWinHelp.md, "Semantic search").
+	 The embedding model is exchangeable: point HelpEmbeddingModelDir at any folder holding a
+	 BERT-style model.onnx + vocab.txt and set the matching id/dimension (override on the command
+	 line or in Directory.Build.props). When the model folder is missing, everything below is
+	 inert and help runs in lexical (or lexical-RAG) mode.
+  -->
+  <PropertyGroup>
+	<HelpEmbeddingModelDir Condition="'$(HelpEmbeddingModelDir)' == ''">$(USERPROFILE)\ONNX\Models\all-MiniLM-L6-v2</HelpEmbeddingModelDir>
+	<HelpEmbeddingModelId Condition="'$(HelpEmbeddingModelId)' == ''">all-MiniLM-L6-v2</HelpEmbeddingModelId>
+	<HelpEmbeddingDimension Condition="'$(HelpEmbeddingDimension)' == ''">384</HelpEmbeddingDimension>
+	<HelpEmbeddingMaxTokens Condition="'$(HelpEmbeddingMaxTokens)' == ''">256</HelpEmbeddingMaxTokens>
+	<HelpEmbeddingsEnabled Condition="'$(HelpEmbeddingsEnabled)' == '' And Exists('$(HelpEmbeddingModelDir)\model.onnx') And Exists('$(HelpEmbeddingModelDir)\vocab.txt')">true</HelpEmbeddingsEnabled>
+	<HelpEmbeddingsOutDir>$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)HelpEmbeddings\</HelpEmbeddingsOutDir>
+	<HelpIndexBuilderProject>..\HelpNET\Tools\HelpIndexBuilder\HelpIndexBuilder.csproj</HelpIndexBuilderProject>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(HelpEmbeddingsEnabled)' == 'true'">
+	<!-- Runtime model: copied next to the executable; loaded by HelpEmbeddingModelLoader -->
+	<None Include="$(HelpEmbeddingModelDir)\model.onnx" Link="HelpModel\model.onnx" CopyToOutputDirectory="PreserveNewest" />
+	<None Include="$(HelpEmbeddingModelDir)\vocab.txt" Link="HelpModel\vocab.txt" CopyToOutputDirectory="PreserveNewest" />
+	<!-- Model id / dimension baked into the assembly so runtime and bundle always agree -->
+	<AssemblyMetadata Include="HelpEmbeddingModelId" Value="$(HelpEmbeddingModelId)" />
+	<AssemblyMetadata Include="HelpEmbeddingDimension" Value="$(HelpEmbeddingDimension)" />
+	<AssemblyMetadata Include="HelpEmbeddingMaxTokens" Value="$(HelpEmbeddingMaxTokens)" />
+  </ItemGroup>
+
+  <!-- Incremental: re-indexes only when a help topic or the model changes -->
+  <Target Name="BuildHelpEmbeddings"
+		  Condition="'$(HelpEmbeddingsEnabled)' == 'true'"
+		  BeforeTargets="AssignTargetPaths"
+		  Inputs="@(EmbeddedResource->WithMetadataValue('Extension', '.md'));$(HelpEmbeddingModelDir)\model.onnx;$(HelpEmbeddingModelDir)\vocab.txt;$(MSBuildProjectFullPath)"
+		  Outputs="$(HelpEmbeddingsOutDir)embeddings.bin">
+	<MSBuild Projects="$(HelpIndexBuilderProject)" Targets="Build" Properties="Configuration=Release" RemoveProperties="Platform;RuntimeIdentifier;LocSourceDir">
+	  <Output TaskParameter="TargetOutputs" PropertyName="HelpIndexBuilderPath" />
+	</MSBuild>
+	<Exec Command="dotnet &quot;$(HelpIndexBuilderPath)&quot; --content &quot;$(MSBuildProjectDirectory)\Resources\Help&quot; --model &quot;$(HelpEmbeddingModelDir)\model.onnx&quot; --vocab &quot;$(HelpEmbeddingModelDir)\vocab.txt&quot; --model-id $(HelpEmbeddingModelId) --dim $(HelpEmbeddingDimension) --max-tokens $(HelpEmbeddingMaxTokens) --output &quot;$(HelpEmbeddingsOutDir.TrimEnd('\'))&quot;" />
+  </Target>
+
+  <!-- Embed the generated bundle under the names EmbeddedResourceHelpContentSource expects -->
+  <Target Name="EmbedHelpEmbeddings"
+		  Condition="'$(HelpEmbeddingsEnabled)' == 'true'"
+		  AfterTargets="BuildHelpEmbeddings"
+		  BeforeTargets="AssignTargetPaths">
+	<ItemGroup>
+	  <EmbeddedResource Include="$(HelpEmbeddingsOutDir)embeddings.bin" LogicalName="$(RootNamespace).Resources.Help._index.embeddings.bin" />
+	  <EmbeddedResource Include="$(HelpEmbeddingsOutDir)embeddings.meta.json" LogicalName="$(RootNamespace).Resources.Help._index.embeddings.meta.json" />
+	  <EmbeddedResource Include="$(HelpEmbeddingsOutDir)embeddings.index.json" LogicalName="$(RootNamespace).Resources.Help._index.embeddings.index.json" />
+	</ItemGroup>
+  </Target>
+
   <ItemGroup>
 	<ProjectReference Include="..\AiNET\AiNET.csproj" />
 	<ProjectReference Include="..\FclNET\FclNET.csproj" />

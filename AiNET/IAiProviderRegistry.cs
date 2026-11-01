@@ -57,10 +57,16 @@ public interface IAiProviderRegistry
     void SetEnabled(AiProviderEntry entry, bool isEnabled);
 
     /// <summary>
-    /// Replaces the endpoint of a user-added entry, so a mistyped address can
-    /// be corrected without losing the entry's other settings.
+    /// Replaces the endpoint of an entry. For a built-in entry this stores an
+    ///  override of the descriptor default (see <see cref="ResetEndpoint"/>).
     /// </summary>
     void SetEndpoint(AiProviderEntry entry, Uri endpoint);
+
+    /// <summary>
+    /// Discards the endpoint override of a built-in entry so it tracks the
+    ///  descriptor default again. No-op for user-added entries.
+    /// </summary>
+    void ResetEndpoint(AiProviderEntry entry);
 
     /// <summary>Pins a chat model for this entry, or clears it when <c>null</c>.</summary>
     void SetPinnedChatModel(AiProviderEntry entry, string? chatModelId);
@@ -92,7 +98,7 @@ public interface IAiProviderRegistry
 
     /// <summary>
     /// Discards all user-added entries and restores built-ins to their
-    /// default enabled state and order.
+    /// default enabled state, endpoint and order.
     /// </summary>
     void ResetToDefaults();
 }

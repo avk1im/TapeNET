@@ -47,6 +47,11 @@ internal sealed class HelpOnnxEmbeddingGenerator
     internal HelpOnnxEmbeddingGenerator(OnnxEmbeddingOptions options)
     {
         // Read model bytes from stream (OnnxRuntime needs a byte array)
+        // Rewind seekable streams so the same options can be reused, e.g. when the
+        //  session re-selects its assistant after an AI provider change.
+        if (options.ModelStream.CanSeek) options.ModelStream.Position = 0;
+        if (options.VocabStream.CanSeek) options.VocabStream.Position = 0;
+
         byte[] modelBytes;
         using (var ms = new MemoryStream())
         {

@@ -64,15 +64,32 @@ public sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? log
 
         bool IsEnabled(AiProviderKind kind) => !disabledKinds.Contains(kind);
 
+        // Built-in endpoint overrides by kind (e.g. Ollama moved to another port,
+        //  an Azure resource URL, or a LAN address for the generic provider).
+        var builtInOverrides = registryEntries is null
+            ? []
+            : registryEntries
+                .Where(e => e.IsBuiltIn && e.Endpoint is not null)
+                .ToDictionary(e => e.Kind, e => e.Endpoint!);
+
+        Uri? BuiltInEndpoint(AiProviderDescriptor descriptor) =>
+            builtInOverrides.TryGetValue(descriptor.Kind, out var ov) ? ov : descriptor.DefaultEndpoint;
+
         // ── Localhost probes ─────────────────────────────────────────────────
+        //  Also covers built-in non-cloud providers the user has given an
+        //  endpoint (e.g. the generic OpenAI-compatible provider).
         if (options.ProbeLocalhost)
         {
             foreach (var provider in catalog.Providers)
             {
-                var ep = provider.Descriptor.DefaultEndpoint;
-                if (ep is null || provider.Descriptor.Location != AiProviderLocation.Local)
+                var descriptor = provider.Descriptor;
+                var ep = BuiltInEndpoint(descriptor);
+                if (ep is null || descriptor.Location == AiProviderLocation.Cloud)
                     continue;
-                if (!IsEnabled(provider.Descriptor.Kind))
+                if (descriptor.Location != AiProviderLocation.Local &&
+                    !builtInOverrides.ContainsKey(descriptor.Kind))
+                    continue;
+                if (!IsEnabled(descriptor.Kind))
                     continue;
 
                 tasks.Add(Probe(provider, ep, apiKey: null));
@@ -174,8 +191,8 @@ public sealed class AiProviderDiscovery(IAiProviderCatalog catalog, ILogger? log
                     continue;
                 }
 
-                // Azure has no fixed endpoint — fall back to a caller-supplied one.
-                var ep = descriptor.DefaultEndpoint;
+                // Azure has no fixed endpoint — use the user's override, else a caller-supplied one.
+                var ep = BuiltInEndpoint(descriptor);
                 if (ep is null &&
                     options.KnownCloudEndpoints?.TryGetValue(descriptor.Kind, out var knownEp) == true)
                 {

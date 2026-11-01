@@ -229,12 +229,13 @@ public sealed class AiInteractionWpf : IAiInteraction
                     continue;
                 }
 
-                await ManageProvidersAsync(_providerRegistry, ct);
+                var managed = await ManageProvidersAsync(_providerRegistry, null, ct);
+                if (managed is not null)
+                    return managed;   // the user selected directly in the manager
 
-                // The user may have added, removed, enabled or reordered
-                //  entries, so the previous probe results are stale. Re-run a
-                //  full sweep. ConfigureAwait(false) keeps us off the
-                //  dispatcher, so no deadlock is possible.
+                // Cancelled: the user may still have edited the list, so the
+                //  previous probe results are stale. Re-run a full sweep.
+                //  ConfigureAwait(false) keeps us off the dispatcher.
                 LogInfo("Re-discovering AI providers…");
                 allProbes = [.. await RediscoverAsync(ct).ConfigureAwait(false)];
                 continue;
@@ -444,21 +445,22 @@ public sealed class AiInteractionWpf : IAiInteraction
     }
 
     /// <inheritdoc/>
-    public Task ManageProvidersAsync(IAiProviderRegistry registry, CancellationToken ct)
+    public Task<AiProviderConfig?> ManageProvidersAsync(
+        IAiProviderRegistry registry, AiProviderConfig? current, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(registry);
         if (_dispatcher is null)
-            return Task.CompletedTask;
+            return Task.FromResult<AiProviderConfig?>(null);
 
-        // ShowDialog blocks, so it must run on the dispatcher. The registry
-        //  persists each edit as it is made, so nothing needs returning here.
+        // ShowDialog blocks, so it must run on the dispatcher. List edits are
+        //  persisted by the registry as they are made; only the selection is returned.
         return _dispatcher.InvokeAsync(() =>
         {
-            var window = new ProviderManagerWindow(registry)
+            var window = new ProviderManagerWindow(registry, current)
             {
                 Owner = Application.Current.MainWindow
             };
-            window.ShowDialog();
+            return window.ShowDialog() == true ? window.SelectedConfig : null;
         }).Task;
     }
 
