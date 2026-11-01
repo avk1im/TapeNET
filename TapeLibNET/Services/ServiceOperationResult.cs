@@ -460,6 +460,10 @@ public sealed record ScanMediaResult : ServiceOperationResult
     public int TocCopiesFound { get; init; }
     public int TocsRecovered { get; init; }
     public int UnknownFragments { get; init; }
+    /// <summary>
+    /// Encrypted sets the scan proves — by their set header, or listed by a recovered TOC (Design-Encryption §12).
+    /// </summary>
+    public int EncryptedSets { get; init; }
     public bool LastSetUnclosed { get; init; }
 
     /// <summary>Follow-up actions, most useful first.</summary>

@@ -1,12 +1,11 @@
-using Windows.Win32.System.SystemServices; // Helpers.BytesToString
-
 using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
-using TapeLibNET.Drive;
+using TapeLibNET.Encryption;
 using TapeLibNET.Headers;
 using TapeLibNET.Media;
 using TapeLibNET.Scan;
 using TapeLibNET.Toc;
+using Windows.Win32.System.SystemServices; // Helpers.BytesToString
 
 namespace TapeLibNET.Services;
 
@@ -861,12 +860,12 @@ public class ServiceScanProgressHandler(ITapeServiceHost host, TapeScanner scann
             FragmentKind.MediaHeader =>
                 (ServiceReportLevel.Info, $"Media header >{f.Description}< · volume {f.Volume} at {f.Where}"),
             FragmentKind.SetHeader when !f.ClosedBySeparator && tocInPartition =>
-                (ServiceReportLevel.Info, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< at {f.Where} — runs to the " +
+                (ServiceReportLevel.Info, $"Backup set {f.VolumeSetIndex + 1} {SetName(f)} at {f.Where} — runs to the " +
                     "end of the medium (normal for a full volume)"),
             FragmentKind.SetHeader when !f.ClosedBySeparator =>
-                (ServiceReportLevel.Warning, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< at {f.Where} — never completed"),
+                (ServiceReportLevel.Warning, $"Backup set {f.VolumeSetIndex + 1} {SetName(f)} at {f.Where} — never completed"),
             FragmentKind.SetHeader =>
-                (ServiceReportLevel.Info, $"Backup set {f.VolumeSetIndex + 1} >{f.Description}< at {f.Where}"),
+                (ServiceReportLevel.Info, $"Backup set {f.VolumeSetIndex + 1} {SetName(f)} at {f.Where}"),
             FragmentKind.SetContent =>
                 (ServiceReportLevel.Info, $"Backup set {ShortId(f.Id)} at {f.Where} — no set header, first file >{f.Description}<"),
             FragmentKind.CalibrationHeader =>
@@ -884,14 +883,16 @@ public class ServiceScanProgressHandler(ITapeServiceHost host, TapeScanner scann
             _ => null,
         };
 
-    /// <summary>"at block N", naming the TOC partition when that is where the fragment stands.</summary>
-    private static string Where(TapeMediaFragment f) => $"at block {f.StartBlock}{InTocPartition(f)}";
-
-    private static string InTocPartition(TapeMediaFragment f)
-        => f.Partition == MediaPartition.Initiator ? " of the TOC partition" : string.Empty;
-
     /// <summary>The first 8 hex digits of an id — enough to tell sets apart in a log line.</summary>
     private static string ShortId(Guid? id) => id is { } g ? g.ToString("N")[..8] : "?";
+
+    /// <summary>
+    /// "&gt;name&lt;" — or, for an encrypted set, whose name is hidden, "(encrypted, scheme)" (Design-Encryption §12).
+    /// </summary>
+    private static string SetName(TapeMediaFragment f)
+        => f.Encryption is { } scheme
+            ? $"(encrypted, {EncryptionPreset.DisplayName(scheme)})"
+            : $">{f.Description}<";
 
     private static string FormatPhase(string phase) => phase switch
     {

@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
 using TapeLibNET.Drive;
+using TapeLibNET.Encryption;
 using TapeLibNET.Format; // TapeFrameStatus
 using TapeLibNET.Headers;
 using TapeLibNET.Media;
@@ -217,7 +218,8 @@ public sealed partial class TapeScanner
                 Volume = set.Volume,
                 VolumeSetIndex = set.VolumeSetIndex,
                 GlobalSetIndex = set.GlobalSetIndex,
-                Description = set.Description,
+                Description = set.Description,      // null for an encrypted set — its name is hidden
+                Encryption = set.Encryption == TapeEncryption.None ? null : set.Encryption,
             },
             TapeCalibrationHeader cal => fragment with
             {

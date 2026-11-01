@@ -830,6 +830,8 @@ tapecon rename-set 0 "Q3" --password-file old.txt --new-password-file new.txt
 
 ## 12. Scan Media
 
+How the scanner implements it: s. Design-ScanMedia §4.8.
+
 - **Set headers** with `Encryption ≠ 0` map to `FragmentKind.SetHeader` with a new `TapeMediaFragment.Encryption`
   (JSON-appended). `ServiceScanProgressHandler.DescribeFragment` uses `f.DisplayName` + "(encrypted)" instead of the
   (empty) description.
