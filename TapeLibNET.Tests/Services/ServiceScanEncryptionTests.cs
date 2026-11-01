@@ -33,9 +33,15 @@ public class ServiceScanEncryptionTests : ServiceTestBase
     [InlineData(true)]
     public async Task Scan_CountsAndNamesTheEncryptedSet_RevealsNothing(bool withInitiator)
     {
-        using var _ = TapeCrypto.UseIterations(1_000);
+        using var scope = TapeCrypto.UseIterations(1_000); // we don't use scope but also need _ below
         using var media = new TempVirtualMedia(withInitiator, ContentCapacity, InitiatorCapacity);
         var (svc, host, plain, hidden) = await SeedAsync(media);
+
+        while (host.Reports.TryDequeue(out _)) { }      // judge the scan's reports only — the seeding backup
+                                                        //  logged the name it was given, legitimately (§2.2)
+        // We use the queue drain rather than host.Reset(). Reset() would also empty PasswordPrompts and
+        //  MediaMismatchPrompts, which the teardown sweep and Assert.Empty(host.PasswordPrompts) still check.
+
         using (svc) using (plain) using (hidden)
         {
             var result = await svc.ScanMediaAsync(new ScanMediaRequest());
