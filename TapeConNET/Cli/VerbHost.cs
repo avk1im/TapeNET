@@ -8,7 +8,6 @@ using TapeLibNET.Virtual;
 
 namespace TapeConNET.Cli;
 
-
 /// <summary>
 /// Thin convenience wrapper that every verb uses to build a configured
 /// <see cref="TapeService"/> from the parsed command line and (optionally)
@@ -27,7 +26,6 @@ internal static class VerbHost
         OpenDrive = 1,
         LoadMedia = 2,
         RestoreTOC = 4,
-
         /// <summary>
         /// Identify the medium (TOC or calibration) WITHOUT the historical EOD churn: a calibration
         ///  cartridge is reported, unidentified media prompts before any search. Tolerant — proceeds even
@@ -46,6 +44,17 @@ internal static class VerbHost
     }
 
     /// <summary>
+    /// Build a new <see cref="TapeService"/> wired to <paramref name="ux"/> and the <c>--log-level</c>, without opening
+    ///  anything. For verbs that manage the drive themselves (<c>create-virtual</c>).
+    /// </summary>
+    public static TapeService Build(ParseResult parseResult, IConsoleUx ux, CancellationToken ct)
+    {
+        var logLevel = parseResult.GetValue(GlobalOptions.LogLevel);
+        var loggerFactory = LoggerFactoryBuilder.Build(ux, logLevel);
+        return new TapeService(ux, loggerFactory, ct);
+    }
+
+    /// <summary>
     /// Build a new <see cref="TapeService"/>, perform the requested
     /// <paramref name="steps"/>, and return it. Throws
     /// <see cref="TapeConException"/> when any step fails so the verb can
@@ -57,10 +66,7 @@ internal static class VerbHost
         LifecycleSteps steps,
         CancellationToken ct)
     {
-        var logLevel = parseResult.GetValue(GlobalOptions.LogLevel);
-        var loggerFactory = LoggerFactoryBuilder.Build(ux, logLevel);
-
-        var service = new TapeService(ux, loggerFactory, ct);
+        var service = Build(parseResult, ux, ct);
         try
         {
             if ((steps & LifecycleSteps.OpenDrive) != 0)
@@ -91,6 +97,7 @@ internal static class VerbHost
                         $"Couldn't identify media: {service.LastError}");
                 // TocLoaded / CalibrationMedia / Unidentified → proceed.
             }
+
             return service;
         }
         catch
@@ -100,26 +107,55 @@ internal static class VerbHost
         }
     }
 
+    /// <summary>True when the command line asks for NEW virtual media (<c>--virtual-create</c>).</summary>
+    public static bool IsCreatingVirtualMedia(ParseResult parseResult)
+        => !string.IsNullOrEmpty(parseResult.GetValue(VirtualMediaOptions.VirtualCreate));
+
     /// <summary>
-    /// Opens the drive selected by global options. Exactly one of
-    /// <c>--drive</c>, <c>--virtual</c>, or <c>--in-memory</c> must be
-    /// specified; multiples or none yield <see cref="TapeConExitCode.UsageError"/>.
+    /// Creates new file-backed virtual media at <paramref name="contentPath"/> from the shape options, leaving it open,
+    ///  loaded and formatted in <paramref name="service"/>. Shared by <c>--virtual-create</c> and <c>create-virtual</c>.
+    /// </summary>
+    /// <returns>The drive profile the media was created with (and records).</returns>
+    /// <exception cref="TapeConException">
+    /// Cancelled when the overwrite was declined; OperationFailed when creation failed; UsageError on bad options.
+    /// </exception>
+    public static async Task<VirtualTapeDriveCapabilities> CreateVirtualFromOptionsAsync(
+        TapeService service, ParseResult parseResult, string contentPath, string? mediaName)
+    {
+        var (caps, vmd) = VirtualMediaOptions.ResolveNewFileMedia(parseResult, contentPath);
+        var outcome = await service.CreateVirtualMediaAsync(caps, vmd, mediaName,
+            overwriteWithoutPrompt: parseResult.GetValue(GlobalOptions.OverwriteMedia));
+
+        return outcome switch
+        {
+            VirtualMediaCreateOutcome.Created => caps,
+            VirtualMediaCreateOutcome.Declined => throw new TapeConException(TapeConExitCode.Cancelled,
+                $"Virtual media >{vmd.ContentPath}< left untouched. Confirm the prompt, or pass --overwrite-media."),
+            _ => throw new TapeConException(TapeConExitCode.OperationFailed,
+                $"Couldn't create virtual media >{vmd.ContentPath}<: {service.LastError}"),
+        };
+    }
+
+    /// <summary>
+    /// Opens the drive selected by global options. At most one of
+    /// <c>--drive</c>, <c>--virtual-open</c>, <c>--virtual-create</c>, <c>--in-memory</c> may be specified;
+    /// multiples yield <see cref="TapeConExitCode.UsageError"/>, none opens Win32 drive 0.
     /// </summary>
     private static void OpenDriveFromOptions(TapeService service, ParseResult parseResult, IConsoleUx ux)
     {
         var driveNumber = parseResult.GetValue(GlobalOptions.Drive);
-        var virtualPath = parseResult.GetValue(GlobalOptions.Virtual);
+        var openPath    = parseResult.GetValue(GlobalOptions.Virtual);
+        var createPath  = parseResult.GetValue(VirtualMediaOptions.VirtualCreate);
         var inMemory    = parseResult.GetValue(GlobalOptions.InMemory);
-        var initiator   = parseResult.GetValue(GlobalOptions.Initiator);
-        var capacity    = parseResult.GetValue(GlobalOptions.Capacity);
-        var initCap     = parseResult.GetValue(GlobalOptions.InitCapacity);
 
         int selected = (driveNumber.HasValue ? 1 : 0)
-                     + (!string.IsNullOrEmpty(virtualPath) ? 1 : 0)
+                     + (!string.IsNullOrEmpty(openPath) ? 1 : 0)
+                     + (!string.IsNullOrEmpty(createPath) ? 1 : 0)
                      + (inMemory ? 1 : 0);
+
         if (selected > 1)
             throw new TapeConException(TapeConExitCode.UsageError,
-                "--drive, --virtual and --in-memory are mutually exclusive.");
+                "--drive, --virtual-open (--virtual), --virtual-create and --in-memory are mutually exclusive.");
 
         // Architecture §4 shortcut: when no drive option is supplied, auto-open
         //  Win32 drive 0 with a single info-level note (suppressed under --quiet).
@@ -139,43 +175,64 @@ internal static class VerbHost
 
         if (inMemory)
         {
-            var capabilities = !string.IsNullOrEmpty(initiator) || initCap.HasValue
-                ? VirtualTapeDriveCapabilities.WithPartitions
-                : VirtualTapeDriveCapabilities.WithSetmarks;
-
-            var contentCap = capacity ?? 64L * 1024 * 1024;        // 64 MiB default
-            var initiatorCap = initCap ?? (capabilities.SupportsInitiatorPartition ? 24L * 1024 * 1024 : 0);
-
-            var vmd = new VirtualMediaDescriptor(
-                ContentPath: string.Empty,
-                ContentCapacity: contentCap,
-                InitiatorPath: capabilities.SupportsInitiatorPartition ? "<memory>" : null,
-                InitiatorPartitionCapacity: initiatorCap,
-                InMemory: true);
-
-            if (!service.OpenVirtualDriveAsync(capabilities, vmd, FileMode.Create).GetAwaiter().GetResult())
-                throw new TapeConException(TapeConExitCode.OperationFailed,
-                    $"Couldn't open in-memory virtual drive: {service.LastError}");
+            OpenInMemoryFromOptions(service, parseResult);
             return;
         }
 
-        // file-backed virtual drive
-        var caps = !string.IsNullOrEmpty(initiator)
-            ? VirtualTapeDriveCapabilities.WithPartitions
-            : VirtualTapeDriveCapabilities.WithSetmarks;
+        if (!string.IsNullOrEmpty(createPath))
+        {
+            CreateVirtualFromOptionsAsync(service, parseResult, createPath, mediaName: null).GetAwaiter().GetResult();
+            return;
+        }
 
-        var contentCap2 = capacity ?? (caps.SupportsInitiatorPartition ? 1024L * 1024 * 1024 : 500L * 1024 * 1024);
-        var initiatorCap2 = initCap ?? (caps.SupportsInitiatorPartition ? 24L * 1024 * 1024 : 0);
+        OpenVirtualFromOptions(service, parseResult, openPath!, ux); // selected == 1 and nothing else matched
+    }
 
-        var vmd2 = new VirtualMediaDescriptor(
-            ContentPath: virtualPath!,
-            ContentCapacity: contentCap2,
-            InitiatorPath: initiator,
-            InitiatorPartitionCapacity: initiatorCap2);
+    /// <summary>
+    /// Opens EXISTING file-backed virtual media — never creates any. Sizes and the mark profile come from the media.
+    /// </summary>
+    private static void OpenVirtualFromOptions(TapeService service, ParseResult parseResult, string path, IConsoleUx ux)
+    {
+        var ignored = VirtualMediaOptions.CreateOnlyOptionsGiven(parseResult);
+        if (ignored.Count > 0)
+            ux.Log(WarningLevel.Warning,
+                $"{string.Join(", ", ignored)} ignored: existing virtual media keeps the sizes it was created with.");
 
-        if (!service.OpenVirtualDriveAsync(caps, vmd2, FileMode.OpenOrCreate).GetAwaiter().GetResult())
+        // The media records its mark profile; a flag given here matters only for legacy media without one.
+        //  No flag: the service probes legacy media and opens it under the profile its TOC reads with.
+        VirtualTapeDriveCapabilities? profile = VirtualMediaOptions.ProfileGiven(parseResult)
+            ? VirtualMediaOptions.ResolveCapabilities(parseResult, withInitiator: false, applyBlockSizes: false)
+            : null;
+
+        if (!service.OpenExistingVirtualDriveAsync(path, parseResult.GetValue(GlobalOptions.Initiator), profile)
+                .GetAwaiter().GetResult())
+        {
+            string hint = VirtualMediaPaths.MediaExists(path)
+                ? string.Empty
+                : " — create it with --virtual-create, or with 'tapecon create-virtual'";
             throw new TapeConException(TapeConExitCode.OperationFailed,
-                $"Couldn't open virtual drive >{virtualPath}<: {service.LastError}");
+                $"Couldn't open virtual media >{path}<: {service.LastError}{hint}.");
+        }
+    }
+
+    /// <summary>Opens a fresh in-memory virtual drive (no files; gone when the process ends).</summary>
+    private static void OpenInMemoryFromOptions(TapeService service, ParseResult parseResult)
+    {
+        var initiator = parseResult.GetValue(GlobalOptions.Initiator);
+        var initCap   = parseResult.GetValue(GlobalOptions.InitCapacity);
+        bool withInitiator = !string.IsNullOrEmpty(initiator) || initCap.HasValue;
+
+        var capabilities = VirtualMediaOptions.ResolveCapabilities(parseResult, withInitiator, applyBlockSizes: true);
+        var vmd = new VirtualMediaDescriptor(
+            ContentPath: VirtualMediaPaths.InMemoryPlaceholder,
+            ContentCapacity: parseResult.GetValue(GlobalOptions.Capacity) ?? VirtualMediaDefaults.InMemoryContentCapacity,
+            InitiatorPath: withInitiator ? VirtualMediaPaths.InMemoryPlaceholder : null,
+            InitiatorPartitionCapacity: withInitiator ? initCap ?? VirtualMediaDefaults.InitiatorCapacity : 0,
+            InMemory: true);
+
+        if (!service.OpenVirtualDriveAsync(capabilities, vmd, FileMode.Create).GetAwaiter().GetResult())
+            throw new TapeConException(TapeConExitCode.OperationFailed,
+                $"Couldn't open in-memory virtual drive: {service.LastError}");
     }
 
     /// <summary>
@@ -200,13 +257,10 @@ internal static class VerbHost
     {
         if (setWriteBlocked) return TapeConExitCode.WriteRefused;
         if (wasAborted) return TapeConExitCode.Cancelled;
-
         // passwordRequired ranks above failed: an encrypted backup refused for lack of a password, or a restore that
         //  skipped locked sets, also reports HasFailed / "nothing processed" — the password is the actionable cause.
         if (passwordRequired) return TapeConExitCode.PasswordRequired;
-        
         if (failed) return TapeConExitCode.OperationFailed;
-
         return TapeConExitCode.Ok;
     }
 }

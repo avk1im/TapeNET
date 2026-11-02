@@ -1,4 +1,4 @@
-namespace TapeLibNET.Services;
+namespace TapeLibNET.Virtual;
 
 /// <summary>
 /// Information required to create or open a virtual media (file-backed or in-memory).

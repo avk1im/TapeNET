@@ -2,12 +2,15 @@ using TapeLibNET.Format;
 
 namespace TapeLibNET.Virtual;
 
-
 /// <summary>
 /// Format 2.1 record 0x0F01 holding the persisted state of a <see cref="VirtualTapeMedia"/>
 ///  (Design-FormatV21 §5.6, F27). Framed inline as <c>Record ‖ CRC-64</c>.
 /// Only what cannot be derived is stored per virtual block; positions are rebuilt and cross-checked on load.
 /// </summary>
+/// <remarks>
+/// Field 8 (<see cref="MarkSupport"/>) was added after the 2.1 release as an optional, non-critical field: older readers
+///  skip it, and metadata without it reads as <see cref="VirtualMarkSupport.Unknown"/>.
+/// </remarks>
 internal sealed class VirtualMediaStateRecord : ITapeRecord<VirtualMediaStateRecord>
 {
     // Run-coded entry kinds; identical to TapeMarkType values, with Data = 0 (= TapeMarkType.None)
@@ -22,6 +25,10 @@ internal sealed class VirtualMediaStateRecord : ITapeRecord<VirtualMediaStateRec
     public ulong BytesWritten { get; set; }
     public ulong BlockCount { get; set; }
     public ulong TotalLogicalBlocks { get; set; }
+
+    /// <summary>The mark profile the media was written with (<see cref="VirtualMarkSupport"/>); 0 = not recorded.</summary>
+    public uint MarkSupport { get; set; }
+
     public string Name { get; set; } = "";
     public byte[] Blocks { get; set; } = [];
 
@@ -34,6 +41,7 @@ internal sealed class VirtualMediaStateRecord : ITapeRecord<VirtualMediaStateRec
         { 5, r => r.BytesWritten, (r, v) => r.BytesWritten = v, FieldFlags.Required },
         { 6, r => r.BlockCount, (r, v) => r.BlockCount = v, FieldFlags.Required },
         { 7, r => r.TotalLogicalBlocks, (r, v) => r.TotalLogicalBlocks = v, FieldFlags.Required },
+        { 8, r => r.MarkSupport, (r, v) => r.MarkSupport = v },      // optional, non-critical: absent = not recorded
         { 32, r => r.Name, (r, v) => r.Name = v },
         { 48, r => r.Blocks, (r, v) => r.Blocks = v, FieldFlags.Required },
     };
@@ -50,12 +58,12 @@ internal sealed class VirtualMediaStateRecord : ITapeRecord<VirtualMediaStateRec
 
     /// <summary>Builds the record for a media's current state; zero-length data blocks are not stored.</summary>
     public static VirtualMediaStateRecord Create(uint minBlockSize, uint maxBlockSize, uint defaultBlockSize,
-        long capacity, long bytesWritten, long totalLogicalBlocks, string name, IReadOnlyList<VirtualTapeBlock> blocks)
+        long capacity, long bytesWritten, long totalLogicalBlocks, string name, IReadOnlyList<VirtualTapeBlock> blocks,
+        VirtualMarkSupport markSupport = VirtualMarkSupport.Unknown)
     {
         var buffer = new List<byte>(blocks.Count * 4);
         Span<byte> scratch = stackalloc byte[TapeFormat.MaxVarUIntBytes];
         ulong entries = 0;
-
         foreach (VirtualTapeBlock vb in blocks)
         {
             if (vb.IsMark)
@@ -82,6 +90,7 @@ internal sealed class VirtualMediaStateRecord : ITapeRecord<VirtualMediaStateRec
             BytesWritten = checked((ulong)bytesWritten),
             BlockCount = entries,
             TotalLogicalBlocks = checked((ulong)totalLogicalBlocks),
+            MarkSupport = (uint)markSupport,
             Name = name,
             Blocks = [.. buffer],
         };
@@ -107,7 +116,6 @@ internal sealed class VirtualMediaStateRecord : ITapeRecord<VirtualMediaStateRec
         ulong entries = 0;
         ReadOnlySpan<byte> span = Blocks;
         int pos = 0;
-
         try
         {
             while (pos < span.Length)
@@ -160,7 +168,6 @@ internal sealed class VirtualMediaStateRecord : ITapeRecord<VirtualMediaStateRec
             throw new FormatException($"Bytes written mismatch: {streamOffset} rebuilt, {BytesWritten} recorded");
         if (contentStreamLength < streamOffset)
             throw new FormatException($"Content stream is shorter ({contentStreamLength}) than described ({streamOffset})");
-
         return list;
     }
 

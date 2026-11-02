@@ -893,7 +893,7 @@ public partial class MainViewModel : ViewModelBase
 
     /// <summary>
     /// Wraps an async service call with general busy state management.
-    /// Captures and restores prior IsBusy/BusyMessage so the helpers nest safely
+    ///  Captures and restores prior IsBusy/BusyMessage so the helpers nest safely
     ///  inside an outer busy scope (e.g. FormatVirtualDriveAsync).
     /// </summary>
     private async Task<T?> RunBusyAsync<T>(string busyMessage, Func<Task<T>> action)
@@ -2079,30 +2079,25 @@ public partial class MainViewModel : ViewModelBase
         if (!await ConfirmAndDisconnectRemoteHostAsync())
             return;
 
-        // A — Open virtual drive. Custom failure UI: "open existing" re-shows the
-        //  dialog so the user can switch to "create new"; "create new" just errors.
-        var mediaMode = request.IsCreateNew ? FileMode.Create : FileMode.Open;
-        if (!await OpenVirtualDriveCoreAsync(request, mediaMode))
+        if (request.IsCreateNew)
         {
-            if (!request.IsCreateNew)
-            {
-                SimpleBox.Show(
-                    $"Failed to open existing virtual media.\n\n{_tapeService.LastError}\n\n" +
-                    "Please check the file path or select 'Create new virtual media'.",
-                    "Open Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+            await CreateVirtualDriveAsync(request);
+            return;
+        }
 
-                // Re-show dialog with pre-populated path, suggesting "Create new"
-                ShowOpenVirtualDriveWindowInternal(
-                    prePopulatedPath: request.Media.ContentPath,
-                    preSelectCreateNew: null); // Let user decide
-            }
-            else
-            {
-                SimpleBox.Show(
-                    $"Failed to create virtual drive.\n\n{_tapeService.LastError}",
-                    "Error", MessageBoxButton.OK, SimpleBox.ImageFailed);
-                UpdateTreeForDriveOnly(0);
-            }
+        // A — Open existing virtual media (FileMode.Open never creates). The backend takes block sizes and the
+        //  recorded mark profile from the media; the request's capabilities matter only for legacy media.
+        //  Custom failure UI: re-show the dialog so the user can switch to "create new".
+        if (!await OpenVirtualDriveCoreAsync(request, FileMode.Open))
+        {
+            SimpleBox.Show(
+                $"Failed to open existing virtual media.\n\n{_tapeService.LastError}\n\n" +
+                "Please check the file path or select 'Create new virtual media'.",
+                "Open Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+
+            ShowOpenVirtualDriveWindowInternal(
+                prePopulatedPath: request.Media.ContentPath,
+                preSelectCreateNew: null); // Let user decide
             return;
         }
 
@@ -2113,33 +2108,54 @@ public partial class MainViewModel : ViewModelBase
             return;
         }
 
-        // Apply IO speed selected in the dialog (if any) before any TOC operations
-        //  so that the TOC operations already reflect the selected speed.
+        // Apply the IO speed selected in the dialog (if any) before any TOC operation,
+        //  so the TOC operations already reflect it.
         if (request.IoRate != null)
             SelectedIoSpeed = request.IoRate;
         NotifyIoSpeedChanged();
 
-        // For "Create new", create and save the initial TOC (warning only on failure)
-        if (request.IsCreateNew)
-        {
-            var tocCreated = await RunBusyAsync("Creating initial TOC...",
-                () => _tapeService.CreateInitialTOCAsync(request.MediaName));
-            if (!tocCreated)
-                LogWarn("Could not create initial TOC");
-        }
-
-        // C — Identify media and read TOC / calibration calHeader. For freshly created media there's no
-        //  prior TOC to import, so suppress the file-import recovery prompt in that case.
-        var outcome = await IdentifyMediaWithUIAsync(0, offerFileImportOnFailure: !request.IsCreateNew);
+        // C — Identify media and read TOC / calibration header
+        var outcome = await IdentifyMediaWithUIAsync(0);
         if (outcome == IdentifyMediaOutcome.Failed)
             return;
 
-        var modeText = request.Media.InMemory ? "Created in-memory"
-            : request.IsCreateNew ? "Created new" : "Opened existing";
-        LogInfo($"{modeText} virtual media: {request.Media.ContentPath}");
+        LogInfo($"Opened existing virtual media: {request.Media.ContentPath}");
+        AddToVirtualDriveMru(request.Media.ContentPath);
+    }
 
-        // Don't add in-memory drives to MRU (they can't be reopened)
-        if (!_tapeService.IsInMemoryDrive) // same as if (!request.Media.InMemory)
+    /// <summary>
+    /// "Create new" from the Open Virtual Drive dialog, through the shared service policy
+    ///  (<see cref="TapeServiceBase.CreateVirtualMediaAsync"/>): create, load and format — media header plus empty
+    ///  TOC — so the new media opens straight into the usual tree. The dialog already warned what an overwrite loses,
+    ///  so the service does not ask again.
+    /// </summary>
+    private async Task CreateVirtualDriveAsync(VirtualDriveOpenRequest request)
+    {
+        var busy = request.Media.InMemory ? "Creating in-memory virtual drive..." : "Creating virtual drive...";
+        var outcome = await RunBusyAsync(busy, () => _tapeService.CreateVirtualMediaAsync(
+            request.Capabilities, request.Media, request.MediaName,
+            overwriteWithoutPrompt: true,
+            ioRate: request.IoRate?.Rate,
+            ewProfile: request.EwProfile));
+
+        if (request.IoRate != null)
+            SelectedIoSpeed = request.IoRate;
+        NotifyIoSpeedChanged();
+
+        if (outcome != VirtualMediaCreateOutcome.Created)
+        {
+            SimpleBox.Show($"Failed to create virtual media.\n\n{_tapeService.LastError}",
+                "Error", MessageBoxButton.OK, SimpleBox.ImageFailed);
+            UpdateTreeForDriveOnly(0);
+            return;
+        }
+
+        // Formatted: the TOC is in memory — rebuild the views without another tape pass.
+        UpdateTreeFromTOC(_tapeService.DriveNumber);
+        SelectMostRecentSet();
+
+        LogInfo($"{(request.Media.InMemory ? "Created in-memory" : "Created new")} virtual media: {request.Media.ContentPath}");
+        if (!_tapeService.IsInMemoryDrive)
             AddToVirtualDriveMru(request.Media.ContentPath);
     }
 
@@ -2290,6 +2306,7 @@ public partial class MainViewModel : ViewModelBase
             SupportsInitiatorPartition = _tapeService.SupportsInitiatorPartition,
             SupportsCompression = false,
         };
+        long defaultTocCapacity = _tapeService.DefaultTOCCapacity;   // drive-dependent: read before the drive closes
 
         var lastVmd = _tapeService.LastVMD;
         VirtualMediaDescriptor? newVmd = null;
@@ -2321,53 +2338,49 @@ public partial class MainViewModel : ViewModelBase
         if (newVmd == null)
             return;
 
-        IsBusy = true;
-        BusyMessage = "Creating virtual media...";
-
-        try
+        // The Format dialog decides on the TOC partition; the volume dialog on where and how large. The drive is
+        //  reopened under the same profile, now with the partition support the format asks for.
+        bool withInitiator = formatViewModel.CreateInitiatorPartition;
+        var vmd = newVmd with
         {
-            if (!_tapeService.InsertVirtualMedia(newVmd, FileMode.Create, newEwProfile))
-            {
-                SimpleBox.Show($"Failed to create virtual media files.\n\n{_tapeService.LastError}",
-                    "Format Error", MessageBoxButton.OK, SimpleBox.ImageFailed);
-                return;
-            }
+            InitiatorPath = !withInitiator ? null
+                : newVmd.InitiatorPath
+                  ?? (newVmd.InMemory ? VirtualMediaPaths.InMemoryPlaceholder
+                                      : VirtualMediaPaths.BuildInitiatorFilePath(newVmd.ContentPath)),
+            InitiatorPartitionCapacity = !withInitiator ? 0
+                : newVmd.InitiatorPartitionCapacity > 0 ? newVmd.InitiatorPartitionCapacity
+                : defaultTocCapacity,
+        };
+        var caps = currentCaps with { SupportsInitiatorPartition = withInitiator };
 
-            if (!await LoadMediaWithUIAsync("Loading media...", "virtual media"))
-                return;
+        // The user confirmed "all data will be erased" before this dialog: no second prompt.
+        var outcome = await RunBusyAsync("Creating virtual media...", () => _tapeService.CreateVirtualMediaAsync(
+            caps, vmd, formatViewModel.MediaName,
+            overwriteWithoutPrompt: true,
+            ioRate: _selectedIoSpeed.Rate,
+            ewProfile: newEwProfile));
+        NotifyIoSpeedChanged();
 
-            BusyMessage = "Formatting media...";
-            long initiatorPartitionSize = formatViewModel.CreateInitiatorPartition
-                ? _tapeService.DefaultTOCCapacity : -1;
-
-            if (!await _tapeService.FormatMediaAsync(initiatorPartitionSize, formatViewModel.MediaName))
-            {
-                SimpleBox.Show($"Failed to format media.\n\n{_tapeService.LastError}",
-                    "Format Error", MessageBoxButton.OK, SimpleBox.ImageFailed);
-                return;
-            }
-
-            UpdateTreeFromTOC(_tapeService.DriveNumber);
-            SelectMostRecentSet();
-
-            // Don't add in-memory drives to MRU (they can't be reopened)
-            if (!_tapeService.IsInMemoryDrive)
-                AddToVirtualDriveMru(newVmd.ContentPath);
-
-            SimpleBox.Show("Virtual media formatted successfully!", "Format Complete",
-                MessageBoxButton.OK, SimpleBox.ImageComplete);
-        }
-        catch (Exception ex)
+        if (outcome != VirtualMediaCreateOutcome.Created)
         {
-            LogErr($"Format failed: {ex.Message}");
-            SimpleBox.Show($"Format failed.\n\n{ex.Message}", "Format Error",
-                MessageBoxButton.OK, MessageBoxImage.Error);
+            SimpleBox.Show($"Failed to format virtual media.\n\n{_tapeService.LastError}",
+                "Format Error", MessageBoxButton.OK, SimpleBox.ImageFailed);
+            if (_tapeService.IsDriveOpen)
+                UpdateTreeFromTOC(_tapeService.DriveNumber);
+            else
+                UpdateTreeForDriveOnly(0);
+            return;
         }
-        finally
-        {
-            IsBusy = false;
-            BusyMessage = string.Empty;
-        }
+
+        UpdateTreeFromTOC(_tapeService.DriveNumber);
+        SelectMostRecentSet();
+
+        // Don't add in-memory drives to MRU (they can't be reopened)
+        if (!_tapeService.IsInMemoryDrive)
+            AddToVirtualDriveMru(vmd.ContentPath);
+
+        SimpleBox.Show("Virtual media formatted successfully!", "Format Complete",
+            MessageBoxButton.OK, SimpleBox.ImageComplete);
     }
 
     #endregion

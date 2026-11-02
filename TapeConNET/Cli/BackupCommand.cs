@@ -46,10 +46,8 @@ internal static class BackupCommand
         {
             Description = "Create an incremental backup set (only changed files since last full set).",
         };
-        var blockSizeOption = new Option<uint?>("--block-size", "-b")
-        {
-            Description = "Block size in bytes (default: drive's preferred size; clamped to drive limits).",
-        };
+        var blockSizeOption = SizeOptions.BlockSize("--block-size",
+            "Block size (default: drive's preferred size; clamped to drive limits).", "-b");
         var hashOption = new Option<TapeHashAlgorithm>("--hash", "-H")
         {
             Description = "Per-file hash algorithm. Choices: None, Crc32, Crc64, XxHash32, XxHash3, XxHash64, XxHash128.",
@@ -96,10 +94,10 @@ internal static class BackupCommand
         {
             Description = "Folder for the emergency TOC export if writing the TOC to tape fails.",
         };
-        var overwriteMediaOption = new Option<bool>("--overwrite-media")
-        {
-            Description = "Overwrite media carrying data without prompt.",
-        };
+        //var overwriteMediaOption = new Option<bool>("--overwrite-media")
+        //{
+        //    Description = "Overwrite media carrying data without prompt.",
+        //};
         var skipSetCorrectionOption = new Option<bool>("--skip-set-correction")
         {
             Description = "Do not attempt to correct backup set navigation errors.",
@@ -126,7 +124,7 @@ internal static class BackupCommand
         cmd.Options.Add(noMultivolumeOption);
         cmd.Options.Add(ejectWhenDoneOption);
         cmd.Options.Add(emergencyTocOption);
-        cmd.Options.Add(overwriteMediaOption);
+        //cmd.Options.Add(overwriteMediaOption);
         cmd.Options.Add(skipSetCorrectionOption);
         cmd.Options.Add(skipSetVerifyOption);
 
@@ -147,7 +145,7 @@ internal static class BackupCommand
             var noMultivolume = parseResult.GetValue(noMultivolumeOption);
             var ejectWhenDone = parseResult.GetValue(ejectWhenDoneOption);
             var emergency   = parseResult.GetValue(emergencyTocOption);
-            var overwriteMedia = parseResult.GetValue(overwriteMediaOption);
+            var overwriteMedia = parseResult.GetValue(GlobalOptions.OverwriteMedia); // parseResult.GetValue(overwriteMediaOption);
             var skipSetCorrection = parseResult.GetValue(skipSetCorrectionOption);
             var skipSetVerify = parseResult.GetValue(skipSetVerifyOption);
             var filterFcl   = parseResult.GetValue(FilterOptions.Filter);
@@ -190,6 +188,12 @@ internal static class BackupCommand
             if (appendAfter.HasValue) append = true;
             // Incremental implies append (cannot be incremental of nothing)
             if (incremental) append = true;
+
+            // New media starts blank: there is nothing to append to.
+            if (append && VerbHost.IsCreatingVirtualMedia(parseResult))
+                throw new TapeConException(TapeConExitCode.UsageError,
+                    "--append, --append-after and --incremental need existing sets — not available with " +
+                    "--virtual-create, which starts blank media.");
 
             // Append needs the existing TOC; full backup only needs the media
             var steps = append ? VerbHost.LifecycleSteps.Full : VerbHost.LifecycleSteps.Media;

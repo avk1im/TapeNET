@@ -157,6 +157,7 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
 #endif
     private long m_bytesWritten = 0;
     private readonly string m_name;
+    private VirtualMarkSupport m_markSupport;     // persisted mark profile (field 8 of the state record)
     private bool m_stateDirty = false;
 
 #endregion
@@ -177,7 +178,8 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
         Stream? metadataStream = null,
         bool ownsMetadataStream = true,
         string? name = null,
-        ILoggerFactory? loggerFactory = null)
+        ILoggerFactory? loggerFactory = null,
+        VirtualMarkSupport markSupport = VirtualMarkSupport.Unknown)
         : base((loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<VirtualTapeMedia>())
     {
         ArgumentNullException.ThrowIfNull(stream);
@@ -197,6 +199,7 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
         m_ownsStream = ownsStream;
         m_ownsMetadataStream = ownsMetadataStream;
         m_name = name ?? "VirtualMedia";
+        m_markSupport = markSupport;
 
         // Fresh tape - no auto-loading from metadata
     }
@@ -263,6 +266,7 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
             m_virtualBlocks.AddRange(state.Rebuild(stream.Length));   // validates ranges and cross-checks
             m_capacity = (long)state.Capacity;
             m_name = state.Name;
+            m_markSupport = (VirtualMarkSupport)state.MarkSupport;
             m_bytesWritten = (long)state.BytesWritten;
 
             m_currentBlock = 0;
@@ -329,6 +333,23 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
     protected override string LogPrefix => m_name;
 
     public string Name => m_name;
+    
+    /// <summary>
+    /// The mark profile this media was written with; <see cref="VirtualMarkSupport.Unknown"/> for media written before
+    ///  it was recorded. Set by the backend on new media, on format, and on the first write to unrecorded media.
+    /// </summary>
+    public VirtualMarkSupport MarkSupport
+    {
+        get => m_markSupport;
+        internal set
+        {
+            if (m_markSupport == value)
+                return;
+            m_markSupport = value;
+            m_stateDirty = true;
+        }
+    }
+
     public uint BlockSize
     {
         get => m_blockSize;
@@ -981,7 +1002,7 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
 
     /// <summary>
     /// Saves the complete state (configuration + data) to the metadata stream.
-    /// Includes: block size parameters, capacity, name, bytes written, and all virtual blocks.
+    ///  Includes: block size parameters, capacity, name, bytes written, all virtual blocks, and mark support.
     /// </summary>
     public bool SaveState()
     {
@@ -991,8 +1012,10 @@ public partial class VirtualTapeMedia : ErrorManageableBase, IDisposable
         try
         {
             m_metadataStream.Position = 0;
+
             var state = VirtualMediaStateRecord.Create(m_minBlockSize, m_maxBlockSize, m_defaultBlockSize,
-                m_capacity, m_bytesWritten, TotalBlockCount, m_name, m_virtualBlocks);
+                m_capacity, m_bytesWritten, TotalBlockCount, m_name, m_virtualBlocks, m_markSupport);
+            
             Format.TapeFrame.WriteInline(m_metadataStream, state);
 
             m_metadataStream.Flush();

@@ -1,11 +1,10 @@
-using TapeLibNET.Services;
+using TapeLibNET.Virtual;
 
 namespace TapeLibNET.Tests.Helpers;
 
-
 /// <summary>
 /// Owns a temporary on-disk virtual-tape file (and optional initiator file)
-///  used to drive <c>tapecon --virtual PATH</c> end-to-end tests across
+///  used to drive <c>tapecon</c> end-to-end tests across
 ///  multiple in-process invocations. The media file persists across
 ///  <see cref="TestTapeServiceHost"/> calls so backup → restore round-trips work.
 /// </summary>
@@ -23,6 +22,9 @@ public sealed class TempVirtualMedia : IDisposable
     public long ContentCapacity { get; }
     public long InitiatorCapacity { get; }
     public bool HasInitiator => InitiatorPath is not null;
+
+    /// <summary>True once the media exists on disk (its metadata file is present).</summary>
+    public bool Exists => VirtualMediaPaths.MediaExists(ContentPath);
 
     public TempVirtualMedia(
         bool withInitiator = false,
@@ -43,26 +45,35 @@ public sealed class TempVirtualMedia : IDisposable
     }
 
     /// <summary>
-    /// Returns the global drive options to pass to <c>tapecon</c> for this
-    /// virtual media. Always begins with <c>--virtual</c> + path; appends
-    /// <c>--initiator</c> when the fixture was built with a separate TOC
-    /// partition; appends <c>--capacity</c> / <c>--init-capacity</c> so the
-    /// initial format uses the fixture's sizes.
+    /// Returns the global drive options to pass to <c>tapecon</c> for this virtual media. Creates the media on first
+    ///  use — <c>--virtual-create</c> with <c>--capacity</c> / <c>--init-capacity</c> — and opens it afterwards with
+    ///  <c>--virtual-open</c> (sizes then come from the media). Appends <c>--initiator</c> when the fixture was built
+    ///  with a separate TOC partition.
     /// </summary>
     public string[] DriveArgs()
     {
+        bool exists = Exists;
         var args = new List<string>(8)
         {
-            "--virtual", ContentPath,
-            "--capacity", ContentCapacity.ToString(),
+            exists ? "--virtual-open" : "--virtual-create", ContentPath,
         };
+        if (!exists)
+        {
+            args.Add("--capacity");
+            args.Add(ContentCapacity.ToString());
+        }
+
         if (InitiatorPath is not null)
         {
             args.Add("--initiator");
             args.Add(InitiatorPath);
-            args.Add("--init-capacity");
-            args.Add(InitiatorCapacity.ToString());
+            if (!exists)
+            {
+                args.Add("--init-capacity");
+                args.Add(InitiatorCapacity.ToString());
+            }
         }
+
         return [.. args];
     }
 
