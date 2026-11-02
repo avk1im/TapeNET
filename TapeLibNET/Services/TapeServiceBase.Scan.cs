@@ -434,8 +434,11 @@ public partial class TapeServiceBase
 
         _agent?.Dispose();
         _agent = null;
+
         ClearKeys();
         _toc = toc;
+        ReapplyKeys();      // retained keys reopen their chains (Design-Encryption §11.1.7)
+
         TOCIsFrom = TOCSource.Recovered;
         TOCFilePath = savedPath;
 

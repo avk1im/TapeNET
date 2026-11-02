@@ -33,3 +33,9 @@ public readonly record struct PasswordRequest(
     string SetDisplay,
     int Attempt,
     TapeResult? LastFailure);
+
+/// <summary>What one password opened (Design-Encryption §11.1.10).</summary>
+/// <param name="Sets">Sets unlocked.</param>
+/// <param name="Chains">Key chains they belong to.</param>
+/// <param name="Result">OK when anything opened; otherwise why not (wrong password, the delay, tampering).</param>
+public readonly record struct UnlockOutcome(int Sets, int Chains, TapeResult Result);

@@ -260,6 +260,28 @@ public sealed class TapeKeyRing(ILogger? logger = null)
             m_logger.LogTrace("{Prefix}: {Count} key(s) cleared", LogPrefix, count);
     }
 
+    /// <summary>
+    /// Locks every set of <paramref name="toc"/> a held key opened — and keeps the keys (Design-Encryption §11.1.7): the
+    ///  service's retention across media changes. A null TOC is a no-op.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">A set has unsaved changes (E12); sets before it stay locked.</exception>
+    public void LockHeld(TapeTOC? toc)
+    {
+        if (toc is null)
+            return;
+        int locked = 0;
+        foreach (ITapeLockableSet set in toc)
+        {
+            if (set.Key is { } applied && Holds(applied))
+            {
+                set.Lock();
+                locked++;
+            }
+        }
+        if (locked > 0)
+            m_logger.LogTrace("{Prefix}: {Count} set(s) locked, {Keys} key(s) retained", LogPrefix, locked, m_keys.Count);
+    }
+
     #endregion
 
     #region *** TOC overloads (§7.1) ***

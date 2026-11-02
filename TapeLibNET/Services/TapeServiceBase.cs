@@ -1136,6 +1136,8 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 ClearKeys();
                 _toc = _agent.TOC;
+                ReapplyKeys();      // retained keys reopen their chains (Design-Encryption §11.1.7)
+
                 TOCIsFrom = TOCSource.Media;
                 TOCFilePath = null;
                 LogOk($"TOC restored with {_toc.Count} backup set(s)");
@@ -1281,6 +1283,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 ClearKeys();
                 _toc = _agent.TOC;
+                ReapplyKeys();      // retained keys reopen their chains (Design-Encryption §11.1.7)
                 TOCIsFrom = TOCSource.Media;
                 TOCFilePath = null;
 
@@ -1345,6 +1348,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 ClearKeys();
                 _toc = _agent.TOC;
+                // no need to ReapplyKeys() to the initial TOC
                 TOCIsFrom = TOCSource.Media;
                 TOCFilePath = null;
                 LogOk($"Initial TOC created: {description}");
@@ -1607,6 +1611,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 // ClearKeys(); already done above
                 _toc = _agent.TOC;
+                // no need to ReapplyKeys() to the newly created TOC
 
                 if (!_drive.ReloadMedia())
                 {
@@ -1651,7 +1656,6 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// </summary>
     public Task<bool> ImportTOCFromFileAsync(string filePath)
     {
-        ClearKeys();
         _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
         return Task.Run(async () =>
         {
@@ -1676,6 +1680,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 ClearKeys();
                 _toc = _agent.TOC;
+                ReapplyKeys();      // retained keys reopen their chains (Design-Encryption §11.1.7)
 
                 // Now compare the media header with the loaded _toc acc. to
                 //  verify-and-adopt-Volume-not-MediaId reconciliation (§10.8).
