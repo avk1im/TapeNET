@@ -1,7 +1,6 @@
 using Windows.Win32.Foundation;
 using TapeLibNET.Encryption;
 using TapeLibNET.Services;
-using TapeLibNET.Toc;
 using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests.Services;

@@ -73,6 +73,7 @@ public partial class TapeServiceBase
 
                 _agent?.Dispose();
                 _agent = null;
+                ClearKeys();
                 _toc = null;
                 _drive?.Dispose();
 
@@ -240,6 +241,7 @@ public partial class TapeServiceBase
 
                 _agent?.Dispose();
                 _agent = null;
+                ClearKeys();
                 _toc = null;
                 _drive?.Dispose();
 
@@ -388,7 +390,8 @@ public partial class TapeServiceBase
 
                 _agent?.Dispose();
                 _agent = null;
-                _toc   = null;
+                ClearKeys();
+                _toc = null;
                 _drive?.Dispose();
 
                 _drive = new TapeDrive(_loggerFactory, backend);
@@ -615,6 +618,7 @@ public partial class TapeServiceBase
         {
             // Dispose the current drive first (sends no Close RPC — backend is non-session-owning)
             _agent?.Dispose(); _agent = null;
+            ClearKeys();
             _toc = null;
             _drive?.Dispose(); _drive = null;
 

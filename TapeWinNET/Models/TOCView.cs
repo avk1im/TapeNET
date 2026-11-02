@@ -169,11 +169,33 @@ public class TOCView(TapeTOC toc)
         setIndex >= 1 && setIndex <= _toc.Count ? _setViews[setIndex] : null;
 
     /// <summary>
-    /// Returns an existing <see cref="BackupSetView"/> if it is still valid for the
-    /// current <paramref name="showIncrementalSets"/> setting, or creates a new one.
-    /// When a stale view is replaced, checked state is migrated.
+    /// Returns the view of <paramref name="setIndex"/> — or <see langword="null"/> for a LOCKED set, whose files are hidden
+    ///  (Design-Encryption §11.1.9). A cached view of a set that has locked since is dropped: it would show hidden files.
     /// </summary>
-    public BackupSetView GetOrCreate(int setIndex, bool showIncrementalSets)
+    public BackupSetView? TryGetOrCreate(int setIndex, bool showIncrementalSets)
+    {
+        Debug.Assert(setIndex >= 1 && setIndex <= _toc.Count,
+            $"setIndex {setIndex} out of range [1..{_toc.Count}]");
+        if (_toc[setIndex].IsLocked)
+        {
+            _setViews[setIndex] = null;
+            return null;
+        }
+        return GetOrCreate(setIndex, showIncrementalSets);
+    }
+
+    /// <summary>
+    /// Returns an existing <see cref="BackupSetView"/> if it is still valid for the
+    ///  current <paramref name="showIncrementalSets"/> setting, or creates a new one.
+    ///  When a stale view is replaced, checked state is migrated.
+    /// <para>
+    /// <b>Throws</b> if the set is locked — use <see langword="public"/> <see cref="TryGetOrCreate"/>
+    ///  to avoid the exception and get <see langword="null"/> instead.
+    /// </para>
+    /// </summary>
+    /// <exception cref="TapeLibNET.Encryption.TapeSetLockedException">
+    ///  The set is locked — use <see cref="TryGetOrCreate"/>.</exception>
+    private BackupSetView GetOrCreate(int setIndex, bool showIncrementalSets)
     {
         Debug.Assert(setIndex >= 1 && setIndex <= _toc.Count,
             $"setIndex {setIndex} out of range [1..{_toc.Count}]");
@@ -192,6 +214,9 @@ public class TOCView(TapeTOC toc)
         IReadOnlyList<TapeFileInfo> sourceFiles;
         if (needsIncremental)
         {
+            // Encryption note: the chain walk for needsIncremental stays safe:
+            //  TapeTOC.SelectFiles() treats a locked set as its own chain start,
+            //  so an unlocked incremental never enumerates a locked base.
             _toc.CurrentSetIndex = setIndex;
             var filesBySets = _toc.SelectFiles(incremental: true, filter: null);
             sourceFiles = _toc.SelectedFilesToList(filesBySets);
@@ -256,7 +281,9 @@ public class TOCView(TapeTOC toc)
             // A view is stale when its underlying TapeSetTOC was replaced
             //  (e.g. backup overwrote the set). Incremental-mode mismatches are
             //  handled by GetOrCreate with proper checked-state migration.
-            bool stale = !ReferenceEquals(view.SetTOC, _toc[i]);
+            //  Encryption note: A set that locked since (Forget Passwords, reload)
+            //  must not keep a view of its hidden files.
+            bool stale = _toc[i].IsLocked || !ReferenceEquals(view.SetTOC, _toc[i]);
 
             if (refreshSets || stale)
             {
@@ -423,7 +450,7 @@ public class TOCView(TapeTOC toc)
             // When a global filter is pending, force-create any unvisited set view now
             //  so the filter is applied and counts are correct for the media snapshot.
             if (PendingGlobalFilter is not null && _setViews[setIndex] is null)
-                GetOrCreate(setIndex, showIncrementalSets);
+                TryGetOrCreate(setIndex, showIncrementalSets); // Try version to account for locked sets
 
             // Sync checked and filtered state from existing BackupSetView (user may have
             //  checked/filtered files before navigating back to the media view)

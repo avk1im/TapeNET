@@ -299,7 +299,7 @@ public partial class MainViewModel
             items.Add(new BackupSetListItem(setTOC, idx, altIdx, setTOC.Volume == toc.Volume)
             {
                 IsCheckedForRestore = true,
-                CheckedFileCount = setTOC.Count
+                CheckedFileCount = setTOC.IsLocked ? null : setTOC.Count,   // hidden while locked
             });
         }
         return items;
@@ -382,7 +382,7 @@ public partial class MainViewModel
                 //  propagates to FilteredFileList even for non-visited sets.
                 var view = _tocView?[item.SetIndex];
                 if (view == null && check && _tocView != null)
-                    view = _tocView.GetOrCreate(item.SetIndex, ShowIncrementalSets);
+                    view = _tocView.TryGetOrCreate(item.SetIndex, ShowIncrementalSets);   // null for a locked set
 
                 if (view != null)
                 {
@@ -527,7 +527,7 @@ public partial class MainViewModel
         //  Non-visited sets won't have a view yet — create one on demand when checking.
         var view = _tocView?[item.SetIndex];
         if (view == null && check && _tocView != null)
-            view = _tocView.GetOrCreate(item.SetIndex, ShowIncrementalSets);
+            view = _tocView.TryGetOrCreate(item.SetIndex, ShowIncrementalSets);   // null for a locked set
 
         if (view != null)
         {

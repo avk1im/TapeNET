@@ -91,6 +91,7 @@ public partial class MainViewModel : ViewModelBase
     private bool _isTOCAbortPending;
     private bool _showFullPathname = false;
     private bool _showIncrementalSets = true;
+    private bool _isLockedSetShown;
     private FileListItem? _selectedFile;
     private BackupSetListItem? _selectedBackupSet;
     private TapeTreeItemViewModel? _selectedTreeItem;
@@ -475,7 +476,10 @@ public partial class MainViewModel : ViewModelBase
         set
         {
             if (value != ContentPaneType.BackupSetInfo)
+            {
                 _currentSetView = null; // important to prevent backup set-only UI changes e.g. table calHeader
+                IsLockedSetShown = false;
+            }
 
             if (SetProperty(ref _contentType, value))
             {
@@ -493,6 +497,16 @@ public partial class MainViewModel : ViewModelBase
 
     /// <summary>Whether the files table is visible (BackupSet selected)</summary>
     public bool IsFileTableVisible => ContentType == ContentPaneType.BackupSetInfo;
+
+    /// <summary>
+    /// The selected backup set is encrypted and locked: the files pane shows the placeholder instead of the list
+    ///  (Design-Encryption §11.1.1). The [Unlock…] button joins in step 4.
+    /// </summary>
+    public bool IsLockedSetShown
+    {
+        get => _isLockedSetShown;
+        private set => SetProperty(ref _isLockedSetShown, value);
+    }
 
     /// <summary>Whether the backup sets table is visible (Media selected)</summary>
     public bool IsBackupSetTableVisible => ContentType == ContentPaneType.MediaInfo;
@@ -1703,7 +1717,21 @@ public partial class MainViewModel : ViewModelBase
 
             // Get or create the BackupSetView (handles incremental file resolution,
             //  caching, and checked-state migration)
-            var setView = _tocView.GetOrCreate(setIndex, ShowIncrementalSets);
+
+            var setView = _tocView.TryGetOrCreate(setIndex, ShowIncrementalSets);
+
+            // A locked set: its files are hidden — show the placeholder, never
+            //  a list (Design-Encryption §11.1.1)
+            IsLockedSetShown = setView is null;
+            if (setView is null)
+            {
+                _currentSetView = null;
+                FileList = [];
+                NotifyFilterPropertiesChanged();
+                TableHeader = "Files (locked)";
+                StatusMessage = $"Set #{setIndex} | #{altIndex}: encrypted and locked";
+                return;
+            }
             _currentSetView = setView;
 
             // Build the display list (creates FileListItem proxies as needed)
@@ -1866,6 +1894,22 @@ public partial class MainViewModel : ViewModelBase
         {
             if (await _tapeService.RenameBackupSetAsync(setIndex))
             {
+                // Refresh the tree node from the set — its name, and its lock state (a rename unlocks it)
+                if (_tapeService.TOC is { } toc)
+                {
+                    foreach (var setNode in TreeItems.SelectMany(d => d.Children).SelectMany(t => t.Children))
+                        if (setNode.ItemType == TreeItemType.BackupSet && setNode.SetIndex == setIndex)
+                            setNode.RefreshFromSet(toc[setIndex]);
+                }
+
+                if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet && _selectedTreeItem.SetIndex == setIndex)
+                    LoadBackupSetInfo(setIndex);
+                else if (_selectedTreeItem?.ItemType == TreeItemType.Tape)
+                    LoadMediaInfo();
+            }
+            /* // Pre-encryption version (not using RefreshFromSet)
+            if (await _tapeService.RenameBackupSetAsync(setIndex))
+            {
                 var newName = _tapeService.TOC?[setIndex].Description ?? string.Empty;
                 // Update tree node if it is currently selected: "Set #N | -M: description"
                 if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet &&
@@ -1905,6 +1949,7 @@ public partial class MainViewModel : ViewModelBase
                         LoadMediaInfo(); // refresh backup set table pane if media node is selected
                 }
             }
+            */
             else if (_tapeService.LastError is not null)
             {
                 SimpleBox.Show($"Failed to rename backup set.\n\n{_tapeService.LastError}",

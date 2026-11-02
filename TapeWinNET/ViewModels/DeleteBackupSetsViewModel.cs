@@ -198,8 +198,25 @@ public class DeleteBackupSetsViewModel : ViewModelBase
                 return 0;
             int total = 0;
             for (int i = SelectedOption.SetIndex; i <= toc.LastSetOnVolume; i++)
-                total += toc[i].Count;
+                if (!toc[i].IsLocked)
+                    total += toc[i].Count;
             return total;
+        }
+    }
+
+    /// <summary>Locked sets among those to delete — their file counts are hidden.</summary>
+    public int DeleteLockedSetsCount
+    {
+        get
+        {
+            var toc = _tapeService.TOC;
+            if (toc == null || SelectedOption == null)
+                return 0;
+            int locked = 0;
+            for (int i = SelectedOption.SetIndex; i <= toc.LastSetOnVolume; i++)
+                if (toc[i].IsLocked)
+                    locked++;
+            return locked;
         }
     }
 
@@ -211,9 +228,12 @@ public class DeleteBackupSetsViewModel : ViewModelBase
             long size = ComputeDeleteSize();
             if (size <= 0)
                 return "\u2014";
+
             int files = DeleteFileCount;
+            int locked = DeleteLockedSetsCount;
             string filesPart = files > 0 ? $", {files:N0} file(s)" : string.Empty;
-            return $"~{Helpers.BytesToStringLong(size)}{filesPart}";
+            string lockedPart = locked > 0 ? $" + {locked} locked set(s)" : string.Empty;
+            return $"~{Helpers.BytesToStringLong(size)}{filesPart}{lockedPart}";
         }
     }
 

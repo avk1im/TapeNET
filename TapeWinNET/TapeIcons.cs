@@ -111,12 +111,12 @@ public static class TapeIcons
     }
 
     // Caches key on (number, large): the two sizes render different bitmaps
-    private static readonly Dictionary<(int number, bool large), ImageSource> _numberedDriveIcons = [];
-    private static readonly Dictionary<(int number, bool large), ImageSource> _numberedRemoteDriveIcons = [];
-    private static readonly Dictionary<bool, ImageSource> _remoteDriveIcons = [];
+    private static readonly Dictionary<(int number, bool large), BitmapSource> _numberedDriveIcons = [];
+    private static readonly Dictionary<(int number, bool large), BitmapSource> _numberedRemoteDriveIcons = [];
+    private static readonly Dictionary<bool, BitmapSource> _remoteDriveIcons = [];
 
     /// <summary>Media drive with a drive number badge (subscript, bottom-right).</summary>
-    public static ImageSource? GetNumberedTapeDriveIcon(int number, bool large = false)
+    public static BitmapSource? GetNumberedTapeDriveIcon(int number, bool large = false)
     {
         if (_numberedDriveIcons.TryGetValue((number, large), out var cached))
             return cached;
@@ -149,7 +149,7 @@ public static class TapeIcons
     }
 
     /// <summary>Media drive with a globe badge (superscript, top-right).</summary>
-    public static ImageSource? GetRemoteTapeDriveIcon(bool large = false)
+    public static BitmapSource? GetRemoteTapeDriveIcon(bool large = false)
     {
         if (_remoteDriveIcons.TryGetValue(large, out var cached))
             return cached;
@@ -166,7 +166,7 @@ public static class TapeIcons
     }
 
     /// <summary>Media drive with globe (superscript) + drive number (subscript).</summary>
-    public static ImageSource? GetNumberedRemoteTapeDriveIcon(int number, bool large = false)
+    public static BitmapSource? GetNumberedRemoteTapeDriveIcon(int number, bool large = false)
     {
         if (_numberedRemoteDriveIcons.TryGetValue((number, large), out var cached))
             return cached;
@@ -186,6 +186,37 @@ public static class TapeIcons
 
         _numberedRemoteDriveIcons[(number, large)] = composed;
         return composed;
+    }
+
+    // ── Backup set icons by encryption state (Design-Encryption §11.1.1) ──────
+    private static BitmapSource? _setIcon, _lockedSetIcon, _unlockedSetIcon;
+
+    /// <summary>The plain backup-set icon, small, frozen.</summary>
+    public static BitmapSource? BackupSetIconSmall => _setIcon ??= Frozen(GetBackupSetIcon(large: false));
+
+    /// <summary>The backup-set icon with a closed padlock (bottom-right): an encrypted, locked set.</summary>
+    public static BitmapSource? LockedBackupSetIconSmall => _lockedSetIcon ??= WithPadlock(GlyphLock);
+
+    /// <summary>The backup-set icon with an open padlock: an encrypted set whose key is applied.</summary>
+    public static BitmapSource? UnlockedBackupSetIconSmall => _unlockedSetIcon ??= WithPadlock(GlyphUnlock);
+
+    private const string GlyphLock = "\uE72E";      // Segoe MDL2 Assets: Lock
+    private const string GlyphUnlock = "\uE785";    // Segoe MDL2 Assets: Unlock
+
+    private static BitmapSource? WithPadlock(string glyph)
+    {
+        if (GetBackupSetIcon(large: false) is not { } baseIcon)
+            return null;
+        var padlock = IconComposer.RenderGlyph(glyph, pixelSize: 32,
+            color: Color.FromRgb(0x40, 0x40, 0x40), backgroundColor: Colors.White);
+        padlock?.Freeze();
+        return IconComposer.ComposeWithOverlay(baseIcon, padlock, OverlayCorner.BottomRight);   // frozen
+    }
+
+    private static BitmapSource? Frozen(BitmapSource? icon)
+    {
+        icon?.Freeze();
+        return icon;
     }
 }
 

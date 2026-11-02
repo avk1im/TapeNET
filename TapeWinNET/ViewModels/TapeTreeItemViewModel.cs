@@ -1,11 +1,10 @@
 using System.Collections.ObjectModel;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
-
 using TapeLibNET.Headers;
 using TapeLibNET.Toc;
 
 namespace TapeWinNET.ViewModels;
-
 
 public enum TreeItemType
 {
@@ -21,7 +20,6 @@ public class TapeTreeItemViewModel : ViewModelBase
     // Cache icons to avoid repeated P/Invoke calls
     private static BitmapSource? _driveIcon;
     private static BitmapSource? _tapeIcon;
-    private static BitmapSource? _backupSetIcon;
     // Reuses the regular media icon for now; kept as its own field so a distinct icon can be
     //  composed later without touching the Icon switch below.
     private static BitmapSource? _calibrationIcon;
@@ -37,6 +35,8 @@ public class TapeTreeItemViewModel : ViewModelBase
     private bool _isInMemory;
     private bool _isRemote;
     private string? _remoteHost;
+    private bool _isEncrypted;
+    private bool _isLocked;
 
     static TapeTreeItemViewModel()
     {
@@ -52,13 +52,11 @@ public class TapeTreeItemViewModel : ViewModelBase
         {
             _driveIcon = TapeIcons.GetTapeDriveIcon(large: false);
             _tapeIcon = TapeIcons.GetTapeMediaIcon(large: false);
-            _backupSetIcon = TapeIcons.GetBackupSetIcon(large: false);
             _calibrationIcon = TapeIcons.GetTapeMediaIcon(large: false);
 
             // Freeze the icons for better performance (they won't change)
             _driveIcon?.Freeze();
             _tapeIcon?.Freeze();
-            _backupSetIcon?.Freeze();
             _calibrationIcon?.Freeze();
         }
         catch
@@ -102,16 +100,43 @@ public class TapeTreeItemViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Gets the icon for this tree item based on its type.
+    /// Gets the icon for this tree item based on its type — and, for a backup set, its encryption state.
     /// </summary>
-    public BitmapSource? Icon => ItemType switch
+    public ImageSource? Icon => ItemType switch
     {
         TreeItemType.Drive => _driveIcon,
         TreeItemType.Tape => _tapeIcon,
-        TreeItemType.BackupSet => _backupSetIcon,
+        TreeItemType.BackupSet => !_isEncrypted ? TapeIcons.BackupSetIconSmall
+            : _isLocked ? TapeIcons.LockedBackupSetIconSmall
+            : TapeIcons.UnlockedBackupSetIconSmall,
         TreeItemType.CalibrationCartridge => _calibrationIcon,
         _ => null
     };
+
+    /// <summary>A backup set that is encrypted (locked or not).</summary>
+    public bool IsEncrypted
+    {
+        get => _isEncrypted;
+        private set
+        {
+            if (SetProperty(ref _isEncrypted, value))
+                OnPropertyChanged(nameof(Icon));
+        }
+    }
+
+    /// <summary>
+    /// A backup set that is encrypted and locked: shown grey italic with a padlock (Design-Encryption §11.1.1) — normal,
+    ///  never a warning colour.
+    /// </summary>
+    public bool IsLocked
+    {
+        get => _isLocked;
+        private set
+        {
+            if (SetProperty(ref _isLocked, value))
+                OnPropertyChanged(nameof(Icon));
+        }
+    }
 
     /// <summary>
     /// Whether this backup set resides on the currently loaded volume.
@@ -229,6 +254,7 @@ public class TapeTreeItemViewModel : ViewModelBase
             IsTOCImported = fromFile || tocRecovered, // a recovered TOC gets the same warning foreground
             IsInMemory = isInMemory
         };
+
         return item;
     }
 
@@ -252,22 +278,32 @@ public class TapeTreeItemViewModel : ViewModelBase
     {
         var setTOC = toc[setIndex];
         var altIndex = toc.SetIndexToAlt(setIndex);
-        var description = string.IsNullOrEmpty(setTOC.Description) 
-            ? "[Unnamed Set]" 
-            : setTOC.Description;
         var indexDisplay = $"#{setIndex} | {altIndex}";
-        bool isOnCurrentVolume = setTOC.Volume == toc.Volume;
 
         var item = new TapeTreeItemViewModel
         {
-            // Display format: "1 | -2" for set 1 of 3
-            DisplayName = $"Set {indexDisplay}: {description}",
             IndexDisplay = indexDisplay,
             ItemType = TreeItemType.BackupSet,
             Tag = setIndex,
             Parent = parent,
-            IsOnCurrentVolume = isOnCurrentVolume
+            IsOnCurrentVolume = setTOC.Volume == toc.Volume
         };
+        item.RefreshFromSet(setTOC);
         return item;
+    }
+
+    /// <summary>
+    /// Re-reads name and encryption state from <paramref name="setTOC"/> — after an unlock, a lock or a rename.
+    ///  A locked set shows <see cref="TapeSetTOC.DisplayName"/>, never its hidden description.
+    /// </summary>
+    public void RefreshFromSet(TapeSetTOC setTOC)
+    {
+        IsEncrypted = setTOC.IsEncrypted;
+        IsLocked = setTOC.IsLocked;
+        string description = setTOC.IsLocked ? $"\U0001F512 {setTOC.DisplayName}"
+            : string.IsNullOrEmpty(setTOC.Description) ? "[Unnamed Set]"
+            : setTOC.Description;
+        // Display format: "1 | -2" for set 1 of 3
+        DisplayName = $"Set {IndexDisplay}: {description}";
     }
 }

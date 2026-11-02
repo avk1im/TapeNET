@@ -210,8 +210,8 @@ public class MediaUsageBarPresenter : ViewModelBase
                 label:    $"#{setIndex}|{altIndex}",
                 size:     Math.Max(setSize, 1), // always at least 1 byte so tiny sets are visible
                 color:    color,
-                tooltip:  $"Set #{setIndex}|{altIndex}: {setTOC.Description ?? "(unnamed)"}\n"
-                        + $"{Helpers.BytesToString(setSize)}, {setTOC.Count} file(s)",
+                tooltip:  $"Set #{setIndex}|{altIndex}: {setTOC.DisplayName}\n"
+                          + $"{Helpers.BytesToString(setSize)}, {setTOC.DisplayCount} file(s)",
                 kind:     UsageSegmentKind.BackupSet,
                 setIndex: setIndex));
         }

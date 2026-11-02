@@ -138,7 +138,10 @@ public class BackupViewModel : ViewModelBase
             var toc = _tapeService.TOC;
             if (toc is null || setIndex < 1 || setIndex > toc.Count)
                 return [];
-            
+
+            if (toc[setIndex].IsLocked)
+                return [];      // hidden files — the [+] is disabled for a locked set (Design-Encryption §11.1.4)
+
             toc.CurrentSetIndex = setIndex;
             // if the source set is incremental, then we list all files from the incremental chain
             var filesBySets = toc.SelectFiles(incremental: true, filter: null);
@@ -183,7 +186,7 @@ public class BackupViewModel : ViewModelBase
         AddPatternsCommand = new RelayCommand(AddPatterns,
             () => !IsScanning && !string.IsNullOrWhiteSpace(PatternInput));
         AddFromSetCommand = new RelayCommand(_ => AddFromBackupSet(),
-            _ => !IsScanning && SelectedSourceSetOption is { IsOverwrite: false });
+            _ => !IsScanning && SelectedSourceSetOption is { IsOverwrite: false, IsLocked: false });
         RemoveSelectedCommand = new RelayCommand(
             _ => RemoveSelectedSources(),
             _ => !IsScanning && SourceItems.Any(s => s.IsCheckedForBackup == false));
@@ -204,7 +207,7 @@ public class BackupViewModel : ViewModelBase
 
         // Commands — load options
         LoadDefaultsCommand       = new RelayCommand(LoadDefaults);
-        LoadFromLastBackupCommand = new RelayCommand(LoadFromLastBackup, () => HasLastBackupSet);
+        LoadFromLastBackupCommand = new RelayCommand(LoadFromLastBackup, () => HasLastBackupSet && !IsLastSetLocked);
     }
 
     // ═════════════════════════════════════════════════
@@ -1390,6 +1393,9 @@ public class BackupViewModel : ViewModelBase
         CompressionLevel = ZstdLevel.Default;
     }
 
+    /// <summary>The last set is locked: its settings are hidden.</summary>
+    private bool IsLastSetLocked => _tapeService.TOC is { Count: > 0 } toc && toc[toc.LastSetOnVolume].IsLocked;
+
     /// <summary>
     /// Copies backup options (block size, hash, compression, incremental flag) from the
     ///  last backup set on the current media. Disabled when no sets exist.
@@ -1397,7 +1403,8 @@ public class BackupViewModel : ViewModelBase
     private void LoadFromLastBackup()
     {
         var toc = _tapeService.TOC;
-        if (!(toc is { Count: > 0 }))
+
+        if (!(toc is { Count: > 0 }) || toc[toc.LastSetOnVolume].IsLocked)
             return;
 
         var lastSet = toc[toc.LastSetOnVolume];
