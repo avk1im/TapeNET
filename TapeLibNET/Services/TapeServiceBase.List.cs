@@ -100,6 +100,8 @@ public partial class TapeServiceBase
                 // ── Compact backup-sets table (SetTable only, no FileDetails) ─
                 if (depth.HasFlag(ListDepth.SetTable) && !depth.HasFlag(ListDepth.FileDetails))
                 {
+                    // Design-Encryption §11.2 — the supplied password opens what it fits; an overview never prompts.
+                    UnlockForOverview(toc, options.Password);
                     LogBackupSetsTable();
                     return ListResult.Ok(toc.Count, 0, 0);
                 }

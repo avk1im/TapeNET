@@ -863,6 +863,7 @@ How the scanner implements it: s. Design-ScanMedia §4.8.
 | **E15** | An encryption kind this build does not implement loads as a permanently locked set — carried, navigated, listed and deletable — never refusing the TOC. |
 | **E16** | (v2) A drive key is loaded only for the content of one set and cleared when that set's content session ends, on every path; set headers, tapemarks and TOC copies are always written with drive encryption off. |
 | **E17** | Every TOC replacement or cartridge change clears the key ring, locking the old TOC's sets (§10.1). |
+| **E18** | An overview uses the password it is GIVEN — tried on every locked chain, like TapeWin's "Unlock Encrypted Sets…" — but never prompts: a glance at the cartridge must not stop for input. Without a password, locked sets stay `[Locked]` in the table. The per-file `list` keeps prompting per set. |
 
 ## 14. Performance
 

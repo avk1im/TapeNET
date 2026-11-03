@@ -101,18 +101,24 @@ public class MediaUsageBarPresenter : ViewModelBase
     /// Marks the segment with the given <paramref name="setIndex"/> as highlighted.
     ///  Pass <c>null</c> to clear the highlight.
     /// </summary>
-    public virtual void UpdateHighlight(int? setIndex)
+    public virtual void UpdateHighlight(int? setIndex) => UpdateHighlight(setIndex is int i ? [i] : []);
+
+    /// <summary>
+    /// Marks every segment whose set is in <paramref name="setIndexes"/> as highlighted — the multi-set selection of the
+    ///  backup sets list. An empty sequence clears the highlight.
+    /// </summary>
+    public void UpdateHighlight(IEnumerable<int> setIndexes)
     {
-        _highlightedSetIndex = setIndex;
+        _highlightedSetIndexes = [.. setIndexes];
         foreach (var seg in _segments)
             seg.IsHighlighted = seg.Kind == UsageSegmentKind.BackupSet
-                             && seg.SetIndex == setIndex;
+                             && seg.SetIndex is int idx && _highlightedSetIndexes.Contains(idx);
     }
 
-    private int? _highlightedSetIndex;
+    private HashSet<int> _highlightedSetIndexes = [];
 
     /// <summary>Reapplies the last highlight selection to the freshly built segments.</summary>
-    protected void ReapplyHighlight() => UpdateHighlight(_highlightedSetIndex);
+    protected void ReapplyHighlight() => UpdateHighlight([.. _highlightedSetIndexes]);
 
     // ─────────────────────────────────────────────────────────── Template method ────────
 

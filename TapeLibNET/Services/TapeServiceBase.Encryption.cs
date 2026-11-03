@@ -292,6 +292,67 @@ public partial class TapeServiceBase
         return result;
     }
 
+    /// <summary>
+    /// Tries <paramref name="password"/> on every locked chain of <paramref name="toc"/>: each still-locked set's envelope
+    ///  in turn until one opens; its key then opens its whole chain (E13) without further KDF. Neither counts toward the
+    ///  delay nor logs — the callers do.
+    /// </summary>
+    private UnlockOutcome TryPasswordOnAllChains(TapeTOC toc, ReadOnlySpan<char> password)
+    {
+        _keyRing.UnlockAll(toc);                // held keys first: free
+        int sets = 0, chains = 0;
+        TapeResult? hardFailure = null;
+        foreach (TapeSetTOC set in toc)
+        {
+            if (!set.IsLocked || !set.IsUnlockable || set.Envelope is not { } envelope)
+                continue;
+            TapeResult unwrap = TapeSetEncryption.TryUnwrap(envelope, password, out TapeSetKey? fresh);
+            if (!unwrap)
+            {
+                if (unwrap.ErrorCode != (uint)WIN32_ERROR.ERROR_INVALID_PASSWORD)
+                    hardFailure ??= unwrap;
+                continue;
+            }
+            _keyRing.Add(fresh!);
+            int opened = _keyRing.UnlockAll(toc);
+            if (opened > 0)
+            {
+                sets += opened;
+                chains++;
+            }
+            else
+            {
+                hardFailure ??= Fail(WIN32_ERROR.ERROR_INVALID_DATA,
+                    $"Set {set.DisplayName}: the password is correct, but its table-of-contents entry did not authenticate");
+            }
+        }
+        TapeResult result = chains > 0 ? TapeResult.OK
+            : hardFailure ?? Fail(WIN32_ERROR.ERROR_INVALID_PASSWORD, "The password opens none of the locked sets");
+        return new UnlockOutcome(sets, chains, result);
+    }
+
+    /// <summary>
+    /// The overviews' unlock (e.g. in <c>tapecon</c>: <c>info</c>, <c>list --sets-only</c>): the supplied password
+    ///  on every locked chain, never a prompt. No password, or nothing locked: a no-op. Counts toward the delay (W8)
+    ///  and logs the outcome.
+    /// </summary>
+    protected void UnlockForOverview(TapeTOC toc, char[]? password)
+    {
+        if (password is not { Length: > 0 } || !toc.Any(s => s.IsLocked && s.IsUnlockable))
+            return;
+        if (DelayRefusal() is { } refused)
+        {
+            LogWarn(refused.ErrorMessage);
+            return;
+        }
+        UnlockOutcome outcome = TryPasswordOnAllChains(toc, password);
+        RecordPasswordOutcome(outcome.Result);
+        if (outcome.Chains > 0)
+            LogOk($"Unlocked {outcome.Sets} set(s) ({outcome.Chains} key chain(s))");
+        else
+            LogWarn($"Encrypted sets stay locked: {outcome.Result.ErrorMessage}");
+    }
+
     #endregion
 
     #region *** Backup configuration (§10.2, §8) ***
@@ -549,43 +610,14 @@ public partial class TapeServiceBase
                 if (DelayRefusal() is { } refused)
                     return new UnlockOutcome(0, 0, refused);
 
-                _keyRing.UnlockAll(toc);                // held keys first: free
-                int sets = 0, chains = 0;
-                TapeResult? hardFailure = null;
-                foreach (TapeSetTOC set in toc)
+                UnlockOutcome outcome = TryPasswordOnAllChains(toc, password);
+                RecordPasswordOutcome(outcome.Result);
+                if (outcome.Chains > 0)
                 {
-                    if (!set.IsLocked || !set.IsUnlockable || set.Envelope is not { } envelope)
-                        continue;
-                    TapeResult unwrap = TapeSetEncryption.TryUnwrap(envelope, password, out TapeSetKey? fresh);
-                    if (!unwrap)
-                    {
-                        if (unwrap.ErrorCode != (uint)WIN32_ERROR.ERROR_INVALID_PASSWORD)
-                            hardFailure ??= unwrap;
-                        continue;
-                    }
-                    _keyRing.Add(fresh!);
-                    int opened = _keyRing.UnlockAll(toc);
-                    if (opened > 0)
-                    {
-                        sets += opened;
-                        chains++;
-                    }
-                    else
-                    {
-                        hardFailure ??= Fail(WIN32_ERROR.ERROR_INVALID_DATA,
-                            $"Set {set.DisplayName}: the password is correct, but its table-of-contents entry did not authenticate");
-                    }
-                }
-
-                TapeResult result = chains > 0 ? TapeResult.OK
-                    : hardFailure ?? Fail(WIN32_ERROR.ERROR_INVALID_PASSWORD, "The password opens none of the locked sets");
-                RecordPasswordOutcome(result);
-                if (chains > 0)
-                {
-                    LogOk($"Unlocked {sets} set(s) ({chains} key chain(s))");
+                    LogOk($"Unlocked {outcome.Sets} set(s) ({outcome.Chains} key chain(s))");
                     _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
                 }
-                return new UnlockOutcome(sets, chains, result);
+                return outcome;
             }
             finally
             {

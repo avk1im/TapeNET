@@ -18,6 +18,10 @@ Use `--password-file FILE` or `--password-env VARIABLE`. The file is read as UTF
 anything else — including a trailing space — is part of the password. `--password` on the command line is refused on
 purpose: the shell history and the process list would show it.
 
+Set an environment variable in PowerShell with `$env:VARIABLE = '…'` (a plain `$VARIABLE` would set a shell variable,
+invisible to tapecon; notice single quotes to preserve the value literally — double quotes would try to expand `$`).
+In cmd, set an environment variable with `set VARIABLE=…`.
+
 ## I forgot the password of an encrypted set. Now what?
 
 It cannot be recovered — not by tapecon, not by anyone. The set stays on the cartridge as `[Locked]`; you can delete or

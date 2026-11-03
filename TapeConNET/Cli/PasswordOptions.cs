@@ -109,7 +109,9 @@ internal static class PasswordOptions
             text = Environment.GetEnvironmentVariable(variable);
             if (string.IsNullOrEmpty(text))
                 throw new TapeConException(TapeConExitCode.UsageError,
-                    $"The environment variable {variable} is not set, or empty.");
+                    $"The environment variable {variable} is not set, or empty. In PowerShell set it with " +
+                    $"$env:{variable} = '…' (a plain ${variable} is a shell variable, invisible to tapecon); " +
+                    $"in cmd with set {variable}=….");
         }
         else
             return null;

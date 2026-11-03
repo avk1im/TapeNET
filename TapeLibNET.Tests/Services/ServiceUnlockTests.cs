@@ -160,6 +160,49 @@ public class ServiceUnlockTests : ServiceTestBase
 
     #endregion
 
+    #region *** Unlock set overview only if password already given (E18) ***
+
+    /// <summary>The sets overview opens the chains the supplied password fits — and never prompts.</summary>
+    [Fact]
+    public async Task List_SetsOverview_WithPassword_UnlocksWithoutPrompt()
+    {
+        using var _ = TapeCrypto.UseIterations(1_000);
+        using var media = NewMedia();
+        await SeedAsync(media, PwA, PwB);
+        var (svc, host) = await ReopenAsync(media);
+        using (svc)
+        {
+            var toc = svc.TOC!;
+            int last = toc.LastSetOnVolume;
+            var result = await svc.ListContentsAsync(new ListRequest(Depth: ListDepth.SetsOverview) { Password = PwA() });
+            Assert.True(result.Success, host.DumpReports());
+            Assert.True(toc[last].IsLocked, "PwB's chain");
+            Assert.False(toc[last - 1].IsLocked, "PwA's chain");
+            Assert.True(host.ContainsMessage("Secret 0"), host.DumpReports());
+            Assert.Empty(host.PasswordPrompts);
+        }
+    }
+
+    /// <summary>Without a password the overview neither unlocks nor asks.</summary>
+    [Fact]
+    public async Task List_SetsOverview_NoPassword_StaysLocked_NoPrompt()
+    {
+        using var _ = TapeCrypto.UseIterations(1_000);
+        using var media = NewMedia();
+        await SeedAsync(media, PwA);
+        var (svc, host) = await ReopenAsync(media);
+        using (svc)
+        {
+            var result = await svc.ListContentsAsync(new ListRequest(Depth: ListDepth.SetsOverview));
+            Assert.True(result.Success, host.DumpReports());
+            Assert.True(svc.TOC![svc.TOC.LastSetOnVolume].IsLocked);
+            Assert.True(host.ContainsMessage("[Locked]"), host.DumpReports());
+            Assert.Empty(host.PasswordPrompts);
+        }
+    }
+
+    #endregion
+
     #region *** The wrong-password delay (W8) ***
 
     /// <summary>

@@ -5,7 +5,6 @@ using TapeLibNET.Services;
 
 namespace TapeConNET.Cli;
 
-
 /// <summary>
 /// <c>tapecon info</c> — opens the selected drive and prints information at the
 /// requested detail level (default: drive + media + compact backup-sets table).
@@ -20,6 +19,11 @@ namespace TapeConNET.Cli;
 ///   Supersedes both. This is the default when no flag is supplied.</item>
 /// </list>
 /// For the full per-file listing, use <c>tapecon list</c>.
+/// <para>
+/// <c>--password-file</c> / <c>--password-env</c> open the encrypted sets the password fits before the table is printed
+///  (Design-Encryption §11.2); without them the table shows encrypted sets as <c>[Locked]</c>, and nothing is asked —
+///  an overview never prompts. Ignored at <c>--drive</c> / <c>--media</c> depth: no sets are shown there.
+/// </para>
 /// <para>
 /// Depth-by-depth behavior for a calibration cartridge:
 /// <code>
@@ -38,7 +42,9 @@ internal static class InfoCommand
         var cmd = new Command("info",
             "Show drive, media, and backup-sets overview. " +
             "Use --drive or --media to limit the output depth.");
+
         GlobalOptions.Attach(cmd);
+        PasswordOptions.Attach(cmd);
 
         var driveOption = new Option<bool>("--drive")
         {
@@ -69,16 +75,19 @@ internal static class InfoCommand
             var wantMedia = parseResult.GetValue(mediaOption);
             var wantFull  = parseResult.GetValue(fullOption);
 
+            // Resolved before the drive opens: a bad password source is a usage error, not a tape operation.
+            char[]? password = PasswordOptions.Resolve(parseResult);
+
             // Highest level present wins; default (no flags) → full.
             var (steps, depth) = (wantFull || (!wantDrive && !wantMedia), wantMedia) switch
             {
-                (true, _) => (VerbHost.LifecycleSteps.FullOrCalibration, ListDepth.SetsOverview), // was Full
+                (true, _) => (VerbHost.LifecycleSteps.FullOrCalibration, ListDepth.SetsOverview),
                 (false, true) => (VerbHost.LifecycleSteps.Media, ListDepth.DriveAndMedia),
                 _ => (VerbHost.LifecycleSteps.Drive, ListDepth.Drive),
             };
 
             using var service = VerbHost.BuildAndOpen(parseResult, ux, steps, ct);
-            var result = await service.ListContentsAsync(new ListRequest(Depth: depth));
+            var result = await service.ListContentsAsync(new ListRequest(Depth: depth) { Password = password });
                 // ListContentsAsync() presents a calibration cartridge or the sets overview, and returns `Ok` either way
 
             return !result.Success
