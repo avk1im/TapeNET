@@ -768,6 +768,8 @@
                                   help:HelpControlNameAttachedProperty.ControlName="Backup sets list"
                                   ItemsSource="{Binding BackupSetList}"
                                   IsEnabled="{Binding IsMediaBrowsingEnabled}"
+                                  SelectionMode="Extended"
+                                  SelectionChanged="BackupSetsListView_SelectionChanged"
                                   SelectedItem="{Binding SelectedBackupSet}"
                                   GridViewColumnHeader.Click="GridViewColumnHeader_Click"
                                   CheckBox.Checked="BackupSetCheckBox_Changed"
@@ -1248,11 +1250,11 @@
         <!-- Status Bar -->
         <StatusBar Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="3">
             <StatusBarItem>
-                <TextBlock Text="{Binding StatusMessage}" />
+                <TextBlock Text="{Binding StatusBarText}" />
             </StatusBarItem>
             <Separator />
-            <StatusBarItem Visibility="{Binding RemainingAndEw, Converter={StaticResource NullToVis}}">
-                <TextBlock Text="{Binding RemainingAndEw}" />
+            <StatusBarItem Visibility="{Binding StatusBarRemaining, Converter={StaticResource NullToVis}}">
+                <TextBlock Text="{Binding StatusBarRemaining}" />
             </StatusBarItem>
             <Separator />
             <StatusBarItem Visibility="{Binding IsIoSpeedVisible, Converter={StaticResource BoolToVis}}">

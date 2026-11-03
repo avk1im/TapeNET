@@ -117,6 +117,12 @@ public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bo
             ? $"{_setTOC.Count:N0} \u2192 {filtered:N0}"
             : _setTOC.Count.ToString("N0");
 
+    /// <summary>
+    /// Bytes of the checked files of a PARTIALLY checked set; <see langword="null"/> when all or none are checked
+    ///  (then <see cref="TotalSize"/> or nothing applies). Set by <see cref="TOCView.BuildBackupSetItemList"/>.
+    /// </summary>
+    public long? CheckedBytes { get; set; }
+
     /// <summary>Creation time (local); <see cref="DateTime.MinValue"/> while locked.</summary>
     public DateTime CreatedOn => IsLocked ? DateTime.MinValue : _setTOC.CreationTime.ToLocalTime();
 

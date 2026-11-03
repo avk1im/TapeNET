@@ -603,9 +603,8 @@ public class RestoreViewModel : ViewModelBase
         //  true (all files) from null (partial — only checked files)
         PreviewTotalFiles = TotalFileCount.ToString("N0");
 
-        // Total size: for fully checked (true) or indeterminate-but-all-originally, use full set size;
-        //  for partial selections, we approximate with full set size (exact per-file is in TOCView data model)
-        long totalSize = checkedSets.Sum(s => s.TotalSize);
+        // Total size: full sets by their size, partial sets by their checked files' size
+        long totalSize = checkedSets.Sum(s => s.IsCheckedForRestore == true ? s.TotalSize : s.CheckedBytes ?? s.TotalSize);
         PreviewTotalSize = Helpers.BytesToStringLong(totalSize);
 
         // Multivolume: determine volume range across checked sets

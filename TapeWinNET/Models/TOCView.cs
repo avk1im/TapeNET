@@ -147,6 +147,22 @@ public class TOCView(TapeTOC toc)
     public void SetPendingGlobalFilter(FclEvaluator? evaluator, Func<Task>? restoreAction)
         => PendingGlobalFilter = new PendingGlobalFilterRecord(evaluator, restoreAction);
 
+    // Locked sets checked as a whole (F2): they have no BackupSetView to hold the state. Entries move into a view
+    //  when the set unlocks (GetOrCreate), and back here when a checked set locks again (Refresh / TryGetOrCreate).
+    private readonly HashSet<int> _checkedLocked = [];
+
+    /// <summary>Checks or unchecks a LOCKED set as a whole — its files are unknown.</summary>
+    public void SetLockedChecked(int setIndex, bool check)
+    {
+        if (check)
+            _checkedLocked.Add(setIndex);
+        else
+            _checkedLocked.Remove(setIndex);
+    }
+
+    /// <summary>Whether a locked set is checked as a whole.</summary>
+    public bool IsLockedChecked(int setIndex) => _checkedLocked.Contains(setIndex) && _toc[setIndex].IsLocked;
+
     /// <summary>
     /// Enumerates every <see cref="BackupSetView"/> that has already been created
     ///  (i.e. the user has visited or <see cref="BuildBackupSetItemList"/> has
@@ -176,11 +192,15 @@ public class TOCView(TapeTOC toc)
     {
         Debug.Assert(setIndex >= 1 && setIndex <= _toc.Count,
             $"setIndex {setIndex} out of range [1..{_toc.Count}]");
+
         if (_toc[setIndex].IsLocked)
         {
+            if (_setViews[setIndex] is { } stale && stale.FilteredFiles.CheckedCount > 0)
+                _checkedLocked.Add(setIndex); // keep the the user's selection when a set locks; the selection survives the lock
             _setViews[setIndex] = null;
             return null;
         }
+
         return GetOrCreate(setIndex, showIncrementalSets);
     }
 
@@ -245,17 +265,21 @@ public class TOCView(TapeTOC toc)
             view.SavedFilterState = pgf.RestoreAction;
         }
 
+        // A locked set checked as a whole, now unlocked: all its files are checked.
+        if (_checkedLocked.Remove(setIndex))
+            view.FilteredFiles.SetAllChecked(true);
+
         _setViews[setIndex] = view;
         return view;
     }
 
     /// <summary>
     /// Refreshes the view array after the TOC has been modified (e.g. after a backup).
-    /// Invalidates stale <see cref="BackupSetView"/> instances whose underlying
+    ///  Invalidates stale <see cref="BackupSetView"/> instances whose underlying
     ///  <see cref="TapeSetTOC"/> has been replaced, so that subsequent
     ///  <see cref="GetOrCreate"/> calls will rebuild them with the new source files.
     /// <para>
-    ///  Unchanged views are preserved to carry over checked state.
+    /// Unchanged views are preserved to carry over checked state.
     /// </para>
     /// </summary>
     /// <param name="refreshSets">Force re-creation of all existing views (e.g. when
@@ -270,6 +294,8 @@ public class TOCView(TapeTOC toc)
             Array.Resize(ref _setViews, _toc.Count + 1);
         }
 
+        _checkedLocked.RemoveWhere(i => i > _toc.Count);
+
         // Invalidate stale views: a view is stale when its SourceFiles no longer
         //  references the current TapeSetTOC (backup may have replaced or emptied sets).
         //  For incremental views the chain may have changed, so always invalidate those.
@@ -283,10 +309,14 @@ public class TOCView(TapeTOC toc)
             //  handled by GetOrCreate with proper checked-state migration.
             //  Encryption note: A set that locked since (Forget Passwords, reload)
             //  must not keep a view of its hidden files.
-            bool stale = _toc[i].IsLocked || !ReferenceEquals(view.SetTOC, _toc[i]);
+            bool locked = _toc[i].IsLocked;
+            bool stale = locked || !ReferenceEquals(view.SetTOC, _toc[i]);
 
             if (refreshSets || stale)
             {
+                if (locked && view.FilteredFiles.CheckedCount > 0)
+                    _checkedLocked.Add(i);          // keep the set-level choice across the lock
+                
                 // Clear the cached view; GetOrCreate will rebuild it on next access.
                 //  Don't migrate checked state here — the old files may no longer exist
                 //  in the new set, so carrying over checks would produce phantom counts.
@@ -325,6 +355,36 @@ public class TOCView(TapeTOC toc)
         return total;
     }
 
+    /// <summary>What the checkboxes select (type 1): sets in standard index, files, bytes, and how many sets are locked.</summary>
+    public readonly record struct CheckedSummary(IReadOnlyList<int> SetIndexes, int Files, long Bytes, int LockedSets);
+
+    /// <summary>
+    /// Sums the checked selection across all set views, plus locked sets checked as a whole (no files, no bytes).
+    ///  O(checked files) — called once per selection change.
+    /// </summary>
+    public CheckedSummary GetCheckedSummary()
+    {
+        var sets = new List<int>();
+        int files = 0, locked = 0;
+        long bytes = 0;
+        for (int i = _toc.Count; i >= 1; i--)        // newest first, as the restore processes them
+        {
+            if (_setViews[i] is { } view && view.FilteredFiles.CheckedCount > 0)
+            {
+                sets.Add(i);
+                files += view.FilteredFiles.CheckedCount;
+                foreach (var f in view.FilteredFiles.CheckedItems)
+                    bytes += f.FileDescr.Length;
+            }
+            else if (IsLockedChecked(i))
+            {
+                sets.Add(i);
+                locked++;
+            }
+        }
+        return new(sets, files, bytes, locked);
+    }
+
     /// <summary>
     /// Builds a dictionary of checked files per backup set, suitable for
     ///  <see cref="TapeTOC.SelectFilesFromSets"/>.
@@ -340,6 +400,12 @@ public class TOCView(TapeTOC toc)
         // remember to parse sets in reverse from newest to oldest
         for (int i = _toc.Count; i > 0; i--)
         {
+            if (IsLockedChecked(i))
+            {
+                result[i] = null; // all files — the service unlocks or skips the set
+                continue;
+            }
+
             if (_setViews[i] is not { } view)
                 continue; // skip sets that have never been accessed
 
@@ -461,19 +527,30 @@ public class TOCView(TapeTOC toc)
                 if (checkedOnly && checkedCount == 0)
                     continue; // skip sets with no checked files when building a checked-only list
 
-                var item = new BackupSetListItem(setTOC, setIndex, alt, setTOC.Volume == _toc.Volume);
                 int sourceCount = ffiles.SourceCount;
-                item.CheckedFileCount = checkedCount > 0 ? checkedCount : null;
-                item.FilteredFileCount = ffiles.IsFiltered ? ffiles.Count : null;
-                item.IsCheckedForRestore = checkedCount == 0 ? false
-                    : checkedCount == sourceCount ? true
-                    : null; // partial
+                var item = new BackupSetListItem(setTOC, setIndex, alt, setTOC.Volume == _toc.Volume)
+                {
+                    CheckedFileCount = checkedCount > 0 ? checkedCount : null,
+                    FilteredFileCount = ffiles.IsFiltered ? ffiles.Count : null,
+                    IsCheckedForRestore = checkedCount == 0 ? false
+                        : checkedCount == sourceCount ? true
+                        : null, // partial
+                    CheckedBytes = checkedCount > 0 && checkedCount < sourceCount
+                        ? ffiles.CheckedItems.Sum(f => f.FileDescr.Length) : null    // partial only (F6)
+                };
                 list.Add(item);
             }
-            else if (!checkedOnly)
+            else
             {
+                bool lockedChecked = IsLockedChecked(setIndex);
+                if (checkedOnly && !lockedChecked)
+                    continue;
+
                 // Create a default item without checked nor filtered files 
-                var item = new BackupSetListItem(setTOC, setIndex, alt, setTOC.Volume == _toc.Volume);
+                var item = new BackupSetListItem(setTOC, setIndex, alt, setTOC.Volume == _toc.Volume)
+                {
+                    IsCheckedForRestore = lockedChecked,
+                };
                 list.Add(item);
             }
         }

@@ -1,17 +1,14 @@
-﻿using System.Collections.ObjectModel;
+﻿using FclNET;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
-
-using FclNET;
-
 using TapeLibNET.Agents;
 using TapeLibNET.Drive;
 using TapeLibNET.Services;
 using TapeLibNET.Toc;
 using TapeLibNET.Virtual;
-
 using TapeWinNET.Controls;
 using TapeWinNET.Models;
 using TapeWinNET.Services;
@@ -94,6 +91,7 @@ public partial class MainViewModel : ViewModelBase
     private bool _isLockedSetShown;
     private FileListItem? _selectedFile;
     private BackupSetListItem? _selectedBackupSet;
+    private IReadOnlyList<BackupSetListItem> _selectedBackupSets = []; // multi-set selection
     private TapeTreeItemViewModel? _selectedTreeItem;
     private ContentPaneType _contentType = ContentPaneType.DriveInfo;
 
@@ -213,17 +211,31 @@ public partial class MainViewModel : ViewModelBase
         set => SetProperty(ref _windowTitle, value);
     }
 
+    /// <summary>
+    /// The main status bar message. Can be replaced by the selection summary, s. <see cref="StatusBarText"/>.
+    /// </summary>
     public string StatusMessage
     {
         get => _statusMessage;
         set
         {
             SetProperty(ref _statusMessage, value);
+            OnPropertyChanged(nameof(StatusBarText));
+
             // The remaining/EW indication is re-evaluated whenever the status changes,
             //  since every status transition follows a drive/media/TOC operation.
             RefreshRemainingAndEw();
         }
     }
+
+    /// <summary>
+    /// The status bar's main text: the restore selection when there is one (<see cref="SelectionStatus"/>), else the
+    ///  last status message — the media description included.
+    /// </summary>
+    public string StatusBarText => SelectionStatus ?? StatusMessage;
+
+    /// <summary>The capacity field — hidden (null) while a selection is shown: the intent then is restoring.</summary>
+    public string? StatusBarRemaining => SelectionStatus is null ? RemainingAndEw : null;
 
     /// <summary>
     /// Status-bar and property-pane indication of the estimated remaining capacity plus the
@@ -232,7 +244,11 @@ public partial class MainViewModel : ViewModelBase
     public string? RemainingAndEw
     {
         get => _remainingAndEw;
-        private set => SetProperty(ref _remainingAndEw, value);
+        private set
+        {
+            if (SetProperty(ref _remainingAndEw, value))
+                OnPropertyChanged(nameof(StatusBarRemaining));
+        }
     }
 
     /// <summary>Re-reads the remaining/EW indication from the service (null when unavailable, so the field hides).</summary>
@@ -462,12 +478,30 @@ public partial class MainViewModel : ViewModelBase
         set
         {
             if (SetProperty(ref _selectedBackupSet, value))
-            {
-                NotifyCommandTextChanged();
-                UsageBar.UpdateHighlight(value?.SetIndex);
-            }
+                UpdateUsageBarHighlight();
+            // The selection itself is reported by OnBackupSetsSelectionChanged, which follows on every change.
         }
         // Navigation now triggered by double-click or Enter, not selection change
+    }
+
+    /// <summary>
+    /// Called by the view on every <c>SelectionChanged</c> of the backup sets list with ALL highlighted rows — one or
+    ///  many (Ctrl/Shift+Click). WPF updates the <c>SelectedItem</c> binding first, so this always runs last.
+    /// </summary>
+    public void OnBackupSetsSelectionChanged(IReadOnlyList<BackupSetListItem> selected)
+    {
+        _selectedBackupSets = selected;
+        UpdateUsageBarHighlight();
+        NotifyCommandTextChanged();
+    }
+
+    /// <summary>Frames every highlighted row's segment in the usage bar.</summary>
+    private void UpdateUsageBarHighlight()
+    {
+        if (_selectedBackupSets.Count > 0)
+            UsageBar.UpdateHighlight(_selectedBackupSets.Select(s => s.SetIndex));
+        else
+            UsageBar.UpdateHighlight(_selectedBackupSet?.SetIndex);
     }
 
     public ContentPaneType ContentType
@@ -2020,7 +2054,8 @@ public partial class MainViewModel : ViewModelBase
             if (change.HasFlag(ServiceStateChange.TocChanged))
             {
                 UsageBar.Rebuild();
-                CommandManager.InvalidateRequerySuggested();
+                NotifyCommandTextChanged();     // unlock / lock changes counts and locked figures
+                                                //  (NotifyCommandTextChanged already invalidates the commands.)
             }
 
             if (change.HasFlag(ServiceStateChange.TOCSaveStarted))
