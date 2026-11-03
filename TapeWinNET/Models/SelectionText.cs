@@ -2,6 +2,7 @@
 
 namespace TapeWinNET.Models;
 
+
 /// <summary>
 /// The one wording of a file/set selection — menu texts, status bar, RestoreWindow header.
 /// </summary>
@@ -22,7 +23,7 @@ public static class SelectionText
         if (sets > 0 && lockedSets == sets)
             return singleSet is not null ? $"locked {singleSet}" : $"{sets:N0} locked sets";
 
-        string text = $"{Count(files, "file", "files")}{(selected ? " selected" : "")} from " +
+        string text = $"{Count(files, "file", "files")}{(selected ? " selected from " : " in ")}" +
                       (singleSet ?? Count(sets, "set", "sets"));
         if (lockedSets > 0)
             text += $"; {Count(lockedSets, "set", "sets")} locked";
