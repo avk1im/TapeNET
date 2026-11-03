@@ -5,12 +5,14 @@ using TapeLibNET.Virtual;
 namespace TapeConNET.Cli;
 
 /// <summary>
-/// Options that shape NEW virtual media — <c>--virtual-create</c> and the <c>create-virtual</c> verb. New media records
-///  its mark profile; on open, the profile flags matter only for legacy media that records none.
+/// Options that shape NEW virtual media — <c>--virtual-create</c> and the <c>create-virtual</c> verb — and the
+///  permission to replace existing virtual media files. New media records its mark profile; on open, the profile
+///  flags matter only for legacy media that records none.
 /// </summary>
 /// <remarks>
 /// Resolution rules:
 /// <list type="bullet">
+///  <item>Path: a PATH without extension gets <see cref="VirtualMediaPaths.ContentExtension"/>, as in TapeWinNET.</item>
 ///  <item>Profile: <c>--setmarks</c> (default) | <c>--seq-filemarks</c> | <c>--filemarks-only</c> — mutually exclusive.</item>
 ///  <item>Initiator partition: present when <c>--initiator</c> or <c>--init-capacity</c> is given.</item>
 ///  <item>Block sizes: profile defaults unless overridden; must satisfy min ≤ default ≤ max.</item>
@@ -21,10 +23,18 @@ internal static class VirtualMediaOptions
     public static readonly Option<string?> VirtualCreate = new("--virtual-create", "--virtual-new")
     {
         Description = "Create NEW file-backed virtual media at PATH, formatted with an empty TOC, then run the verb " +
-                      "on it. Existing files are overwritten after a prompt, or without one under --overwrite-media. " +
-                      "Sized by --capacity / --init-capacity; shaped by --setmarks / --seq-filemarks / " +
-                      "--filemarks-only and the block-size options. The media records its mark profile.",
+                      $"on it. A PATH without extension gets {VirtualMediaPaths.ContentExtension}. Existing virtual " +
+                      "media files are replaced only after a prompt, or with --overwrite-virtual. Sized by --capacity / " +
+                      "--init-capacity; shaped by --setmarks / --seq-filemarks / --filemarks-only and the block-size " +
+                      "options. The media records its mark profile.",
         HelpName = "PATH",
+    };
+
+    public static readonly Option<bool> OverwriteVirtual = new("--overwrite-virtual")
+    {
+        Description = "Replace existing virtual media FILES at the --virtual-create / create-virtual PATH without a " +
+                      "prompt — everything on them is lost. Not the same as backup's --overwrite-media, which " +
+                      "replaces the backup sets on media already open.",
     };
 
     public static readonly Option<bool> Setmarks = new("--setmarks")
@@ -98,12 +108,13 @@ internal static class VirtualMediaOptions
     }
 
     /// <summary>
-    /// Resolves profile + descriptor for NEW file-backed media at <paramref name="contentPath"/>.
+    /// Resolves profile + descriptor for NEW file-backed media at <paramref name="contentPath"/>; a path without
+    ///  extension gets <see cref="VirtualMediaPaths.ContentExtension"/>.
     /// </summary>
     public static (VirtualTapeDriveCapabilities Caps, VirtualMediaDescriptor Media) ResolveNewFileMedia(
         ParseResult p, string contentPath)
     {
-        string content = Path.GetFullPath(contentPath);
+        string content = Path.GetFullPath(VirtualMediaPaths.WithDefaultExtension(contentPath));
         string? initiator = p.GetValue(GlobalOptions.Initiator);
         long? initCapacity = p.GetValue(GlobalOptions.InitCapacity);
 
@@ -131,15 +142,16 @@ internal static class VirtualMediaOptions
         return (caps, vmd);
     }
 
-    /// <summary>The new-media size options actually given — ignored when opening existing media.</summary>
+    /// <summary>The new-media options actually given — meaningless, and ignored, when opening existing media.</summary>
     public static IReadOnlyList<string> CreateOnlyOptionsGiven(ParseResult p)
     {
-        var given = new List<string>(5);
+        var given = new List<string>(6);
         if (p.GetValue(GlobalOptions.Capacity) is not null) given.Add(GlobalOptions.Capacity.Name);
         if (p.GetValue(GlobalOptions.InitCapacity) is not null) given.Add(GlobalOptions.InitCapacity.Name);
         if (p.GetValue(MinBlockSize) is not null) given.Add(MinBlockSize.Name);
         if (p.GetValue(DefaultBlockSize) is not null) given.Add(DefaultBlockSize.Name);
         if (p.GetValue(MaxBlockSize) is not null) given.Add(MaxBlockSize.Name);
+        if (p.GetValue(OverwriteVirtual)) given.Add(OverwriteVirtual.Name);
         return given;
     }
 

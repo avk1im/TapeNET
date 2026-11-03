@@ -114,6 +114,7 @@ internal static class VerbHost
     /// <summary>
     /// Creates new file-backed virtual media at <paramref name="contentPath"/> from the shape options, leaving it open,
     ///  loaded and formatted in <paramref name="service"/>. Shared by <c>--virtual-create</c> and <c>create-virtual</c>.
+    ///  Existing files are replaced only on confirmation or with <c>--overwrite-virtual</c>.
     /// </summary>
     /// <returns>The drive profile the media was created with (and records).</returns>
     /// <exception cref="TapeConException">
@@ -124,13 +125,14 @@ internal static class VerbHost
     {
         var (caps, vmd) = VirtualMediaOptions.ResolveNewFileMedia(parseResult, contentPath);
         var outcome = await service.CreateVirtualMediaAsync(caps, vmd, mediaName,
-            overwriteWithoutPrompt: parseResult.GetValue(GlobalOptions.OverwriteMedia));
+            overwriteWithoutPrompt: parseResult.GetValue(VirtualMediaOptions.OverwriteVirtual));
 
         return outcome switch
         {
             VirtualMediaCreateOutcome.Created => caps,
             VirtualMediaCreateOutcome.Declined => throw new TapeConException(TapeConExitCode.Cancelled,
-                $"Virtual media >{vmd.ContentPath}< left untouched. Confirm the prompt, or pass --overwrite-media."),
+                $"Virtual media >{vmd.ContentPath}< left untouched. Confirm the prompt, or pass " +
+                $"{VirtualMediaOptions.OverwriteVirtual.Name} to replace it — or use --virtual-open to keep it."),
             _ => throw new TapeConException(TapeConExitCode.OperationFailed,
                 $"Couldn't create virtual media >{vmd.ContentPath}<: {service.LastError}"),
         };
@@ -190,13 +192,16 @@ internal static class VerbHost
 
     /// <summary>
     /// Opens EXISTING file-backed virtual media — never creates any. Sizes and the mark profile come from the media.
+    ///  A path without extension also finds the media under the default extension.
     /// </summary>
     private static void OpenVirtualFromOptions(TapeService service, ParseResult parseResult, string path, IConsoleUx ux)
     {
+        path = VirtualMediaPaths.ResolveExisting(path);
+
         var ignored = VirtualMediaOptions.CreateOnlyOptionsGiven(parseResult);
         if (ignored.Count > 0)
             ux.Log(WarningLevel.Warning,
-                $"{string.Join(", ", ignored)} ignored: existing virtual media keeps the sizes it was created with.");
+                $"{string.Join(", ", ignored)} ignored: they apply to new virtual media (--virtual-create) only.");
 
         // The media records its mark profile; a flag given here matters only for legacy media without one.
         //  No flag: the service probes legacy media and opens it under the profile its TOC reads with.

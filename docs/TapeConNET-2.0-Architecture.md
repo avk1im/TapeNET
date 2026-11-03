@@ -69,16 +69,23 @@ At most one selector per invocation; none opens physical drive 0.
 | Option | Meaning |
 |---|---|
 | `--drive N` | Physical Win32 drive N. |
-| `--virtual-open PATH` (`--virtual`, `-V`) | EXISTING file-backed virtual media. Never creates; fails with a hint when absent. Sizes come from the media. |
+| `--virtual-open PATH` (`--virtual`, `-V`) | EXISTING file-backed virtual media. Never creates; fails with a hint when absent. Sizes and mark profile come from the media. |
 | `--virtual-create PATH` (`--virtual-new`) | NEW file-backed virtual media, formatted with an empty TOC, then the verb runs on it. |
 | `--in-memory` | Fresh RAM-backed virtual media, gone when the process ends. |
 
 New media is shaped by `--capacity`, `--init-capacity` / `--initiator`, the mark profile (`--setmarks` default,
-`--seq-filemarks`, `--filemarks-only`) and `--min-` / `--def-` / `--max-block-size`. Existing files are overwritten
-only after a prompt that names what will be lost — backup sets, calibration data, or a foreign file — or under
-`--overwrite-media`; an unattended run declines.
+`--seq-filemarks`, `--filemarks-only`) and `--min-` / `--def-` / `--max-block-size`.
 
-The mark profile is a **drive** property the media does not record: open media with the profile it was created with.
+A PATH without extension gets `.vt` (and `--virtual-open` finds it either way).
+
+Existing virtual media files are replaced only after a prompt that names what will be lost — backup sets, calibration
+data, or a foreign file — or under `--overwrite-virtual`; an unattended run declines. `--overwrite-media` is a different
+permission: backup only, it replaces the sets on the loaded media without a prompt.
+
+**Virtual media records its mark profile** (setmarks, sequential filemarks or filemarks only) in its `.vrt` state, and
+every open honors it, so `--virtual-open` needs no profile flag. Legacy media without a recorded profile is probed:
+setmarks, then sequential filemarks, then filemarks only, until its TOC reads. Its first write then records the profile
+used. For such media, a profile flag given on open overrides the probe.
 
 ### 3.2 File selection
 

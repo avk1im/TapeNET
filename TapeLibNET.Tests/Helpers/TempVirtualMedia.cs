@@ -8,6 +8,10 @@ namespace TapeLibNET.Tests.Helpers;
 ///  multiple in-process invocations. The media file persists across
 ///  <see cref="TestTapeServiceHost"/> calls so backup → restore round-trips work.
 /// </summary>
+/// <remarks>
+/// Names follow the shared conventions of <see cref="VirtualMediaPaths"/>: <c>media.vt</c>, and <c>media_init.vt</c>
+///  for the initiator — so media a test leaves behind opens in TapeWinNET exactly as the CLI created it.
+/// </remarks>
 public sealed class TempVirtualMedia : IDisposable
 {
     /// <summary>Default content capacity: 64 MiB — large enough for the test trees.</summary>
@@ -38,8 +42,8 @@ public sealed class TempVirtualMedia : IDisposable
         Root = Path.Combine(basePath, $"TapeConNET_VMD_{Guid.NewGuid():N}");
         Directory.CreateDirectory(Root);
 
-        ContentPath = Path.Combine(Root, "media.vtape");
-        InitiatorPath = withInitiator ? Path.Combine(Root, "media.vinit") : null;
+        ContentPath = Path.Combine(Root, "media" + VirtualMediaPaths.ContentExtension);
+        InitiatorPath = withInitiator ? VirtualMediaPaths.BuildInitiatorFilePath(ContentPath) : null;
         ContentCapacity = contentCapacity;
         InitiatorCapacity = initiatorCapacity;
     }

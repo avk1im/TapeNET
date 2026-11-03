@@ -94,10 +94,11 @@ internal static class BackupCommand
         {
             Description = "Folder for the emergency TOC export if writing the TOC to tape fails.",
         };
-        //var overwriteMediaOption = new Option<bool>("--overwrite-media")
-        //{
-        //    Description = "Overwrite media carrying data without prompt.",
-        //};
+        var overwriteMediaOption = new Option<bool>("--overwrite-media")
+        {
+            Description = "Overwrite all content on the loaded media without a prompt. Does not replace " +
+                          "existing virtual media files under --virtual-create — that takes --overwrite-virtual.",
+        };
         var skipSetCorrectionOption = new Option<bool>("--skip-set-correction")
         {
             Description = "Do not attempt to correct backup set navigation errors.",
@@ -124,7 +125,7 @@ internal static class BackupCommand
         cmd.Options.Add(noMultivolumeOption);
         cmd.Options.Add(ejectWhenDoneOption);
         cmd.Options.Add(emergencyTocOption);
-        //cmd.Options.Add(overwriteMediaOption);
+        cmd.Options.Add(overwriteMediaOption);
         cmd.Options.Add(skipSetCorrectionOption);
         cmd.Options.Add(skipSetVerifyOption);
 
@@ -145,7 +146,7 @@ internal static class BackupCommand
             var noMultivolume = parseResult.GetValue(noMultivolumeOption);
             var ejectWhenDone = parseResult.GetValue(ejectWhenDoneOption);
             var emergency   = parseResult.GetValue(emergencyTocOption);
-            var overwriteMedia = parseResult.GetValue(GlobalOptions.OverwriteMedia); // parseResult.GetValue(overwriteMediaOption);
+            var overwriteMedia = parseResult.GetValue(overwriteMediaOption);
             var skipSetCorrection = parseResult.GetValue(skipSetCorrectionOption);
             var skipSetVerify = parseResult.GetValue(skipSetVerifyOption);
             var filterFcl   = parseResult.GetValue(FilterOptions.Filter);

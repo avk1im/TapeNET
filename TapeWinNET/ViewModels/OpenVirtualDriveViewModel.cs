@@ -533,12 +533,15 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
 
     /// <summary>
     /// Gets the computed initiator file path for display purposes.
-    /// Read-only - derived from content file path using naming convention.
+    ///  Read-only - derived from content file path using naming convention.
     /// </summary>
     public string InitiatorFilePathDisplay =>
         string.IsNullOrWhiteSpace(ContentFilePath)
             ? "(auto-generated from content path)"
-            : BuildInitiatorFilePath(ContentFilePath);
+            : BuildInitiatorFilePath(
+                IsCreateNewMode
+                    ? VirtualMediaPaths.WithDefaultExtension(ContentFilePath)
+                    : VirtualMediaPaths.ResolveExisting(ContentFilePath));
 
     /// <summary>Override: initiator capacity is only editable when creating new media.</summary>
     public override bool IsInitiatorCapacityEnabled => EnableInitiatorPartition && IsCreateNewMode;
@@ -629,13 +632,23 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
 
     public string ActionButtonText => IsOpenExistingMode ? "Open" : "Create";
 
-    public WarningLevel WarningLevel =>
-        _isInMemory
-            ? WarningLevel.Info
-            : IsCreateNewMode &&
-              !string.IsNullOrWhiteSpace(ContentFilePath) &&
-              (File.Exists(ContentFilePath) || File.Exists(BuildContentMetadataFilePath(ContentFilePath)))
-                ? WarningLevel.Warning : WarningLevel.None;
+    public WarningLevel WarningLevel
+    {
+        get
+        {
+            if (_isInMemory)
+                return WarningLevel.Info;
+            if (!IsCreateNewMode || string.IsNullOrWhiteSpace(ContentFilePath))
+                return WarningLevel.None;
+
+            // Check the path that would actually be created, that is, the file Create would write.
+            //  E.g. "weekly" becomes "weekly.vt".
+            string target = VirtualMediaPaths.WithDefaultExtension(ContentFilePath);
+            return File.Exists(target) || File.Exists(BuildContentMetadataFilePath(target))
+                ? WarningLevel.Warning
+                : WarningLevel.None;
+        }
+    }
 
     public string WarningMessage => _isInMemory
         ? "The content of in-memory virtual media cannot be saved."
@@ -661,7 +674,9 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
         var dialog = new OpenFileDialog
         {
             Title = "Select Content Partition File",
-            Filter = "Virtual Media Files (*.vt)|*.vt|All Files (*.*)|*.*",
+            Filter = $"Virtual Media Files (*{VirtualMediaPaths.ContentExtension})|*{VirtualMediaPaths.ContentExtension}" +
+                     "|All Files (*.*)|*.*",
+            DefaultExt = VirtualMediaPaths.ContentExtension,
             CheckFileExists = false
         };
 
@@ -671,16 +686,22 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
 
     private void ExecuteOpen(object? _)
     {
+        // Same rule as tapecon: new media without an extension gets the default one; existing media is found
+        //  with or without it.
+        string contentPath = IsCreateNewMode
+            ? VirtualMediaPaths.WithDefaultExtension(ContentFilePath)
+            : VirtualMediaPaths.ResolveExisting(ContentFilePath);
+
         // Use computed initiator path from naming convention
         //  For in-memory: use a placeholder path to signal initiator partition presence
         string? initiatorPath = EnableInitiatorPartition
-            ? (_isInMemory ? VirtualMediaPaths.InMemoryPlaceholder : BuildInitiatorFilePath(ContentFilePath))
+            ? (_isInMemory ? VirtualMediaPaths.InMemoryPlaceholder : BuildInitiatorFilePath(contentPath))
             : null;
 
         var request = new VirtualDriveOpenRequest(
             Capabilities: BuildCapabilities(),
             Media: new VirtualMediaDescriptor(
-                _isInMemory ? VirtualMediaPaths.InMemoryPlaceholder : ContentFilePath,
+                _isInMemory ? VirtualMediaPaths.InMemoryPlaceholder : contentPath,
                 ContentCapacityBytes,
                 initiatorPath,
                 EnableInitiatorPartition ? InitiatorCapacityBytes : 0,
@@ -751,6 +772,10 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
             return;
         }
 
+        // Same rule as opening: "weekly" finds "weekly.vt" when that is where the media is.
+        // A local, so the probe task keeps the path it started with even if the user types on.
+        string probePath = VirtualMediaPaths.ResolveExisting(ContentFilePath);
+
         // Check if content metadata file exists (quick check before full probe)
         var contentMetadataPath = BuildContentMetadataFilePath(ContentFilePath);
         if (!File.Exists(contentMetadataPath))
@@ -768,7 +793,7 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
         }
 
         // Auto-detect initiator partition files using naming convention
-        bool hasInitiatorFiles = InitiatorFilesExist(ContentFilePath);
+        bool hasInitiatorFiles = InitiatorFilesExist(probePath);
 
         // Auto-check the initiator partition checkbox if files exist
         EnableInitiatorPartition = hasInitiatorFiles;
@@ -785,12 +810,12 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
             {
                 // Determine initiator path based on auto-detection
                 string? initiatorPath = hasInitiatorFiles
-                    ? BuildInitiatorFilePath(ContentFilePath)
+                    ? BuildInitiatorFilePath(probePath)
                     : null;
 
                 // Probe the virtual drive via the shared library helper
                 var result = await VirtualDriveProber.ProbeAsync(
-                    ContentFilePath,
+                    probePath,
                     initiatorPath,
                     token);
 

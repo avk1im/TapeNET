@@ -1,8 +1,9 @@
 namespace TapeLibNET.Virtual;
 
 /// <summary>
-/// File-naming conventions of file-backed virtual media, shared by every app: the metadata file beside each
-///  partition file, the initiator-partition file derived from the content file, and the per-volume suffix.
+/// File-naming conventions of file-backed virtual media, shared by every app: the default content extension, the
+///  metadata file beside each partition file, the initiator-partition file derived from the content file, and the
+///  per-volume suffix.
 /// </summary>
 /// <remarks>
 /// Lifted from TapeWinNET's <c>OpenVirtualDriveViewModel</c> so the CLI, the WPF app, the service layer and the tests
@@ -17,8 +18,34 @@ namespace TapeLibNET.Virtual;
 /// </remarks>
 public static class VirtualMediaPaths
 {
+    /// <summary>Default extension of a virtual media content file (its metadata adds <c>.vrt</c>).</summary>
+    public const string ContentExtension = ".vt";
+
     /// <summary>Placeholder path for in-memory media (no file behind it).</summary>
     public const string InMemoryPlaceholder = "(in-memory)";
+
+    #region Extension
+
+    /// <summary>
+    /// <paramref name="path"/> with <see cref="ContentExtension"/> appended when its file name has no extension.
+    ///  An explicit extension is kept as given. For NEW media.
+    /// </summary>
+    public static string WithDefaultExtension(string path)
+        => Path.HasExtension(path) ? path : path + ContentExtension;
+
+    /// <summary>
+    /// The content path of EXISTING media: <paramref name="path"/> as given when media exists there or it carries an
+    ///  extension; else the same path plus <see cref="ContentExtension"/> when media exists there — so <c>weekly</c>
+    ///  finds <c>weekly.vt</c>, while media created without an extension stays reachable by its exact name.
+    /// </summary>
+    public static string ResolveExisting(string path)
+        => MediaExists(path) || Path.HasExtension(path) || !MediaExists(path + ContentExtension)
+            ? path
+            : path + ContentExtension;
+
+    #endregion
+
+    #region Metadata and initiator
 
     /// <summary>Metadata file of a partition file. Example: <c>mymedia.vt</c> → <c>mymedia.vt.vrt</c>.</summary>
     public static string GetMetadataPath(string partitionFilePath)
@@ -86,6 +113,10 @@ public static class VirtualMediaPaths
         return InitiatorFilesExist(contentFilePath) ? BuildInitiatorFilePath(contentFilePath) : null;
     }
 
+    #endregion
+
+    #region New media
+
     /// <summary>
     /// True when ANY file new media at <paramref name="contentFilePath"/> would overwrite exists — virtual media or not.
     /// </summary>
@@ -123,6 +154,10 @@ public static class VirtualMediaPaths
             File.Delete(GetMetadataPath(staleInitiator));
         }
     }
+
+    #endregion
+
+    #region Volumes and helpers
 
     /// <summary>
     /// Decorates a file path with a volume suffix, replacing any existing one.
@@ -166,4 +201,6 @@ public static class VirtualMediaPaths
         if (!string.IsNullOrEmpty(dir))
             Directory.CreateDirectory(dir);     // no-op when present
     }
+
+    #endregion
 }

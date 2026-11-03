@@ -8,7 +8,7 @@ namespace TapeConNET.Tests;
 
 /// <summary>
 /// Virtual media from the CLI: the <c>create-virtual</c> verb, <c>--virtual-create</c> / <c>--virtual-open</c>, the
-///  overwrite guard, the recorded mark profile, profile and block-size validation, and size suffixes.
+///  default extension, the two overwrite permissions, the recorded mark profile, validation, and size suffixes.
 /// </summary>
 /// <remarks>
 /// <see cref="TempVirtualMedia"/> serves as the scratch folder only; each test names its own media inside it.
@@ -64,6 +64,50 @@ public class VirtualMediaCliTests
         Assert.Equal(TapeConExitCode.Ok, info.Exit);
     }
 
+    // ── Default extension ──────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task CreateVirtual_NoExtension_AddsDefault_OpenFindsItWithoutExtension()
+    {
+        using var scratch = new TempVirtualMedia();
+        var bare = MediaPath(scratch, "weekly");
+        var withExt = bare + VirtualMediaPaths.ContentExtension;
+
+        var create = await TapeConHost.RunAsync("create-virtual", bare, "--capacity", SmallCapacity, "--name", "Weekly");
+        Assert.Equal(TapeConExitCode.Ok, create.Exit);
+        Assert.True(VirtualMediaPaths.MediaExists(withExt));
+        Assert.False(File.Exists(bare));
+
+        var info = await TapeConHost.RunAsync("info", "--virtual-open", bare);
+        Assert.Equal(TapeConExitCode.Ok, info.Exit);
+        Assert.True(info.ContainsMessage("Weekly"));
+    }
+
+    [Fact]
+    public async Task CreateVirtual_ExplicitExtension_IsKept()
+    {
+        using var scratch = new TempVirtualMedia();
+        var path = MediaPath(scratch, "legacy.vtape");
+
+        var create = await TapeConHost.RunAsync("create-virtual", path, "--capacity", SmallCapacity);
+        Assert.Equal(TapeConExitCode.Ok, create.Exit);
+        Assert.True(VirtualMediaPaths.MediaExists(path));
+        Assert.False(File.Exists(path + VirtualMediaPaths.ContentExtension));
+    }
+
+    [Fact]
+    public async Task CreateVirtual_InitCapacity_InitiatorFollowsDefaultExtension()
+    {
+        using var scratch = new TempVirtualMedia();
+        var bare = MediaPath(scratch, "parted");
+
+        var create = await TapeConHost.RunAsync("create-virtual", bare, "--capacity", SmallCapacity, "--init-capacity", "4MB");
+        Assert.Equal(TapeConExitCode.Ok, create.Exit);
+        Assert.True(File.Exists(MediaPath(scratch, "parted_init" + VirtualMediaPaths.ContentExtension)));
+    }
+
+    // ── Overwrite permissions: --overwrite-virtual (files) vs --overwrite-media (sets) ──
+
     [Fact]
     public async Task CreateVirtual_ExistingMedia_Unattended_IsDeclinedAndUntouched()
     {
@@ -74,7 +118,7 @@ public class VirtualMediaCliTests
 
         var again = await TapeConHost.RunAsync("create-virtual", path, "--capacity", SmallCapacity, "--name", "Replacement");
         Assert.Equal(TapeConExitCode.Cancelled, again.Exit);
-        Assert.True(again.ContainsMessage("--overwrite-media"));
+        Assert.True(again.ContainsMessage("--overwrite-virtual"));
 
         var info = await TapeConHost.RunAsync("info", "--virtual-open", path);
         Assert.True(info.ContainsMessage("Keep-Me"));
@@ -82,7 +126,7 @@ public class VirtualMediaCliTests
     }
 
     [Fact]
-    public async Task CreateVirtual_ExistingMedia_OverwriteMedia_Replaces()
+    public async Task CreateVirtual_ExistingMedia_OverwriteVirtual_Replaces()
     {
         using var scratch = new TempVirtualMedia();
         var path = MediaPath(scratch);
@@ -90,11 +134,48 @@ public class VirtualMediaCliTests
             (await TapeConHost.RunAsync("create-virtual", path, "--capacity", SmallCapacity, "--name", "Old-One")).Exit);
 
         var again = await TapeConHost.RunAsync("create-virtual", path, "--capacity", SmallCapacity,
-            "--name", "New-One", "--overwrite-media");
+            "--name", "New-One", "--overwrite-virtual");
         Assert.Equal(TapeConExitCode.Ok, again.Exit);
 
         var info = await TapeConHost.RunAsync("info", "--virtual-open", path);
         Assert.True(info.ContainsMessage("New-One"));
+    }
+
+    [Fact]
+    public async Task Backup_VirtualCreate_OverExisting_OverwriteMediaAlone_DoesNotReplaceFiles()
+    {
+        using var scratch = new TempVirtualMedia();
+        using var src = new TempFileTree();
+        src.AddFile("a.txt", 1024);
+        var path = MediaPath(scratch);
+        Assert.Equal(TapeConExitCode.Ok,
+            (await TapeConHost.RunAsync("create-virtual", path, "--capacity", SmallCapacity, "--name", "Keep-Me")).Exit);
+
+        // --overwrite-media permits replacing SETS, not the virtual media FILES.
+        var backup = await TapeConHost.RunAsync("backup", "--virtual-create", path, "--overwrite-media", src.RootPath);
+        Assert.Equal(TapeConExitCode.Cancelled, backup.Exit);
+
+        var info = await TapeConHost.RunAsync("info", "--virtual-open", path);
+        Assert.True(info.ContainsMessage("Keep-Me"));
+    }
+
+    [Fact]
+    public async Task Backup_VirtualCreate_OverExisting_OverwriteVirtual_Replaces()
+    {
+        using var scratch = new TempVirtualMedia();
+        using var src = new TempFileTree();
+        src.AddFile("a.txt", 1024);
+        var path = MediaPath(scratch);
+        Assert.Equal(TapeConExitCode.Ok,
+            (await TapeConHost.RunAsync("create-virtual", path, "--capacity", SmallCapacity, "--name", "Old-One")).Exit);
+
+        var backup = await TapeConHost.RunAsync("backup", "--virtual-create", path, "--capacity", SmallCapacity,
+            "--overwrite-virtual", "--description", "Fresh-Set", src.RootPath);
+        Assert.Equal(TapeConExitCode.Ok, backup.Exit);
+
+        var info = await TapeConHost.RunAsync("info", "--virtual-open", path);
+        Assert.False(info.ContainsMessage("Old-One"));
+        Assert.True(info.ContainsMessage("Fresh-Set"));
     }
 
     [Fact]
@@ -105,7 +186,7 @@ public class VirtualMediaCliTests
         Assert.Equal(TapeConExitCode.Ok,
             (await TapeConHost.RunAsync("create-virtual", path, "--capacity", SmallCapacity, "--init-capacity", "4MB")).Exit);
 
-        var single = await TapeConHost.RunAsync("create-virtual", path, "--capacity", SmallCapacity, "--overwrite-media");
+        var single = await TapeConHost.RunAsync("create-virtual", path, "--capacity", SmallCapacity, "--overwrite-virtual");
         Assert.Equal(TapeConExitCode.Ok, single.Exit);
         Assert.False(VirtualMediaPaths.InitiatorFilesExist(path));
     }
@@ -126,16 +207,17 @@ public class VirtualMediaCliTests
     }
 
     [Fact]
-    public async Task VirtualOpen_WithSizeOptions_WarnsAndIgnores()
+    public async Task VirtualOpen_WithCreateOnlyOptions_WarnsAndIgnores()
     {
         using var scratch = new TempVirtualMedia();
         var path = MediaPath(scratch);
         Assert.Equal(TapeConExitCode.Ok,
             (await TapeConHost.RunAsync("create-virtual", path, "--capacity", SmallCapacity)).Exit);
 
-        var info = await TapeConHost.RunAsync("info", "--virtual-open", path, "--capacity", "1GB");
+        var info = await TapeConHost.RunAsync("info", "--virtual-open", path, "--capacity", "1GB", "--overwrite-virtual");
         Assert.Equal(TapeConExitCode.Ok, info.Exit);
-        Assert.Contains(info.AtLevel(WarningLevel.Warning), e => e.Message.Contains("--capacity"));
+        var warnings = info.AtLevel(WarningLevel.Warning).ToList();
+        Assert.Contains(warnings, e => e.Message.Contains("--capacity") && e.Message.Contains("--overwrite-virtual"));
     }
 
     [Fact]

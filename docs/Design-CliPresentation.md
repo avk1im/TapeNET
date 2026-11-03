@@ -10,6 +10,9 @@ behaviour — presentation only.
   `|`-tables, backticks and asterisks reach the user verbatim.
 - **`--help`** is System.CommandLine's default plain-text output: correct, but monochrome, and inconsistent with the
   coloured, themed output of every verb.
+  - The long set of options related to the virtual media opening / creation is presented side-by-side with the options related
+	to the particular verb, which gets confusing. The virtual-media-related options should be presented as a separate group,
+	possibly after the verb's "own" options.
 
 ## 2. Goals and non-goals
 
@@ -17,6 +20,7 @@ behaviour — presentation only.
 |---|---|
 | Readable, themed docs in the console | A general Markdown engine |
 | Coloured help consistent with `ConsoleTheme` | Switching to `Spectre.Console.Cli` (a rewrite of every verb) |
+| Help on virtual-media-related options grouped separately | A general System.CommandLine help customisation (besides a simple option-grouping mechanism) |
 | Plain fallback for `--no-color`, `--quiet`, redirected output, tests | New NuGet dependencies |
 | Unit-testable without a console | Paging, links, images |
 
