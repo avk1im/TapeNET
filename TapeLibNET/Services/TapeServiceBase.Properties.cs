@@ -28,6 +28,21 @@ public readonly record struct ServiceProperty(
     ServiceReportLevel Level = ServiceReportLevel.None,
     double? Ratio = null);
 
+/// <summary>One backup set's share of the volume, for usage displays.</summary>
+public readonly record struct SetUsage(int SetIndex, int AltIndex, string DisplayName, string DisplayCount, long SizeOnTape);
+
+/// <summary>
+/// The loaded volume in numbers — the figures the "Capacity" property rows show, for graphical hosts (the usage bar).
+/// </summary>
+/// <param name="EstimatedCapacity">The content partition's true total (calibrated, else reported).</param>
+/// <param name="Sets">The sets of this volume, oldest first; each with its set header when the media has them.</param>
+/// <param name="TocInPartition">The TOC lives in its own partition.</param>
+/// <param name="TocSpace">The TOC reserve (TOC in set), or the TOC partition's capacity.</param>
+/// <param name="TocSize">One copy of the loaded TOC, estimated.</param>
+/// <param name="Writable">What a backup may still spend on content.</param>
+public sealed record MediaUsage(long EstimatedCapacity, IReadOnlyList<SetUsage> Sets, bool TocInPartition,
+    long TocSpace, long TocSize, long Writable);
+
 
 public partial class TapeServiceBase
 {
@@ -250,8 +265,10 @@ public partial class TapeServiceBase
         props.Add(new("Remaining Reported / Estimated", pair(ReportedContentRemaining, EstimatedContentRemaining)));
         props.Add(new("Writable", Helpers.BytesToStringLong(WritableRemaining),
             Ratio: estimatedCapacity > 0 ? (double)WritableRemaining / estimatedCapacity : null));
-        if (!HasInitiatorPartition)
-            props.Add(new("TOC Reserve",
+        props.Add(HasInitiatorPartition
+            ? new("TOC Partition",
+                $"{Helpers.BytesToStringLong(TocPartitionCapacity)} (TOC ~{Helpers.BytesToString(TocSizeEstimate)})")
+            : new("TOC Reserve",
                 $"{Helpers.BytesToStringLong(TocReserve)} (TOC ~{Helpers.BytesToString(TocSizeEstimate)})"));
         props.Add(new("Estimation By", RemainingEstimationSource,
             IsEarlyWarning ? ServiceReportLevel.Warning : ServiceReportLevel.None));
@@ -268,6 +285,38 @@ public partial class TapeServiceBase
     }
 
     private static string YesNo(bool value) => value ? "Yes" : "No";
+
+    #endregion
+
+    #region Media usage
+
+    /// <summary>
+    /// The loaded volume in numbers (<see cref="MediaUsage"/>); <see langword="null"/> without media. The same figures
+    ///  <see cref="AddCapacity"/> formats — a pure read, like the sheets.
+    /// </summary>
+    public MediaUsage? DescribeUsage()
+    {
+        if (_drive is not { IsMediaLoaded: true })
+            return null;
+
+        bool withSetHeaders = LoadedMediaHeader?.HasSetHeaders ?? false;   // as Used counts them
+        var sets = new List<SetUsage>();
+        if (_toc is TapeTOC { Count: > 0 } toc)
+        {
+            for (int i = toc.FirstSetOnVolume; i <= toc.LastSetOnVolume; i++)
+            {
+                var set = toc[i];
+                sets.Add(new(i, toc.SetIndexToAlt(i), set.DisplayName, set.DisplayCount,
+                    set.ComputeTotalFileSizeOnTape(DefaultBlockSize, withSetHeaders)));   // stub-safe on locked sets
+            }
+        }
+        return new(EstimatedCapacity, sets, HasInitiatorPartition,
+            HasInitiatorPartition ? TocPartitionCapacity : TocReserve,
+            TocSizeEstimate, WritableRemaining);
+    }
+
+    /// <summary>The TOC partition's capacity (drive cache, Design-TocReserve §9.2.1); the default until it is known.</summary>
+    public long TocPartitionCapacity => _drive?.InitiatorCapacity is long c and > 0 ? c : DefaultTOCCapacity;
 
     #endregion
 }

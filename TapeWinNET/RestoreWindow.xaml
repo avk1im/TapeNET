@@ -207,11 +207,13 @@
                 <GroupBox Header="Options" help:HelpTopicIdAttachedProperty.TopicId="dialog.restore.options"
                           help:HelpControlNameAttachedProperty.ControlName="Options">
                     <StackPanel Margin="8">
-                        <CheckBox Content="Include incremental chain"
+                                <CheckBox Content="Include incremental chain"
                                   IsChecked="{Binding Incremental}"
+                                  IsEnabled="{Binding IsIncrementalEnabled}"
+                                  ToolTipService.ShowOnDisabled="True"
                                   Margin="0,0,0,4"
-                                  ToolTip="Process files from all backup sets of the incremental chain"/>
-                        <CheckBox Content="This volume only"
+                                  ToolTip="Process files from all backup sets of the incremental chain. Available when a selected set is incremental."/>
+                                <CheckBox Content="This volume only"
                                   IsChecked="{Binding NoMultivolume}"
                                   IsEnabled="{Binding IsNoMultivolumeEnabled}"
                                   Margin="0,4,0,4"

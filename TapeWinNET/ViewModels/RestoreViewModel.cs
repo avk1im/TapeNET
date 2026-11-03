@@ -1,10 +1,12 @@
 using System.Collections.ObjectModel;
 using System.Windows.Input;
+
+using Windows.Win32.System.SystemServices; // for Helpers
+
 using TapeLibNET.Agents;
 using TapeLibNET.Services;
 using TapeLibNET.Toc;
 using TapeWinNET.Models;
-using Windows.Win32.System.SystemServices; // for Helpers
 
 namespace TapeWinNET.ViewModels;
 
@@ -217,6 +219,13 @@ public class RestoreViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Whether "Include incremental chain" applies: a checked set is incremental — or locked,
+    ///  whose incremental flag is hidden until the service unlocks it.
+    /// </summary>
+    public bool IsIncrementalEnabled =>
+        BackupSets.Any(b => b.IsCheckedForRestore != false && (b.IsIncremental || b.IsLocked));
+
+    /// <summary>
     /// Whether to confine the operation to backup sets on the current volume only.
     ///  When checked, unchecks all sets not on the current volume. Only enabled
     ///  when the selection spans multiple volumes.
@@ -255,6 +264,8 @@ public class RestoreViewModel : ViewModelBase
                 OnPropertyChanged(nameof(RestoreToTargetDir));
                 OnPropertyChanged(nameof(IsTargetDirectoryInputEnabled));
                 OnPropertyChanged(nameof(IsRecurseSubdirsEnabled));
+
+                NotifyCanStart();
             }
         }
     }
@@ -269,7 +280,11 @@ public class RestoreViewModel : ViewModelBase
     public string TargetDirectory
     {
         get => _targetDirectory;
-        set => SetProperty(ref _targetDirectory, value);
+        set
+        {
+            if (SetProperty(ref _targetDirectory, value))
+                NotifyCanStart();
+        }
     }
 
     public HandleExistingOption SelectedHandleExisting
@@ -461,7 +476,16 @@ public class RestoreViewModel : ViewModelBase
         }
     }
 
-    public bool CanStart => BackupSets.Any(b => b.IsCheckedForRestore != false);
+    /// <summary>A set is checked, and — when restoring to a target folder — the folder is given.</summary>
+    public bool CanStart =>
+        BackupSets.Any(b => b.IsCheckedForRestore != false)
+        && !(IsTargetDirectoryInputEnabled && string.IsNullOrWhiteSpace(_targetDirectory));
+
+    private void NotifyCanStart()
+    {
+        OnPropertyChanged(nameof(CanStart));
+        CommandManager.InvalidateRequerySuggested();
+    }
 
     /// <summary>
     /// Called from code-behind when a set checkbox is toggled.
@@ -525,7 +549,7 @@ public class RestoreViewModel : ViewModelBase
         var request = new RestoreFormData(
             Mode: _mode,
             CheckedFilesBySet: checkedFilesBySet,
-            Incremental: _incremental,
+            Incremental: _incremental && IsIncrementalEnabled,
             TargetDirectory: targetDir,
             RecurseSubdirectories: targetDir != null && _recurseSubdirectories,
             HandleExisting: _selectedHandleExisting.Value,
@@ -636,6 +660,8 @@ public class RestoreViewModel : ViewModelBase
         OnPropertyChanged(nameof(TotalFileCount));
         UpdateItemsGroupHeader();
         UpdatePreview();
+        OnPropertyChanged(nameof(IsIncrementalEnabled));  // re-checking an incremental set restores the user's choice
+                                                          //  (The checkbox keeps its value while disabled.)
         OnPropertyChanged(nameof(CanStart));
         CommandManager.InvalidateRequerySuggested();
     }

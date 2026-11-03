@@ -1,31 +1,34 @@
+using System.Windows;
 using System.Windows.Input;
-using TapeLibNET.Toc;
+using System.Windows.Media;
+
+using Windows.Win32.System.SystemServices; // for Helpers
+
+using TapeLibNET.Services;
 using TapeWinNET.Controls;
 using TapeWinNET.Models;
 using TapeWinNET.Services;
-using Windows.Win32.System.SystemServices; // for Helpers
 
 namespace TapeWinNET.ViewModels;
 
 
 /// <summary>
-/// Owns the segment list and capacity for a <see cref="MediaUsageBarControl"/>
-///  and lives for the entire lifetime of the host view model.
+/// Owns the segment list and capacity for a <see cref="MediaUsageBarControl"/> and lives for the entire lifetime of the
+///  host view model.
 /// <para>
-/// Encapsulates the logic that builds <see cref="UsageSegment"/>s from the
-///  current <c>TapeService.TOC</c>, manages the highlight, and dispatches
-///  segment clicks. The base implementation reproduces what
-///  <c>MainViewModel</c> used to do directly; derived classes override
-///  <see cref="AddContentSegments"/> (and optionally
-///  <see cref="OnSegmentClicked"/>) to inject extra segments such as a pending
-///  new backup set in BackupWindow or a deletion preview in
-///  DeleteBackupSetsWindow.
+/// <b>One source of figures.</b> Every number the bar shows comes from <see cref="TapeServiceBase.DescribeUsage"/> — the
+///  same figures the property pane shows (<c>TapeServiceBase.AddCapacity</c>): each set's size on tape, the TOC reserve
+///  (or partition) with the TOC's size, and the writable space. The bar never reads the TOC or recomputes capacity
+///  itself.
 /// </para>
 /// <para>
-/// <b>Free-space convention:</b> the trailing free segment's size is computed
-///  as <c>capacity − sum(all other segments)</c>, never less than 1 byte so
-///  the bar always has a visible free remnant. This keeps the math consistent
-///  for derived classes that drop or inject content segments.
+/// <b>Layout:</b> [TOC partition] · sets of this volume · [TOC reserve] · Writable. The axis is the sum of the segments,
+///  so the bar is always full and every segment is proportional to the figure it is labelled with.
+/// </para>
+/// <para>
+/// Derived classes override <see cref="AddContentSegments"/> to inject what-if segments the service knows nothing about
+///  — the pending new set (BackupWindow), the deletion preview (DeleteBackupSetsWindow). The Writable segment then shows
+///  the space left after that what-if (<see cref="BuildSegments"/>).
 /// </para>
 /// </summary>
 public class MediaUsageBarPresenter : ViewModelBase
@@ -54,7 +57,7 @@ public class MediaUsageBarPresenter : ViewModelBase
         private set => SetProperty(ref _segments, value);
     }
 
-    /// <summary>Total media capacity in bytes; denominator for bar proportions.</summary>
+    /// <summary>Denominator for bar proportions: the sum of all segments.</summary>
     public long TotalCapacity
     {
         get => _totalCapacity;
@@ -66,27 +69,18 @@ public class MediaUsageBarPresenter : ViewModelBase
 
     // ─────────────────────────────────────────────────────────────── Public API ────────
 
-    /// <summary>
-    /// Rebuilds <see cref="Segments"/> and <see cref="TotalCapacity"/> from the
-    ///  current <see cref="TapeService"/> state. Safe to call repeatedly.
-    /// </summary>
+    /// <summary>Rebuilds the segments from the service's usage snapshot. Safe to call repeatedly.</summary>
     public void Rebuild()
     {
-        var toc = _tapeService.TOC;
-        long capacity = _tapeService.Capacity;
-        if (capacity <= 0)
+        if (_tapeService.DescribeUsage() is not { } usage)
         {
             Clear();
             return;
         }
-
         var segments = new List<UsageSegment>();
-        BuildSegments(segments, toc, capacity);
-
-        TotalCapacity = capacity;
+        BuildSegments(segments, usage);
+        TotalCapacity = Math.Max(1L, segments.Sum(s => s.Size));
         Segments = segments;
-
-        // Reapply highlight after a rebuild — derived classes may track their own state.
         ReapplyHighlight();
     }
 
@@ -97,10 +91,7 @@ public class MediaUsageBarPresenter : ViewModelBase
         TotalCapacity = 0;
     }
 
-    /// <summary>
-    /// Marks the segment with the given <paramref name="setIndex"/> as highlighted.
-    ///  Pass <c>null</c> to clear the highlight.
-    /// </summary>
+    /// <summary>Marks the segment of <paramref name="setIndex"/> as highlighted; <c>null</c> clears.</summary>
     public virtual void UpdateHighlight(int? setIndex) => UpdateHighlight(setIndex is int i ? [i] : []);
 
     /// <summary>
@@ -123,116 +114,118 @@ public class MediaUsageBarPresenter : ViewModelBase
     // ─────────────────────────────────────────────────────────── Template method ────────
 
     /// <summary>
-    /// Orchestrates segment construction: leading TOC, content (override hook),
-    ///  trailing TOC, then free-space.
+    /// [TOC partition] · content (override hook) · [TOC reserve] · Writable.
+    /// <para>
+    /// The Writable segment shows the service's writable space, corrected by what the hook changed: content the hook
+    ///  removed (sets an overwrite drops) returns to it, content it added (the pending set) is taken from it. A segment
+    ///  the hook only re-labels or merges (the deletion preview) leaves it unchanged.
+    /// </para>
     /// </summary>
-    protected virtual void BuildSegments(List<UsageSegment> segments, TapeTOC? toc, long capacity)
+    protected virtual void BuildSegments(List<UsageSegment> segments, MediaUsage usage)
     {
-        long tocSize = 0;
-        bool tocInPartition = false;
+        if (usage.TocInPartition)
+            segments.Add(TocSegment(usage));
 
-        if (toc is not null)
-        {
-            tocSize = _tapeService.DefaultTOCCapacity;
-            tocInPartition = _tapeService.HasInitiatorPartition;
+        AddContentSegments(segments, usage);
 
-            // TOC-in-partition: leftmost segment
-            if (tocInPartition)
-                segments.Add(new UsageSegment(
-                    label: "TOC",
-                    size: tocSize,
-                    color: default, // Kind-based color applied by the control
-                    tooltip: $"TOC partition: {Helpers.BytesToString(tocSize)}",
-                    kind: UsageSegmentKind.TOC));
+        if (!usage.TocInPartition)
+            segments.Add(TocSegment(usage));
 
-            // Content (backup-set) segments — override hook
-            AddContentSegments(segments, toc);
-
-            // TOC-in-set: rightmost data segment (immediately before free)
-            if (!tocInPartition)
-                segments.Add(new UsageSegment(
-                    label: "TOC",
-                    size: tocSize,
-                    color: default,
-                    tooltip: $"TOC (in set): {Helpers.BytesToString(tocSize)}",
-                    kind: UsageSegmentKind.TOC));
-        }
-        else // toc is null
-            AddContentSegments(segments, null); // derived classes may inject segments even if toc is null
-
-        // Free space — computed as remainder so derived classes that add/remove
-        //  content segments get a consistent picture without extra plumbing.
-        long usedSoFar = segments.Sum(s => s.Size);
-        long free = capacity - usedSoFar;
-        // any segments pending?
-        bool pending = segments.Any(s => s.Kind == UsageSegmentKind.PendingBackupSet
-            || s.Kind == UsageSegmentKind.PendingTOC);
-
-        if (pending)
-        {
-            // Pending (to-be-added) sets/TOC are already counted in usedSoFar, so the remainder IS the
-            //  what-if free space — no further TOC reservation, just clamp.
-            free = Math.Max(free, 0);
-        }
-        else
-        {
-            // Hand ComputeWritableRemaining the free space WITHOUT the TOC deducted; it reserves the TOC
-            //  itself when the TOC shares the content partition.
-            free = _tapeService.ComputeWritableRemaining(free + tocSize);
-        }
+        long contentBefore = usage.Sets.Sum(s => Visible(s.SizeOnTape));
+        long contentNow = segments
+            .Where(s => s.Kind is UsageSegmentKind.BackupSet or UsageSegmentKind.PendingBackupSet)
+            .Sum(s => s.Size);
+        long writable = Math.Max(0L, usage.Writable + contentBefore - contentNow);
+        bool whatIf = contentNow != contentBefore;
 
         segments.Add(new UsageSegment(
-            label:    "Free",
-            size:     Math.Max(free, 1), // 1-byte minimum so the visual remnant survives
-            color:    default,
-            tooltip:  $"Free: {Helpers.BytesToString(free)}",
-            kind:     UsageSegmentKind.Free));
+            label:   "Writable",
+            size:    Visible(writable),
+            color:   WritableColor(usage, writable),
+            tooltip: whatIf
+                ? $"Writable after this operation: {Helpers.BytesToString(writable)}\n"
+                  + $"(now {Helpers.BytesToString(usage.Writable)})"
+                : $"Writable: {Helpers.BytesToString(writable)}",
+            kind:    UsageSegmentKind.Free));
     }
 
     /// <summary>
-    /// Adds backup-set content segments to <paramref name="segments"/>.
-    ///  Default implementation lists every set on the current volume in physical order.
+    /// The TOC segment: the reserve the service keeps for the TOC on this volume (TOC in set), or the TOC partition —
+    ///  with the TOC's own size in brackets, as the property pane shows it.
     /// </summary>
-    protected virtual void AddContentSegments(List<UsageSegment> segments, TapeTOC? toc)
+    protected virtual UsageSegment TocSegment(MediaUsage usage)
     {
-        // Guard against empty media: FirstSetOnVolume / LastSetOnVolume must not be
-        //  called when Count == 0 as they can throw an out-of-range exception.
-        if (!(toc is { Count: > 0 }))
-            return;
+        string what = usage.TocInPartition ? "TOC partition" : "TOC reserve";
+        return new UsageSegment(
+            label:   "TOC",
+            size:    Visible(usage.TocSpace),
+            color:   default, // Kind-based color applied by the control
+            tooltip: $"{what}: {Helpers.BytesToString(usage.TocSpace)} (TOC ~{Helpers.BytesToString(usage.TocSize)})",
+            kind:    UsageSegmentKind.TOC);
+    }
 
-        uint blockSize = _tapeService.DefaultBlockSize;
-        int firstSet = toc.FirstSetOnVolume;
-        int lastSet  = toc.LastSetOnVolume;
-        for (int setIndex = firstSet; setIndex <= lastSet; setIndex++)
+    /// <summary>Adds one segment per set of this volume, in physical order — sizes from the service.</summary>
+    protected virtual void AddContentSegments(List<UsageSegment> segments, MediaUsage usage)
+    {
+        foreach (var set in usage.Sets)
         {
-            var setTOC    = toc[setIndex];
-            long setSize  = setTOC.ComputeTotalFileSizeOnTape(blockSize);
-            int  altIndex = toc.SetIndexToAlt(setIndex);
-            // Color assigned round-robin by 0-based standard index so that colors are
-            //  stable across volumes (set 1 always gets palette[0], etc.).
-            var color = MediaUsageBarControl.GetSetColor(setIndex - 1);
-
             segments.Add(new UsageSegment(
-                label:    $"#{setIndex}|{altIndex}",
-                size:     Math.Max(setSize, 1), // always at least 1 byte so tiny sets are visible
-                color:    color,
-                tooltip:  $"Set #{setIndex}|{altIndex}: {setTOC.DisplayName}\n"
-                          + $"{Helpers.BytesToString(setSize)}, {setTOC.DisplayCount} file(s)",
+                label:    $"#{set.SetIndex}|{set.AltIndex}",
+                size:     Visible(set.SizeOnTape),
+                // Round-robin by 0-based standard index: set 1 always gets palette[0], across volumes
+                color:    MediaUsageBarControl.GetSetColor(set.SetIndex - 1),
+                tooltip:  $"Set #{set.SetIndex}|{set.AltIndex}: {set.DisplayName}\n"
+                          + $"{Helpers.BytesToString(set.SizeOnTape)}, {set.DisplayCount} file(s)",
                 kind:     UsageSegmentKind.BackupSet,
-                setIndex: setIndex));
+                setIndex: set.SetIndex));
         }
     }
 
     // ───────────────────────────────────────────────────────────── Click dispatch ────────
 
     /// <summary>
-    /// Invoked when the user clicks any segment. Default implementation calls
-    ///  the constructor-supplied <c>onBackupSetClicked</c> callback for
-    ///  <see cref="UsageSegmentKind.BackupSet"/> segments only.
+    /// Invoked when the user clicks any segment. Default: the constructor-supplied callback for set segments only.
     /// </summary>
     protected virtual void OnSegmentClicked(UsageSegment seg)
     {
         if (seg.Kind == UsageSegmentKind.BackupSet && seg.SetIndex is int idx)
             _onBackupSetClicked?.Invoke(idx);
+    }
+
+    // ──────────────────────────────────────────────────────────────────── Helpers ────────
+
+    /// <summary>At least 1 byte, so a tiny or empty segment stays visible.</summary>
+    protected static long Visible(long size) => Math.Max(size, 1L);
+
+    /// <summary>
+    /// The Writable segment's shade — the same traffic light the property pane gives the "Writable" row
+    ///  (<see cref="WarningLevelHelper.Translate"/> over writable ÷ estimated capacity); the control's default when no
+    ///  level applies.
+    /// </summary>
+    private static Color WritableColor(MediaUsage usage, long writable)
+    {
+        if (usage.EstimatedCapacity <= 0)
+            return default;
+        var level = WarningLevelHelper.Translate((double)writable / usage.EstimatedCapacity);
+        return level == ServiceReportLevel.None ? default : GetWarningBgColor(level.ToString());
+    }
+
+    /// <summary>
+    /// Resolves a <c>WarningBg.&lt;name&gt;</c> brush from the application resources and returns its color. Falls back
+    ///  to the App.xaml values when resources are unavailable (designer mode).
+    /// </summary>
+    protected static Color GetWarningBgColor(string name)
+    {
+        if (Application.Current?.TryFindResource("WarningBg." + name) is SolidColorBrush b)
+            return b.Color;
+        return name switch
+        {
+            "Completed" => Color.FromRgb(0xCC, 0xFF, 0xCC),
+            "Info"      => Color.FromRgb(0xCC, 0xE5, 0xFF),
+            "Warning"   => Color.FromRgb(0xFF, 0xF0, 0xCC),
+            "Failed"    => Color.FromRgb(0xFF, 0xDD, 0xD0),
+            "Error"     => Color.FromRgb(0xFF, 0xCC, 0xCC),
+            _           => Colors.LightGray,
+        };
     }
 }

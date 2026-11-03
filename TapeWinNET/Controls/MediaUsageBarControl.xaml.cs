@@ -5,38 +5,36 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 
-using TapeWinNET.Models;
-
 namespace TapeWinNET.Controls;
 
 
 /// <summary>
-/// Horizontal media-usage bar showing TOC, per-set, and free-space regions.
+/// Horizontal media-usage bar showing TOC, per-set, and writable regions.
 /// <para>
-/// The host supplies raw byte sizes via <see cref="Segments"/> and
-///  <see cref="TotalCapacity"/>; all proportional math is done internally.
-///  Segment colors are fixed as constants for now.
+/// The host supplies raw byte sizes via <see cref="Segments"/> and <see cref="TotalCapacity"/>; all proportional math
+///  is done internally.
 /// </para>
 /// <para>
-/// <b>TOC placement convention:</b> partition-based TOC → leftmost segment;
-///  set-based TOC → rightmost segment before free space.
+/// <b>TOC placement convention:</b> partition-based TOC → leftmost segment; set-based TOC (the reserve) → rightmost
+///  segment before the writable space.
 /// </para>
 /// <para>
-/// <b>Selection highlight:</b> set <see cref="UsageSegment.IsHighlighted"/> on
-///  the matching segment from the host ViewModel; the bar reacts automatically
-///  via <see cref="INotifyPropertyChanged"/>.
+/// <b>Selection highlight:</b> set <see cref="UsageSegment.IsHighlighted"/> on the matching segment from the host
+///  ViewModel; the bar reacts automatically via <see cref="INotifyPropertyChanged"/>.
 /// </para>
 /// <para>
-/// The "compress free space" mode (indicated by a torn-band visual for free segment)
-///  can be controlled via optional DPs <see cref="FreeSegmentRatioThreshold"/> and
-///  <see cref="FreeSegmentTargetRatio"/>. Set <see cref="FreeSegmentRatioThreshold"/>
-///  to <c>1.0</c> to disable the feature entirely.
+/// <b>Scale.</b> CONTENT segments (sets — existing, pending, to be deleted) are always drawn to true scale among
+///  themselves, each at least <see cref="MinContentWidth"/> px wide so it stays visible and clickable. The two
+///  ELASTIC kinds — the writable space and the TOC (partition or reserve) — are capped relative to the content they
+///  frame (<see cref="WritableMaxToContent"/>, <see cref="TocMaxToContent"/>); a capped segment gets a torn (zigzag)
+///  edge on its outer side and a "not to scale" tooltip line. The cap is continuous: an elastic segment never shrinks
+///  on screen while it grows on tape.
 /// </para>
 /// </summary>
 public partial class MediaUsageBarControl : UserControl
 {
     #region Segment color palette
-    
+
     // Two alternating blues — dark (Windows accent class) and pale — matching the
     //  Windows Explorer disk-usage aesthetic. Adjacent sets read as immediately distinct
     //  while the overall bar stays monochromatic and consistent with the app's style.
@@ -54,7 +52,7 @@ public partial class MediaUsageBarControl : UserControl
     // Fixed colors for special segment kinds
     private static readonly Color TocColor   = Color.FromRgb(0x70, 0x70, 0x70);  // dark gray
     private static readonly Color PendingTocColor = Color.FromRgb(0x80, 0xA0, 0x80);  // greenish gray
-    private static readonly Color FreeColor  = Color.FromRgb(0xEA, 0xEA, 0xEA);  // very light gray
+    private static readonly Color FreeColor  = Color.FromRgb(0xEA, 0xEA, 0xEA);  // very light gray — default writable
     private static readonly Color TocFgColor = Colors.White;
     private static readonly Color FreeFgColor = Color.FromRgb(0x70, 0x70, 0x70); // dark grey
 
@@ -64,56 +62,52 @@ public partial class MediaUsageBarControl : UserControl
     // Highlight border color drawn on top/bottom of the selected segment
     private static readonly Color HighlightBorderColor = Color.FromRgb(0xFF, 0xA5, 0x00); // amber
 
-    // Minimum rendered width (px) for a label to be visible in a segment
-    // private const double LabelMinWidth = 20.0; // Unused so far - we let Framework handle label clipping
-
     #endregion // Segment color palette
 
     #region Dependency Properties
 
-    // Free-space visual stretch: when the free segment exceeds FreeSegmentRatioThreshold
-    //  of total capacity, non-free segments are scaled up so free is visually compressed
-    //  to FreeSegmentTargetRatio of the bar width. The right edge of the free segment
-    //  is then drawn as a zigzag to signal the compression.
-    // Dependency properties can be overriden in XAML like this:
-    //      <controls:MediaUsageBarControl
-    //          FreeSegmentRatioThreshold="0.60"
-    //          FreeSegmentTargetRatio="0.35"
-    //      .../>
+    // Scale caps of the elastic segments, relative to the CONTENT total (sum of all set segments).
+    //  Override in XAML if needed:
+    //      <controls:MediaUsageBarControl WritableMaxToContent="1.5" TocMaxToContent="0.5" .../>
+    //  Set a cap to a large value (e.g. 1e9) to draw that kind to true scale always.
 
-    public static readonly DependencyProperty FreeSegmentRatioThresholdProperty =
+    public static readonly DependencyProperty WritableMaxToContentProperty =
         DependencyProperty.Register(
-            nameof(FreeSegmentRatioThreshold),
+            nameof(WritableMaxToContent),
             typeof(double),
             typeof(MediaUsageBarControl),
-            new PropertyMetadata(0.50, OnSegmentsOrCapacityChanged));
+            new PropertyMetadata(1.0, OnSegmentsOrCapacityChanged));
 
     /// <summary>
-    /// Free-space fraction of total capacity above which the free segment is visually
-    ///  compressed. Default: 0.50 (compress when free space exceeds 50 %).
+    /// The writable segment is drawn at most this many times the content's width. Default 1.0: on a nearly empty
+    ///  cartridge it takes at most half the bar.
     /// </summary>
-    public double FreeSegmentRatioThreshold
+    public double WritableMaxToContent
     {
-        get => (double)GetValue(FreeSegmentRatioThresholdProperty);
-        set => SetValue(FreeSegmentRatioThresholdProperty, value);
+        get => (double)GetValue(WritableMaxToContentProperty);
+        set => SetValue(WritableMaxToContentProperty, value);
     }
 
-    public static readonly DependencyProperty FreeSegmentTargetRatioProperty =
+    public static readonly DependencyProperty TocMaxToContentProperty =
         DependencyProperty.Register(
-            nameof(FreeSegmentTargetRatio),
+            nameof(TocMaxToContent),
             typeof(double),
             typeof(MediaUsageBarControl),
-            new PropertyMetadata(0.40, OnSegmentsOrCapacityChanged));
+            new PropertyMetadata(0.25, OnSegmentsOrCapacityChanged));
 
     /// <summary>
-    /// Target visual width of the compressed free segment as a fraction of the total
-    ///  bar width. Default: 0.40 (free segment is drawn at 40 % of bar width).
+    /// The TOC segment (partition or reserve) is drawn at most this many times the content's width. Default 0.25: a
+    ///  whole-wrap TOC partition on a nearly empty LTO cartridge stays a slim band; once real content outgrows it, the
+    ///  TOC is drawn to true scale again.
     /// </summary>
-    public double FreeSegmentTargetRatio
+    public double TocMaxToContent
     {
-        get => (double)GetValue(FreeSegmentTargetRatioProperty);
-        set => SetValue(FreeSegmentTargetRatioProperty, value);
+        get => (double)GetValue(TocMaxToContentProperty);
+        set => SetValue(TocMaxToContentProperty, value);
     }
+
+    /// <summary>Minimum rendered width (px) of a content segment — visible and clickable however small.</summary>
+    public const double MinContentWidth = 4.0;
 
     public static readonly DependencyProperty SegmentsProperty =
         DependencyProperty.Register(
@@ -137,11 +131,9 @@ public partial class MediaUsageBarControl : UserControl
             new PropertyMetadata(false, OnSegmentsOrCapacityChanged));
 
     /// <summary>
-    /// When <see langword="true"/> the free-space segment behaves like a content
-    ///  segment: it receives a hand cursor, dispatches <see cref="SegmentClickCommand"/>,
-    ///  and lightens on hover. Default: <see langword="false"/>.
-    /// Set to <see langword="true"/> in BackupWindow where clicking Free shifts
-    ///  the pending set one step to the right.
+    /// When <see langword="true"/> the writable segment behaves like a content segment: it receives a hand cursor,
+    ///  dispatches <see cref="SegmentClickCommand"/>, and lightens on hover. Default: <see langword="false"/>.
+    /// Set to <see langword="true"/> in BackupWindow where clicking it shifts the pending set one step to the right.
     /// </summary>
     public bool FreeIsInteractive
     {
@@ -151,17 +143,14 @@ public partial class MediaUsageBarControl : UserControl
 
     #endregion // Dependency Properties
 
-    /// <summary>
-    /// The ordered list of segments to render. Sizes are raw bytes;
-    ///  proportions are computed from <see cref="TotalCapacity"/>.
-    /// </summary>
+    /// <summary>The ordered list of segments to render. Sizes are raw bytes.</summary>
     public IReadOnlyList<UsageSegment>? Segments
     {
         get => (IReadOnlyList<UsageSegment>?)GetValue(SegmentsProperty);
         set => SetValue(SegmentsProperty, value);
     }
 
-    /// <summary>Total media capacity in bytes — denominator for all proportions.</summary>
+    /// <summary>Total of the segments in bytes; 0 renders the empty bar.</summary>
     public long TotalCapacity
     {
         get => (long)GetValue(TotalCapacityProperty);
@@ -198,8 +187,7 @@ public partial class MediaUsageBarControl : UserControl
     // ───────────────────────────────────────────────────────────── Bar construction ────────
 
     /// <summary>
-    /// Rebuilds all Grid columns and Border children from the current
-    ///  <see cref="Segments"/> and <see cref="TotalCapacity"/>.
+    /// Rebuilds all Grid columns and Border children from the current <see cref="Segments"/>.
     ///  Called on any DP change; safe to call multiple times.
     /// </summary>
     private void RebuildBar()
@@ -208,9 +196,7 @@ public partial class MediaUsageBarControl : UserControl
         SegmentsGrid.Children.Clear();
 
         var segments = Segments;
-        long total = TotalCapacity;
-
-        if (segments == null || segments.Count == 0 || total <= 0)
+        if (segments == null || segments.Count == 0 || TotalCapacity <= 0)
         {
             // Empty state: single featureless gray bar
             SegmentsGrid.ColumnDefinitions.Add(new ColumnDefinition
@@ -220,53 +206,24 @@ public partial class MediaUsageBarControl : UserControl
             return;
         }
 
-        // Stretch factor: if free space dominates (> FreeStretchThreshold), scale up
-        //  non-free column widths so the free segment shrinks to FreeStretchedVisualRatio
-        //  of the bar. Free segment width is left at its real proportion (1× factor).
-        var freeSeg = segments.FirstOrDefault(s => s.Kind == UsageSegmentKind.Free);
-        double freeRatio = freeSeg != null ? (double)freeSeg.Size / total : 0.0;
-        bool isStretched = freeRatio > FreeSegmentRatioThreshold;
-        double stretchFactor = 1.0;
-        if (isStretched && freeSeg != null)
-        {
-            long nonFreeTotal = total - freeSeg.Size;
-
-            // add the pending segments to nonFreeTotal (since their space doesn't diminish free)
-            var pendingSegs = segments.Where(s => s.Kind == UsageSegmentKind.PendingBackupSet
-                || s.Kind == UsageSegmentKind.PendingTOC);
-            foreach (var seg in pendingSegs)
-            {
-                nonFreeTotal += seg.Size;
-            }
-
-            if (nonFreeTotal > 0)
-                // Solve: freeSize / (freeSize + nonFreeTotal * stretchFactor) = FreeStretchedVisualRatio
-                stretchFactor = freeSeg.Size * (1.0 - FreeSegmentTargetRatio)
-                                / (nonFreeTotal * FreeSegmentTargetRatio);
-        }
+        double[] weights = ComputeVisualWeights(segments, out bool[] capped);
 
         for (int i = 0; i < segments.Count; i++)
         {
             var seg = segments[i];
-
-            // Non-free segments are scaled by stretchFactor (= 1.0 when not stretched).
-            double starSize = seg.Kind == UsageSegmentKind.Free
-                ? Math.Max(seg.Size, 1)
-                : Math.Max(seg.Size, 1) * stretchFactor;
-
             SegmentsGrid.ColumnDefinitions.Add(new ColumnDefinition
             {
-                Width = new GridLength(starSize, GridUnitType.Star),
-                MinWidth = 0,
+                Width = new GridLength(weights[i], GridUnitType.Star),
+                MinWidth = IsContent(seg.Kind) ? MinContentWidth : 0,
             });
 
-            bool isCompressed = isStretched && seg.Kind == UsageSegmentKind.Free;
-            var border = CreateSegmentBorder(seg, isFirst: i == 0, isCompressed: isCompressed);
+            // The torn edge goes on the segment's outer side: left for the leftmost (TOC partition), right otherwise.
+            var tear = !capped[i] ? Tear.None : i == 0 ? Tear.Left : Tear.Right;
+            var border = CreateSegmentBorder(seg, isFirst: i == 0, tear);
             Grid.SetColumn(border, i);
             SegmentsGrid.Children.Add(border);
 
             // Subscribe to highlight changes on this segment
-            int colIndex = i; // capture for lambda
             seg.PropertyChanged += (_, e) =>
             {
                 if (e.PropertyName == nameof(UsageSegment.IsHighlighted))
@@ -276,47 +233,73 @@ public partial class MediaUsageBarControl : UserControl
     }
 
     /// <summary>
-    /// Creates the <see cref="Border"/> element (with inner label) for one segment.
+    /// Star weights: true sizes for content; elastic segments (writable, TOC) capped at their factor times the content
+    ///  total. Without content (empty media) nothing is capped. Every weight is at least 1.
     /// </summary>
-    /// <param name="isCompressed">
-    /// When <see langword="true"/> the segment is a visually-compressed free region:
-    ///  the label gets a <c> &gt;&gt;</c> suffix and a zigzag line is overlaid on the
-    ///  right edge to signal that the segment is not drawn to its true scale.
+    private double[] ComputeVisualWeights(IReadOnlyList<UsageSegment> segments, out bool[] capped)
+    {
+        var weights = new double[segments.Count];
+        capped = new bool[segments.Count];
+
+        double content = 0;
+        foreach (var s in segments)
+            if (!IsElastic(s.Kind))
+                content += Math.Max(s.Size, 1);
+
+        for (int i = 0; i < segments.Count; i++)
+        {
+            var seg = segments[i];
+            double size = Math.Max(seg.Size, 1);
+            weights[i] = size;
+            if (content <= 0 || !IsElastic(seg.Kind))
+                continue;
+
+            double cap = content * (seg.Kind == UsageSegmentKind.Free ? WritableMaxToContent : TocMaxToContent);
+            if (size > cap)
+            {
+                weights[i] = Math.Max(cap, 1);
+                capped[i] = true;
+            }
+        }
+        return weights;
+    }
+
+    private enum Tear { None, Left, Right }
+
+    /// <summary>Creates the <see cref="Border"/> element (with inner label) for one segment.</summary>
+    /// <param name="tear">
+    /// A capped elastic segment: a zigzag on that edge, a "&lt;&lt;"/"&gt;&gt;" cue on the label, a tooltip note.
     /// </param>
-    private Border CreateSegmentBorder(UsageSegment seg, bool isFirst, bool isCompressed = false)
+    private Border CreateSegmentBorder(UsageSegment seg, bool isFirst, Tear tear)
     {
         Color fill = seg.Kind switch
         {
-            UsageSegmentKind.TOC  => TocColor,
+            UsageSegmentKind.TOC        => TocColor,
             UsageSegmentKind.PendingTOC => PendingTocColor,
-            UsageSegmentKind.Free => FreeColor,
-            _                     => seg.Color,
+            // The host may shade the writable space (the property pane's traffic light); default otherwise
+            UsageSegmentKind.Free       => seg.Color != default ? seg.Color : FreeColor,
+            _                           => seg.Color,
         };
 
         var border = new Border
         {
             Background = new SolidColorBrush(fill),
-            ToolTip = seg.Tooltip,
+            ToolTip = tear == Tear.None ? seg.Tooltip : $"{seg.Tooltip}\n(not drawn to scale)",
             Tag = fill, // stash original color for highlight restore
             // Left separator line on all non-first segments
             BorderBrush = isFirst ? null : new SolidColorBrush(SepColor),
             BorderThickness = isFirst ? new Thickness(0) : new Thickness(1, 0, 0, 0),
-            // Label inside the segment (clipped if too narrow).
-            //  Compressed free segments also get a zigzag right-edge overlay.
-            Child = BuildSegmentChild(seg, fill, isCompressed),
+            // Label inside the segment (clipped if too narrow); capped segments get a torn edge.
+            Child = BuildSegmentChild(seg, fill, tear),
         };
 
-        // Determine whether this segment participates in hover and click interactions.
-        //  Content segments (BackupSet, PendingBackupSet) are always interactive;
-        //  Free is interactive only when the host opts in via FreeIsInteractive.
+        // Content segments are always interactive; the writable one only when the host opts in.
         bool isInteractive = IsContent(seg.Kind)
             || (seg.Kind == UsageSegmentKind.Free && FreeIsInteractive);
 
-        // Hover: slightly lighten the fill to give tactile feedback
         border.MouseEnter += (_, _) => OnSegmentHover(border, isInteractive, entering: true);
         border.MouseLeave += (_, _) => OnSegmentHover(border, isInteractive, entering: false);
 
-        // Interactive segments get a hand cursor and dispatch the click command
         if (isInteractive)
         {
             border.Cursor = Cursors.Hand;
@@ -334,59 +317,61 @@ public partial class MediaUsageBarControl : UserControl
     }
 
     /// <summary>
-    /// Builds the child element for a segment border — a plain <see cref="TextBlock"/>
-    ///  in the normal case, or a <see cref="Grid"/> with label + zigzag overlay when
-    ///  <paramref name="isCompressed"/> is <see langword="true"/>.
+    /// The label alone, or — for a capped segment — the label with its cue plus the zigzag on the torn edge.
     /// </summary>
-    private static UIElement BuildSegmentChild(UsageSegment seg, Color fill, bool isCompressed)
+    private static UIElement BuildSegmentChild(UsageSegment seg, Color fill, Tear tear)
     {
         var label = new TextBlock
         {
-            // Compressed free segments get a " >>" suffix to reinforce the zigzag cue
-            Text = isCompressed ? seg.Label + " >>" : seg.Label,
+            Text = tear switch
+            {
+                Tear.Left  => "<< " + seg.Label,
+                Tear.Right => seg.Label + " >>",
+                _          => seg.Label,
+            },
             FontSize = 10,
             Foreground = new SolidColorBrush(GetLabelForeground(seg.Kind, fill)),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
-            Margin = new Thickness(2, 0, 2, 0),
+            Margin = new Thickness(tear == Tear.Left ? 8 : 2, 0, tear == Tear.Right ? 8 : 2, 0),
             IsHitTestVisible = false,
         };
 
-        if (!isCompressed)
+        if (tear == Tear.None)
             return label;
 
-        // Overlay the label with a zigzag Canvas on the right edge
         var grid = new Grid { IsHitTestVisible = false };
         grid.Children.Add(label);
-        grid.Children.Add(CreateJaggedEdge());
+        grid.Children.Add(CreateJaggedEdge(left: tear == Tear.Left, GetLabelForeground(seg.Kind, fill)));
         return grid;
     }
 
     /// <summary>
-    /// Returns a narrow <see cref="Canvas"/> containing a zigzag <see cref="Polyline"/>
-    ///  aligned to the right edge of its parent, signalling that the segment is
-    ///  visually compressed. Bar height is assumed to be 18 px.
+    /// A narrow <see cref="Canvas"/> with a zigzag <see cref="Polyline"/> on the left or right edge of its parent,
+    ///  signalling that the segment is not drawn to scale. Bar height is assumed to be 18 px.
     /// </summary>
-    private static Canvas CreateJaggedEdge()
+    private static Canvas CreateJaggedEdge(bool left, Color stroke)
     {
-        // 6 triangular teeth over 18 px height, peak amplitude 4 px
+        // 6 triangular teeth over 18 px height, peak amplitude 4 px; mirrored for the left edge
+        double outer = left ? 0 : 4, inner = left ? 4 : 0;
         var poly = new Polyline
         {
             Points =
             [
-                new(0, 0), new(4, 3), new(0, 6), new(4, 9),
-                new(0, 12), new(4, 15), new(0, 18),
+                new(inner, 0), new(outer, 3), new(inner, 6), new(outer, 9),
+                new(inner, 12), new(outer, 15), new(inner, 18),
             ],
-            Stroke = new SolidColorBrush(FreeFgColor),
+            Stroke = new SolidColorBrush(stroke),
             StrokeThickness = 1.5,
             IsHitTestVisible = false,
         };
+
         return new Canvas
         {
             Width = 8,
             Height = 18,
-            HorizontalAlignment = HorizontalAlignment.Right,
+            HorizontalAlignment = left ? HorizontalAlignment.Left : HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Center,
             IsHitTestVisible = false,
             Children = { poly },
@@ -397,7 +382,6 @@ public partial class MediaUsageBarControl : UserControl
 
     /// <param name="isInteractive">
     /// Captured at bar-build time: whether this segment participates in hover feedback.
-    ///  Non-interactive segments (e.g. TOC, non-interactive Free) are skipped.
     /// </param>
     private static void OnSegmentHover(Border border, bool isInteractive, bool entering)
     {
@@ -405,31 +389,15 @@ public partial class MediaUsageBarControl : UserControl
             return;
 
         Color fill = (Color)border.Tag!;
-
-        if (entering)
-        {
-            // Lighten the fill slightly to indicate interactivity
-            border.Background = new SolidColorBrush(LightenColor(fill, 0.20));
-        }
-        else
-        {
-            // Restore original fill; re-apply highlight border if this segment is selected
-            border.Background = new SolidColorBrush(fill);
-            // Retrieve the segment from the border's tooltip Tag to re-apply highlight.
-            //  The segment reference is not directly available here, but highlight state
-            //  is managed via PropertyChanged subscription in RebuildBar, so simply
-            //  restoring the fill is sufficient — the highlight border (if any) was
-            //  never removed during hover; only the background changed.
-        }
+        // Lighten on enter; restore on leave — the highlight border, if any, is untouched by hover
+        border.Background = new SolidColorBrush(entering ? LightenColor(fill, 0.20) : fill);
     }
 
     /// <summary>
     /// Applies or removes the selection-highlight border on a segment border.
-    /// Called whenever <see cref="UsageSegment.IsHighlighted"/> changes.
     /// <para>
-    /// On highlight the border is given a 1 px negative margin so it protrudes
-    ///  just outside its column bounds (above, below, and into adjacent segments),
-    ///  and its ZIndex is raised so it paints on top of its neighbours.
+    /// On highlight the border is given a 1 px negative margin so it protrudes just outside its column bounds, and its
+    ///  ZIndex is raised so it paints on top of its neighbours.
     /// </para>
     /// </summary>
     private static void ApplyHighlight(Border border, UsageSegment seg)
@@ -438,15 +406,11 @@ public partial class MediaUsageBarControl : UserControl
         {
             border.BorderBrush     = new SolidColorBrush(HighlightBorderColor);
             border.BorderThickness = new Thickness(2);
-            // Negative margin expands the element's layout rect by 1 px on every side,
-            //  making the 2 px border protrude 1 px beyond the segment's own column.
             border.Margin          = new Thickness(-1);
-            Panel.SetZIndex(border, 1); // render on top of adjacent segments
+            Panel.SetZIndex(border, 1);
         }
         else
         {
-            // Restore default: separator on left edge for non-first segments,
-            //  nothing for first. Use the column index to recover that state.
             int col = Grid.GetColumn(border);
             border.BorderBrush     = col == 0 ? null : new SolidColorBrush(SepColor);
             border.BorderThickness = col == 0 ? new Thickness(0) : new Thickness(1, 0, 0, 0);
@@ -460,29 +424,27 @@ public partial class MediaUsageBarControl : UserControl
     /// <summary>Returns the appropriate foreground for a label on this segment.</summary>
     private static Color GetLabelForeground(UsageSegmentKind kind, Color fill) => kind switch
     {
-        UsageSegmentKind.TOC => TocFgColor,
-        UsageSegmentKind.PendingTOC  => TocFgColor,
-        UsageSegmentKind.Free => FreeFgColor,
+        UsageSegmentKind.TOC        => TocFgColor,
+        UsageSegmentKind.PendingTOC => TocFgColor,
+        UsageSegmentKind.Free       => FreeFgColor,
         // Auto-contrast: perceived luminance threshold at 160
         _ => (0.299 * fill.R + 0.587 * fill.G + 0.114 * fill.B) > 160
                 ? Colors.Black
                 : Colors.White,
     };
 
-    /// <summary>
-    /// Lightens <paramref name="color"/> towards white by <paramref name="factor"/>
-    ///  (0 = unchanged, 1 = white).
-    /// </summary>
+    /// <summary>Lightens <paramref name="color"/> towards white by <paramref name="factor"/> (0 = unchanged).</summary>
     private static Color LightenColor(Color color, double factor)
     {
         byte Blend(byte c) => (byte)(c + (255 - c) * factor);
         return Color.FromRgb(Blend(color.R), Blend(color.G), Blend(color.B));
     }
 
-    /// <summary>
-    /// True for segments that represent backup-set content (existing or pending).
-    ///  Used to gate click affordance and highlight rendering.
-    /// </summary>
+    /// <summary>Segments that represent backup-set content (existing, pending, or to be deleted).</summary>
     private static bool IsContent(UsageSegmentKind kind) =>
         kind is UsageSegmentKind.BackupSet or UsageSegmentKind.PendingBackupSet;
+
+    /// <summary>Segments that frame the content and may be capped: writable space and TOC.</summary>
+    private static bool IsElastic(UsageSegmentKind kind) =>
+        kind is UsageSegmentKind.Free or UsageSegmentKind.TOC or UsageSegmentKind.PendingTOC;
 }
