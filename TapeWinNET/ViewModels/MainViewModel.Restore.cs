@@ -139,18 +139,45 @@ public partial class MainViewModel
 
     private RestoreSelection _selection = RestoreSelection.Empty;
 
+    /// <summary>Whether <paramref name="setIndex"/> exists in <paramref name="toc"/> — a safety belt against stale indexes.</summary>
+    private static bool IsValidSetIndex(TapeTOC toc, int setIndex) => setIndex >= 1 && setIndex <= toc.Count;
+
+    /// <summary>
+    /// Whether <paramref name="item"/> still shows the set the TOC holds at its index — not deleted, not replaced by
+    ///  another set (after a delete and a new backup the same index names a different set).
+    /// </summary>
+    private static bool IsLive(TapeTOC toc, BackupSetListItem item)
+        => IsValidSetIndex(toc, item.SetIndex) && ReferenceEquals(toc[item.SetIndex], item.SetTOC);
+
+    /// <summary>
+    /// Drops highlighted rows whose set is gone or replaced. The TOC can change before the views are rebuilt — a
+    ///  <see cref="ServiceStateChange.TocChanged"/> arrives while the delete or backup is still awaited — so the
+    ///  selection must never outlive its sets. Returns whether anything was dropped.
+    /// </summary>
+    private bool PruneStaleSelection(TapeTOC toc)
+    {
+        if (_selectedBackupSets.All(s => IsLive(toc, s)))
+            return false;
+        _selectedBackupSets = [.. _selectedBackupSets.Where(s => IsLive(toc, s))];
+        return true;
+    }
+
     /// <summary>Type 1, else 2a, else 2b, else 3 — see <see cref="RestoreSelectionKind"/>.</summary>
     private RestoreSelection ComputeRestoreSelection()
     {
         if (_tapeService.TOC is not { Count: > 0 } toc || _tocView is null)
             return RestoreSelection.Empty;
 
+        if (PruneStaleSelection(toc))
+            UpdateUsageBarHighlight();
+
         var checkedSel = _tocView.GetCheckedSummary();
         if (checkedSel.SetIndexes.Count > 0)
             return new(RestoreSelectionKind.Checked, checkedSel.SetIndexes,
                 checkedSel.Files, checkedSel.Bytes, checkedSel.LockedSets);
 
-        if (_selectedTreeItem is { ItemType: TreeItemType.BackupSet, SetIndex: int treeSet })
+        // A tree node outlives its set until the tree is rebuilt: range-checked, else ignored
+        if (_selectedTreeItem is { ItemType: TreeItemType.BackupSet, SetIndex: int treeSet } && IsValidSetIndex(toc, treeSet))
             return WholeSets(RestoreSelectionKind.TreeSet, [treeSet]);
 
         if (_selectedBackupSets.Count > 0)
@@ -165,7 +192,7 @@ public partial class MainViewModel
             long bytes = 0;
             foreach (int i in sets)
             {
-                var set = toc[i];
+                var set = toc[i];       // valid: pruned / range-checked above
                 if (set.IsLocked)
                 {
                     locked++;
@@ -177,6 +204,7 @@ public partial class MainViewModel
             return new(kind, sets, files, bytes, locked);
         }
     }
+
 
     /// <summary>"set #3 | 0" for a single set, else null.</summary>
     private string? SingleSetDisplay(RestoreSelection s)
@@ -349,10 +377,13 @@ public partial class MainViewModel
             return [];
 
         setIndexes ??= [.. Enumerable.Range(1, toc.Count)];
-
         var items = new List<BackupSetListItem>(setIndexes.Count);
+
         foreach (var idx in setIndexes)
         {
+            if (!IsValidSetIndex(toc, idx))
+                continue; // safety belt: a selection computed before the TOC changed might've gone stale!
+
             var setTOC = toc[idx];
             var altIdx = toc.SetIndexToAlt(idx);
             items.Add(new BackupSetListItem(setTOC, idx, altIdx, setTOC.Volume == toc.Volume)

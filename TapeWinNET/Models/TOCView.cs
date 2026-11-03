@@ -147,21 +147,25 @@ public class TOCView(TapeTOC toc)
     public void SetPendingGlobalFilter(FclEvaluator? evaluator, Func<Task>? restoreAction)
         => PendingGlobalFilter = new PendingGlobalFilterRecord(evaluator, restoreAction);
 
-    // Locked sets checked as a whole (F2): they have no BackupSetView to hold the state. Entries move into a view
-    //  when the set unlocks (GetOrCreate), and back here when a checked set locks again (Refresh / TryGetOrCreate).
-    private readonly HashSet<int> _checkedLocked = [];
+    // Locked sets checked as a whole: they have no BackupSetView. Keyed by index, valid only while the TOC still holds
+    //  the SAME set there — a delete or a new backup must not hand the check to another set.
+    private readonly Dictionary<int, TapeSetTOC> _checkedLocked = [];
 
     /// <summary>Checks or unchecks a LOCKED set as a whole — its files are unknown.</summary>
     public void SetLockedChecked(int setIndex, bool check)
     {
-        if (check)
-            _checkedLocked.Add(setIndex);
+        if (check && setIndex >= 1 && setIndex <= _toc.Count)
+            _checkedLocked[setIndex] = _toc[setIndex];
         else
             _checkedLocked.Remove(setIndex);
     }
 
-    /// <summary>Whether a locked set is checked as a whole.</summary>
-    public bool IsLockedChecked(int setIndex) => _checkedLocked.Contains(setIndex) && _toc[setIndex].IsLocked;
+    /// <summary>Whether a locked set is checked as a whole — and still the set the TOC holds at that index.</summary>
+    public bool IsLockedChecked(int setIndex)
+        => _checkedLocked.TryGetValue(setIndex, out var set)
+           && setIndex >= 1 && setIndex <= _toc.Count
+           && ReferenceEquals(_toc[setIndex], set)
+           && set.IsLocked;
 
     /// <summary>
     /// Enumerates every <see cref="BackupSetView"/> that has already been created
@@ -196,7 +200,7 @@ public class TOCView(TapeTOC toc)
         if (_toc[setIndex].IsLocked)
         {
             if (_setViews[setIndex] is { } stale && stale.FilteredFiles.CheckedCount > 0)
-                _checkedLocked.Add(setIndex); // keep the the user's selection when a set locks; the selection survives the lock
+                _checkedLocked[setIndex] = _toc[setIndex]; // keep the the user's selection when a set locks; the selection survives the lock
             _setViews[setIndex] = null;
             return null;
         }
@@ -227,7 +231,7 @@ public class TOCView(TapeTOC toc)
         // Reuse if the incremental-view flag still matches AND the underlying TapeSetTOC
         //  is still the same object (guards against stale views after TOC modification)
         if (existing is not null && existing.IsIncrementalView == needsIncremental
-            && ReferenceEquals(existing.SetTOC, setTOC))
+                && ReferenceEquals(existing.SetTOC, setTOC))
             return existing;
 
         // Resolve source files
@@ -294,7 +298,11 @@ public class TOCView(TapeTOC toc)
             Array.Resize(ref _setViews, _toc.Count + 1);
         }
 
-        _checkedLocked.RemoveWhere(i => i > _toc.Count);
+        // Remove deleted or shifted locked sets.
+        //  (After a delete and a new backup the same index names a different set).
+        foreach (int i in _checkedLocked.Keys.ToList())
+            if (i > _toc.Count || !ReferenceEquals(_toc[i], _checkedLocked[i]))
+                _checkedLocked.Remove(i);
 
         // Invalidate stale views: a view is stale when its SourceFiles no longer
         //  references the current TapeSetTOC (backup may have replaced or emptied sets).
@@ -315,7 +323,7 @@ public class TOCView(TapeTOC toc)
             if (refreshSets || stale)
             {
                 if (locked && view.FilteredFiles.CheckedCount > 0)
-                    _checkedLocked.Add(i);          // keep the set-level choice across the lock
+                    _checkedLocked[i] = _toc[i];  // keep the set-level choice across the lock
                 
                 // Clear the cached view; GetOrCreate will rebuild it on next access.
                 //  Don't migrate checked state here — the old files may no longer exist
