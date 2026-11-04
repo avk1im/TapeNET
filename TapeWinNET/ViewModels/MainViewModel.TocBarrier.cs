@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Threading;
 using TapeLibNET.Toc;
+using TapeWinNET.Models;
 
 namespace TapeWinNET.ViewModels;
 
@@ -58,16 +59,16 @@ public partial class MainViewModel
     private void ScheduleTocRefresh()
         => Application.Current.Dispatcher.InvokeAsync(RefreshAfterTocChange, DispatcherPriority.Background);
 
-    /// <summary>
-    /// Starts every tree rebuild: clears the tree and the current set view, optionally drops the TOC view, and — since
-    ///  the caller rebuilds from the current TOC — clears the stale flag.
-    /// </summary>
-    private void ResetTree(bool dropTocView)
+    /// <summary>Starts a tree rebuild. <paramref name="keepTocView"/>: rebuilding from a TOC — its view (checks, filters)
+    ///  carries over through <see cref="TOCView.Refresh"/>; false when no TOC remains to show.</summary>
+    private void ResetTree(bool keepTocView)
     {
         TreeItems.Clear();
         _currentSetView = null;
-        if (dropTocView)
+        if (!keepTocView)
             _tocView = null;
+        else
+            AssertTocQuiet(); // since we'll continue using our TOCView, no service operation may be accessing / modifying it!
         _tocStale = false;
     }
 

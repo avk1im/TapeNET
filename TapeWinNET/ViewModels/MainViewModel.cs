@@ -1494,7 +1494,7 @@ public partial class MainViewModel : ViewModelBase
 
     private void UpdateTreeForDriveOnly(int driveNumber)
     {
-        ResetTree(dropTocView: true);
+        ResetTree(keepTocView: false); // no TOC given nor needed for drive-only view
 
         var driveItem = TapeTreeItemViewModel.CreateDriveItem(driveNumber, _tapeService.DeviceName);
         TreeItems.Add(driveItem);
@@ -1512,7 +1512,7 @@ public partial class MainViewModel : ViewModelBase
     /// </summary>
     private void UpdateTreeForCalibrationMedia(int driveNumber)
     {
-        ResetTree(dropTocView: true);
+        ResetTree(keepTocView: false); // no TOC given nor needed for calibration media
 
         var calHeader = _tapeService.CalibrationHeader;
 
@@ -1542,8 +1542,7 @@ public partial class MainViewModel : ViewModelBase
             return;
         }
 
-        ResetTree(dropTocView: true);
-        AssertTocQuiet();
+        ResetTree(keepTocView: true); // we'll continue using our TOCView
 
         var toc = _tapeService.TOC;
         if (toc == null)
