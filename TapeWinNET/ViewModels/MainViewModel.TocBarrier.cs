@@ -104,12 +104,34 @@ public partial class MainViewModel
 
         UpdateTreeFromTOC(driveNumber);     // remote-aware
 
-        if (selectedSet is not null && FindSetNode(selectedSet) is { } node)
+        RebuildTreeKeepingSelection(keepSelection: true);
+    }
+
+    /// <summary>The tree node showing <paramref name="set"/>, wherever its index is now; null when it is gone.</summary>
+    private TapeTreeItemViewModel? FindSetNode(TapeSetTOC set)
+        => TreeItems.SelectMany(d => d.Children).SelectMany(t => t.Children)
+            .FirstOrDefault(n => n.ItemType == TreeItemType.BackupSet && ReferenceEquals(n.SetTOC, set));
+
+    /// <summary>
+    /// Rebuilds the tree from the current TOC and puts the selection back: the same backup set (by object — its index
+    ///  may have shifted) or the drive node; otherwise, and always after a volume change, the media node.
+    /// </summary>
+    /// <param name="keepSelection">False: show the media node anyway (e.g. after a backup — the new set is the news).</param>
+    private void RebuildTreeKeepingSelection(bool keepSelection = true)
+    {
+        var selectedKind = _selectedTreeItem?.ItemType;
+        var selectedSet = selectedKind == TreeItemType.BackupSet ? _selectedTreeItem!.SetTOC : null;
+        int? volumeBefore = ShownVolume();
+
+        UpdateTreeFromTOC(_tapeService.DriveNumber);     // remote-aware
+
+        bool sameVolume = volumeBefore is not null && volumeBefore == ShownVolume();
+        if (keepSelection && sameVolume && selectedSet is not null && FindSetNode(selectedSet) is { } node)
         {
             node.IsSelected = true;
             OnTreeItemSelected(node);
         }
-        else if (selectedKind == TreeItemType.Drive && TreeItems.Count > 0)
+        else if (keepSelection && selectedKind == TreeItemType.Drive && TreeItems.Count > 0)
         {
             TreeItems[0].IsSelected = true;
             OnTreeItemSelected(TreeItems[0]);
@@ -118,10 +140,8 @@ public partial class MainViewModel
         {
             SelectMostRecentSet();          // the media node
         }
-    }
 
-    /// <summary>The tree node showing <paramref name="set"/>, wherever its index is now; null when it is gone.</summary>
-    private TapeTreeItemViewModel? FindSetNode(TapeSetTOC set)
-        => TreeItems.SelectMany(d => d.Children).SelectMany(t => t.Children)
-            .FirstOrDefault(n => n.ItemType == TreeItemType.BackupSet && ReferenceEquals(n.SetTOC, set));
+        int? ShownVolume() => TreeItems.FirstOrDefault()?.Children
+            .FirstOrDefault(c => c.ItemType == TreeItemType.Tape)?.VolumeNumber;
+    }
 }

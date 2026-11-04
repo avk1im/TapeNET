@@ -189,9 +189,10 @@ public partial class MainViewModel
                 });
 
             // Refresh tree after backup to keep TOCView in sync with the (possibly modified) TOC.
-            // Refresh might throw if TOC has been spoiled.
+            //  Refresh might throw if TOC has been spoiled.
+            //  Do not keep the selected set -- show the whole media with the new set(s).
             if (!request.EjectWhenDone)
-                try { await ReloadMediaAsync(); } catch { /* ignore */ }
+                try { await ReloadMediaAsync(keepSelection: false); } catch { /* ignore */ }
             else
                 try { await EjectAsync(); } catch { /* ignore */ }
 
@@ -224,8 +225,9 @@ public partial class MainViewModel
             // Catch catastrophic failures not handled by TapeService.ExecuteBackupAsync.
 
             // Refresh even on failure — TOC may have been modified before the error.
-            // Refresh might throw if TOC has been spoiled.
-            try { await ReloadMediaAsync(); } catch { /* ignore */ }
+            //  Refresh might throw if TOC has been spoiled.
+            //  Do not keep the selected set -- show the whole media with the new set(s).
+            try { await ReloadMediaAsync(keepSelection: false); } catch { /* ignore */ }
             LogErr($"Backup failed: {ex.Message}");
             SimpleBox.Show($"Backup failed.\n\n{ex.Message}", "Backup Error",
                 MessageBoxButton.OK, MessageBoxImage.Error);

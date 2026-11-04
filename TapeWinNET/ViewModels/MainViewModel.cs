@@ -116,7 +116,7 @@ public partial class MainViewModel : ViewModelBase
         OpenVirtualDriveCommand = new RelayCommand(ShowOpenVirtualDriveWindow, _ => !IsBusy);
         OpenRecentVirtualDriveCommand = new AsyncRelayCommand(OpenRecentVirtualDriveAsync, _ => !IsBusy);
         SetIoSpeedCommand = new RelayCommand(SetIoSpeed, _ => IsIoSpeedEnabled);
-        RefreshCommand = new AsyncRelayCommand(ReloadMediaAsync, () => !IsBusy && _tapeService.IsDriveOpen);
+        RefreshCommand = new AsyncRelayCommand(() => ReloadMediaAsync(keepSelection: true), () => !IsBusy && _tapeService.IsDriveOpen);
         RereadMediaCommand = new AsyncRelayCommand(RereadMediaAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         EjectCommand = new AsyncRelayCommand(EjectAsync, () => !IsBusy && _tapeService.IsMediaLoaded);
         FormatMediaCommand = new RelayCommand(ShowFormatMediaWindow, _ => !IsBusy && _tapeService.IsMediaLoaded);
@@ -1257,14 +1257,14 @@ public partial class MainViewModel : ViewModelBase
             return;
         }
 
-        await ReloadMediaAsync();
+        await ReloadMediaAsync(keepSelection: false); // service resets the TOC
     }
 
     /// <summary>
     /// Reloads medium content and updates the tree/content pane, both upon user request (F5)
     ///  and after a backup/restore operation completes.
     /// </summary>
-    private async Task ReloadMediaAsync()
+    private async Task ReloadMediaAsync(bool keepSelection = true)
     {
         if (!_tapeService.IsDriveOpen)
             return;
@@ -1275,9 +1275,7 @@ public partial class MainViewModel : ViewModelBase
         //  content still loaded): rebuild the views WITHOUT touching the tape.
         if (_tapeService.TOC is not null)
         {
-            UpdateTreeFromTOC(driveNumber);
-            // select the latest backup set (#0)
-            SelectMostRecentSet();
+            RebuildTreeKeepingSelection(keepSelection);
             return;
         }
 

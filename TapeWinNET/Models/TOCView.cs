@@ -559,8 +559,8 @@ public class TOCView(TapeTOC toc)
     /// Maps from backup set indexes to the lists of checked files for each set.
     /// <para>
     /// A <c>null</c> value means "all files in set" (every file is checked).
-    /// A non-null list contains only the checked files from that set.
-    /// Sets with no checked files (or never accessed) are absent from the dictionary.
+    ///  A non-null list contains only the checked files from that set.
+    ///  Sets with no checked files (or never accessed) are absent from the dictionary.
     /// </para>
     /// </summary>
     /// <remarks>The backup set items must've been generated for this TOCView</remarks>
@@ -573,8 +573,9 @@ public class TOCView(TapeTOC toc)
 
         foreach (var item in backupSetItems)
         {
-            if (item.CheckedFileCount == 0)
-                continue; // skip sets with no checked files
+            // Unchecked in the Restore window: not part of the request, whatever its file selection
+            if (item.IsCheckedForRestore == false || item.CheckedFileCount == 0)
+                continue; // skip this set
 
             if (item.IsCheckedForRestore == true)
             {
