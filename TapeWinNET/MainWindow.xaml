@@ -73,7 +73,7 @@
             <MenuItem Header="_Format..." Command="{Binding FormatMediaCommand}"/>
         </ContextMenu>
 
-        <!-- Context menu: Backup set / Restore actions (shared by TreeView and ListViews) -->
+        <!-- Context menu: Backup set / Restore actions (shared by TreeView and ListViews (except backup set list - s. BackupSetsContextMenu below)) -->
         <ContextMenu x:Key="RestoreContextMenu" x:Shared="False"
                      DataContext="{Binding PlacementTarget.Tag, RelativeSource={RelativeSource Self}}">
             <MenuItem Header="{Binding RestoreCommandText}" Command="{Binding RestoreCommand}"/>
@@ -81,6 +81,16 @@
             <MenuItem Header="{Binding VerifyCommandText}" Command="{Binding VerifyCommand}"/>
             <Separator/>
             <MenuItem Header="Re_name..." Command="{Binding RenameSelectedCommand}"/>
+        </ContextMenu>
+
+        <!-- Context menu: Backup sets list — Rename acts on the highlighted ROW, not on the tree selection (the media) -->
+        <ContextMenu x:Key="BackupSetsContextMenu" x:Shared="False"
+                     DataContext="{Binding PlacementTarget.Tag, RelativeSource={RelativeSource Self}}">
+            <MenuItem Header="{Binding RestoreCommandText}" Command="{Binding RestoreCommand}"/>
+            <MenuItem Header="{Binding ValidateCommandText}" Command="{Binding ValidateCommand}"/>
+            <MenuItem Header="{Binding VerifyCommandText}" Command="{Binding VerifyCommand}"/>
+            <Separator/>
+            <MenuItem Header="Re_name Set..." Command="{Binding RenameBackupSetCommand}" InputGestureText="F2"/>
         </ContextMenu>
 
         <!-- TreeView item style -->
@@ -783,6 +793,7 @@
                                   MouseDoubleClick="BackupSetList_MouseDoubleClick">
                             <ListView.InputBindings>
                                 <KeyBinding Key="Enter" Command="{Binding NavigateToBackupSetCommand}" />
+                                <KeyBinding Key="F2" Command="{Binding RenameBackupSetCommand}" />  <!-- Takes precedence over the window's F2 -->
                             </ListView.InputBindings>
                             <ListView.View>
                                 <GridView>
@@ -923,7 +934,7 @@
                                 </GridView>
                             </ListView.View>
                             <ListView.ContextMenu>
-                                <StaticResource ResourceKey="RestoreContextMenu"/>
+                                <StaticResource ResourceKey="BackupSetsContextMenu"/>
                                     </ListView.ContextMenu>
                                         </ListView>
 

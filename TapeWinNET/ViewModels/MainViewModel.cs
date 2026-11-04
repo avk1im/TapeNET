@@ -126,8 +126,13 @@ public partial class MainViewModel : ViewModelBase
         ImportTOCCommand = new AsyncRelayCommand(ImportTOCAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         NavigateToBackupSetCommand = new RelayCommand(NavigateToSelectedBackupSet, _ => SelectedBackupSet != null);
         UsageBar = new MediaUsageBarPresenter(_tapeService, SelectBackupSetByIndex);
+
         RenameSelectedCommand = new AsyncRelayCommand(RenameSelectedAsync, () => CanRenameSelected);
+        RenameBackupSetCommand = new AsyncRelayCommand(
+            () => _selectedBackupSets is [var set] ? RenameBackupSetAsync(set.SetIndex) : Task.CompletedTask,
+            () => !IsBusy && _tapeService.TOC != null && _selectedBackupSets.Count == 1);
         RenameMediaCommand = new AsyncRelayCommand(RenameMediaAsync, () => CanRenameMedia);
+
         ResetWindowPositionsCommand = new RelayCommand(ResetWindowPositions);
         ExitCommand = new RelayCommand(Exit);
         AboutCommand = new RelayCommand(ShowAbout);
@@ -805,6 +810,8 @@ public partial class MainViewModel : ViewModelBase
     public ICommand NavigateToBackupSetCommand { get; }
 
     public ICommand RenameSelectedCommand { get; }
+    /// <summary>Renames the one highlighted row of the backup sets list (its context menu, F2 there).</summary>
+    public ICommand RenameBackupSetCommand { get; }
     public ICommand RenameMediaCommand { get; }
 
     public ICommand ResetWindowPositionsCommand { get; }
