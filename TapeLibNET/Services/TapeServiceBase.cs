@@ -1815,6 +1815,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             return false;
         }
 
+        if (RefuseOnSeriesToc(what: "rename the media"))
+            return false;
+
         _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
         return await Task.Run(async () =>
         {
