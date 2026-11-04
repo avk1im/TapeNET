@@ -299,7 +299,7 @@ public partial class MainViewModel : ViewModelBase
     public bool IsBusy
     {
         get => _isBusy;
-        set
+        private set
         {
             if (SetProperty(ref _isBusy, value))
             {
@@ -307,10 +307,13 @@ public partial class MainViewModel : ViewModelBase
                 OnPropertyChanged(nameof(IsIoSpeedEnabled));
                 OnPropertyChanged(nameof(IsMediaBrowsingEnabled));
                 CommandManager.InvalidateRequerySuggested();
+                // The service machinery stopped -> rebuild the views if the TOC
+                //  changed meanwhile (MainViewModel.TocBarrier.cs)
+                if (!value && _tocStale)
+                    ScheduleTocRefresh();
             }
         }
     }
-
 
     /// <summary>
     /// True while the TOC is being read from media (shows cancellable overlay).
@@ -1491,9 +1494,7 @@ public partial class MainViewModel : ViewModelBase
 
     private void UpdateTreeForDriveOnly(int driveNumber)
     {
-        TreeItems.Clear();
-        _tocView = null;
-        _currentSetView = null;
+        ResetTree(dropTocView: true);
 
         var driveItem = TapeTreeItemViewModel.CreateDriveItem(driveNumber, _tapeService.DeviceName);
         TreeItems.Add(driveItem);
@@ -1511,9 +1512,7 @@ public partial class MainViewModel : ViewModelBase
     /// </summary>
     private void UpdateTreeForCalibrationMedia(int driveNumber)
     {
-        TreeItems.Clear();
-        _tocView = null;
-        _currentSetView = null;
+        ResetTree(dropTocView: true);
 
         var calHeader = _tapeService.CalibrationHeader;
 
@@ -1543,8 +1542,8 @@ public partial class MainViewModel : ViewModelBase
             return;
         }
 
-        TreeItems.Clear();
-        _currentSetView = null;
+        ResetTree(dropTocView: true);
+        AssertTocQuiet();
 
         var toc = _tapeService.TOC;
         if (toc == null)
@@ -1687,6 +1686,8 @@ public partial class MainViewModel : ViewModelBase
     /// </summary>
     private void LoadMediaInfo()
     {
+        AssertTocQuiet();
+
         PropertyList.Clear();
         BackupSetList.Clear();
         FileList = [];
@@ -1730,6 +1731,8 @@ public partial class MainViewModel : ViewModelBase
     /// <param name="setIndex">The index of the backup set to load.</param>
     private void LoadBackupSetInfo(int setIndex)
     {
+        AssertTocQuiet();
+
         if (_tapeService.TOC is not { } toc || _tocView is null)
             return;
 
@@ -1746,7 +1749,6 @@ public partial class MainViewModel : ViewModelBase
             int altIndex = toc.SetIndexToAlt(setIndex);
             PropertiesHeader = $"Backup Set #{setIndex} | {altIndex} Properties";
 
-            // Also makes setIndex the TOC's current set — the view below relies on that.
             ShowProperties(PropertyList, _tapeService.DescribeSet(setIndex));
 
             // Get or create the BackupSetView (handles incremental file resolution,
@@ -1885,30 +1887,10 @@ public partial class MainViewModel : ViewModelBase
         BusyMessage = "Renaming media...";
         try
         {
-            if (await _tapeService.RenameMediaAsync())
-            {
-                var newName = _tapeService.TOC?.Description ?? string.Empty;
-                // Iterate thru TreeItems to find the tape node and update its display name
-                foreach (var driveNode in TreeItems)
-                {
-                    foreach (var tapeNode in driveNode.Children)
-                    {
-                        if (tapeNode.ItemType == TreeItemType.Tape)
-                        {
-                            tapeNode.DisplayName = newName;
-                            break;
-                        }
-                    }
-                }
-                WindowTitle = $"TapeWin - {newName}";
-                if (_selectedTreeItem?.ItemType == TreeItemType.Tape)
-                    LoadMediaInfo(); // refresh properties pane if media node is selected
-            }
-            else if (_tapeService.LastError is not null)
-            {
+            if (!await _tapeService.RenameMediaAsync() && _tapeService.LastError is not null)
                 SimpleBox.Show($"Failed to rename media.\n\n{_tapeService.LastError}",
                     "Rename Failed", MessageBoxButton.OK, SimpleBox.ImageFailed);
-            }
+            // Success: TocChanged → refreshed when IsBusy drops (MainViewModel.TocBarrier.cs)
         }
         finally
         {
@@ -1926,69 +1908,10 @@ public partial class MainViewModel : ViewModelBase
         BusyMessage = "Renaming backup set...";
         try
         {
-            if (await _tapeService.RenameBackupSetAsync(setIndex))
-            {
-                // Refresh the tree node from the set — its name, and its lock state (a rename unlocks it)
-                if (_tapeService.TOC is { } toc)
-                {
-                    foreach (var setNode in TreeItems.SelectMany(d => d.Children).SelectMany(t => t.Children))
-                        if (setNode.ItemType == TreeItemType.BackupSet && setNode.SetIndex == setIndex)
-                            setNode.RefreshFromSet(toc[setIndex]);
-                }
-
-                if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet && _selectedTreeItem.SetIndex == setIndex)
-                    LoadBackupSetInfo(setIndex);
-                else if (_selectedTreeItem?.ItemType == TreeItemType.Tape)
-                    LoadMediaInfo();
-            }
-            /* // Pre-encryption version (not using RefreshFromSet)
-            if (await _tapeService.RenameBackupSetAsync(setIndex))
-            {
-                var newName = _tapeService.TOC?[setIndex].Description ?? string.Empty;
-                // Update tree node if it is currently selected: "Set #N | -M: description"
-                if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet &&
-                    _selectedTreeItem.SetIndex == setIndex)
-                {
-                    var colonIdx = _selectedTreeItem.DisplayName.IndexOf(':');
-                    _selectedTreeItem.DisplayName = colonIdx >= 0
-                        ? $"{_selectedTreeItem.DisplayName[..colonIdx]}: {newName}"
-                        : newName;
-                    LoadBackupSetInfo(setIndex); // refresh properties pane
-                }
-                else
-                {
-                    // Iterate thru all tree nodes to find and rename the node for this backup set
-                    foreach (var driveNode in TreeItems)
-                    {
-                        foreach (var tapeNode in driveNode.Children)
-                        {
-                            if (tapeNode.ItemType == TreeItemType.Tape)
-                            {
-                                foreach (var setNode in tapeNode.Children)
-                                {
-                                    if (setNode.ItemType == TreeItemType.BackupSet &&
-                                        setNode.SetIndex == setIndex)
-                                    {
-                                        var colonIdx = setNode.DisplayName.IndexOf(':');
-                                        setNode.DisplayName = colonIdx >= 0
-                                            ? $"{setNode.DisplayName[..colonIdx]}: {newName}"
-                                            : newName;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (_selectedTreeItem?.ItemType == TreeItemType.Tape)
-                        LoadMediaInfo(); // refresh backup set table pane if media node is selected
-                }
-            }
-            */
-            else if (_tapeService.LastError is not null)
-            {
+            if (!await _tapeService.RenameBackupSetAsync(setIndex) && _tapeService.LastError is not null)
                 SimpleBox.Show($"Failed to rename backup set.\n\n{_tapeService.LastError}",
                     "Rename Failed", MessageBoxButton.OK, SimpleBox.ImageFailed);
-            }
+            // Success: TocChanged → refreshed when IsBusy drops (MainViewModel.TocBarrier.cs)
         }
         finally
         {
@@ -2051,12 +1974,12 @@ public partial class MainViewModel : ViewModelBase
                 CommandManager.InvalidateRequerySuggested();
             }
 
+            // Never read the TOC here: this runs while the operation holds it (MainViewModel.TocBarrier.cs).
             if (change.HasFlag(ServiceStateChange.TocChanged))
-            {
-                UsageBar.Rebuild();
-                NotifyCommandTextChanged();     // unlock / lock changes counts and locked figures
-                                                //  (NotifyCommandTextChanged already invalidates the commands.)
-            }
+                OnTocChangedNotification();
+
+            if (change.HasFlag(ServiceStateChange.OperationEnded) && _tocStale && !IsBusy)
+                ScheduleTocRefresh();
 
             if (change.HasFlag(ServiceStateChange.TOCSaveStarted))
                 IsAbortBackupEnabled = false;

@@ -1035,48 +1035,34 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     }
     private int m_currSetInternal = 0;
 
-    private int FirstSetInternalOnVolume // internal index of the first set on the current volume
+    /// <summary>
+    /// Internal index of the oldest set on the current <see cref="Volume"/> — by volume, never by the cursor. Volumes are
+    ///  non-decreasing along the TOC. No set on this volume: the empty range [k, k−1] where k is where it would start.
+    /// </summary>
+    private int FirstSetInternalOnVolume
     {
         get
         {
-            if (Count == 0)
-                return 0;
-
-            // shortcut for Volume #1
-            if (Volume == 1)
-                return 0;
-
-            int firstOnVolume = m_currSetInternal;
-            for (int i = m_currSetInternal; i >= 0; i--)
-            {
-                if (m_setTOCs[i].Volume < Volume)
-                    return firstOnVolume;
-                firstOnVolume = i;
-            }
-            return 0;
+            for (int i = 0; i < m_setTOCs.Count; i++)
+                if (m_setTOCs[i].Volume >= Volume)
+                    return i;
+            return m_setTOCs.Count;
         }
     }
-    private int LastSetInternalOnVolume // internal index of the last set on the current volume
+
+    /// <summary>Internal index of the newest set on the current <see cref="Volume"/>;
+    ///  see <see cref="FirstSetInternalOnVolume"/>.</summary>
+    private int LastSetInternalOnVolume
     {
         get
         {
-            if (Count == 0)
-                return 0;
-
-            // shortcut if the last set is on current Volume
-            if (this[Count - 1].Volume == Volume)
-                return Count - 1;
-
-            int lastOnVolume = m_currSetInternal;
-            for (int i = m_currSetInternal; i < Count; i++)
-            {
-                if (m_setTOCs[i].Volume > Volume)
-                    return lastOnVolume;
-                lastOnVolume = i;
-            }
-            return Count - 1;
+            for (int i = m_setTOCs.Count - 1; i >= 0; i--)
+                if (m_setTOCs[i].Volume <= Volume)
+                    return m_setTOCs[i].Volume == Volume ? i : FirstSetInternalOnVolume - 1;
+            return -1;
         }
     }
+
     public int FirstSetOnVolume => InternalToSetIndex(FirstSetInternalOnVolume);
     public int LastSetOnVolume => InternalToSetIndex(LastSetInternalOnVolume);
 
@@ -1113,12 +1099,39 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
 
     public bool IsCurrentSetOnVolume => CurrentSetTOC.Volume == Volume;
     public bool IsCurrentSetLast => CurrentSetIndex == MaxSetIndex;
-    public bool IsCurrentSetContOnNextVolume => IsCurrentSetLast ? ContinuedOnNextVolume :
-        this[CurrentSetIndex + 1].ContinuedFromPrevVolume;
-    public bool IsCurrentSetContFromPrevVolume => CurrentSetTOC.ContinuedFromPrevVolume;
-    public bool IsCurrentSetContFromPrevVolumeInc => LastNonIncSetInternal < FirstSetInternalOnVolume;
 
-    internal int CurrentSetIndexOnVolume => m_currSetInternal - FirstSetInternalOnVolume;
+    /// <summary>Set <paramref name="setIndex"/> (any index form) continues a set of the previous volume, directly.</summary>
+    public bool IsSetContFromPrevVolume(int setIndex) => m_setTOCs[SetIndexToInternal(setIndex)].ContinuedFromPrevVolume;
+
+    /// <summary>
+    /// Set <paramref name="setIndex"/> belongs to an incremental chain that started on an earlier volume than its own.
+    ///  Meaningful for an unlocked set (a locked one is its own chain start: always false).
+    /// </summary>
+    public bool IsSetContFromPrevVolumeInc(int setIndex)
+    {
+        int i = SetIndexToInternal(setIndex);
+        return m_setTOCs[ChainStartInternal(i)].Volume < m_setTOCs[i].Volume;
+    }
+
+    /// <summary>Set <paramref name="setIndex"/> continues on the next volume.</summary>
+    public bool IsSetContOnNextVolume(int setIndex)
+    {
+        int i = SetIndexToInternal(setIndex);
+        return i == m_setTOCs.Count - 1 ? ContinuedOnNextVolume : m_setTOCs[i + 1].ContinuedFromPrevVolume;
+    }
+
+    // The CURRENT set — the agent's view (its cursor sits on the current volume):
+    public bool IsCurrentSetContOnNextVolume => IsSetContOnNextVolume(CurrentSetIndex);
+    public bool IsCurrentSetContFromPrevVolume => IsSetContFromPrevVolume(CurrentSetIndex);
+    public bool IsCurrentSetContFromPrevVolumeInc => IsSetContFromPrevVolumeInc(CurrentSetIndex);
+
+    /// <summary>
+    /// 0-based index of the current set within ITS OWN volume — the value its set header carries
+    ///  (<see cref="TapeSetHeader.VolumeSetIndex"/>), wherever the cursor and the mounted <see cref="Volume"/> are.
+    /// </summary>
+    internal int CurrentSetIndexOnVolume
+        => m_setTOCs.Count == 0 ? 0
+            : m_currSetInternal - FirstSetInternalOfVolume(m_setTOCs[m_currSetInternal].Volume);
 
     public TapeSetTOC this[int setIndex]
     {
@@ -1322,35 +1335,31 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     #region *** File selection methods ***
 
     /// <summary>
-    /// Gets the internal index of the most recent non-incremental or locked tape set, walking back through any
-    /// ContinuedFromPrevVolume chain so a multi-volume full backup is fully included.Find the latest non-incremental set -- returns internal index.
+    /// Internal index of the set the incremental chain ending at internal index <paramref name="setInternal"/> starts at:
+    ///  the latest set at or below it that is non-incremental or LOCKED, then back through its whole
+    ///  <see cref="TapeSetTOC.ContinuedFromPrevVolume"/> chain, so a full backup spanning 3+ volumes is fully included.
     /// </summary>
     /// <remarks>
-    ///  Walks back through the entire <see cref="TapeSetTOC.ContinuedFromPrevVolume"/> chain so that
-    ///  e.g. a full backup spanning 3+ volumes is fully included.
-    ///  A LOCKED set counts as its own chain start (Design-Encryption §6.2): its <see cref="TapeSetTOC.Incremental"/>
-    ///  flag is hidden, and the key ring unlocks whole chains at once (E13), so a live chain is never split here.
-    ///  Never throws — <see langword="this"/> TOC is the input.
+    ///  A LOCKED set counts as its own chain start (Design-Encryption §6.2): its <see cref="TapeSetTOC.Incremental"/> flag
+    ///  is hidden, and the key ring unlocks whole chains at once (E13), so a live chain is never split here. Never throws.
     /// </remarks>
-    private int LastNonIncSetInternal
+    private int ChainStartInternal(int setInternal)
     {
-        get
+        for (int i = setInternal; i >= 0; i--)
         {
-            // check starting from current down to oldest
-            for (int i = m_currSetInternal; i >= 0; i--)
+            TapeSetTOC set = m_setTOCs[i];
+            if (set.IsLocked || !set.Incremental)
             {
-                TapeSetTOC set = m_setTOCs[i];
-                if (set.IsLocked || !set.Incremental)
-                {
-                    // Walk back through the entire continuation chain (may span multiple volumes)
-                    while (i > 0 && m_setTOCs[i].ContinuedFromPrevVolume)
-                        i--;
-                    return i;
-                }
+                while (i > 0 && m_setTOCs[i].ContinuedFromPrevVolume)
+                    i--;
+                return i;
             }
-            return 0; // if all sets are marked incremental, use the oldest set
         }
+        return 0; // all sets incremental: from the oldest
     }
+
+    /// <summary>The chain start of the CURRENT set — <see cref="ChainStartInternal"/> at the cursor.</summary>
+    private int LastNonIncSetInternal => ChainStartInternal(m_currSetInternal);
 
     /// <summary>
     /// Whether the current set is incremental and a set of its chain — down to its base — is LOCKED. The up-to-date
@@ -1635,6 +1644,24 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
         finally
         {
             m_currSetInternal = savedCurrSet; // restore — this method is side-effect-free
+        }
+    }
+
+    /// <summary>
+    /// The files of set <paramref name="setIndex"/> — with <paramref name="incremental"/>, an incremental set's whole
+    ///  chain, newest version of each name. Leaves <see cref="CurrentSetIndex"/> as it was. Throws on a locked set.
+    /// </summary>
+    public List<TapeFileInfo> GetSetFiles(int setIndex, bool incremental)
+    {
+        int saved = m_currSetInternal;
+        try
+        {
+            CurrentSetIndex = setIndex;
+            return SelectedFilesToList(SelectFiles(incremental, filter: null));
+        }
+        finally
+        {
+            m_currSetInternal = saved;
         }
     }
 

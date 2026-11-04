@@ -171,6 +171,12 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     public string? TOCFilePath { get; protected set; }
 
     /// <summary>
+    /// Whether a service operation holds the TOC right now.
+    ///  Lock-free; a host's UI must not read the TOC while it is true.
+    /// </summary>
+    public bool IsOperationRunning => _operationLock.CurrentCount == 0;
+
+    /// <summary>
     /// The running <see cref="TapeAgentBase"/> during an active operation; null otherwise.
     /// </summary>
     public TapeAgentBase? Agent => _agent;
@@ -1651,8 +1657,10 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
     /// <summary>
     /// Imports a TOC from a file
-    /// Use when the on-tape TOC is missing or corrupt and a TOC file is available.
-    /// Only requires the drive to be open (media need not be loaded).
+    ///  Use when the on-tape TOC is missing or corrupt and a TOC file is available.
+    /// <para>
+    /// The media must be loaded, since the agent will need to create a navigator -- only possible with media.
+    /// </para>
     /// </summary>
     public Task<bool> ImportTOCFromFileAsync(string filePath)
     {
@@ -1808,6 +1816,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 }
 
                 LogOk($"Media renamed to: {newName}");
+                _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
                 return true;
             }
             catch (Exception ex)
@@ -1845,84 +1854,6 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
         return await RenameMediaAsync(newName);
     }
-
-    /* Now in TapeServiceBase.Encryption.cs, since it must unlock the set first if encrypted.
-    /// <summary>
-    /// Renames a backup set by updating the set TOC description and writing the TOC
-    ///  back to tape using <see cref="SaveTocCore"/>. A legacy TOC is upgraded to 2.1
-    ///  by that write.
-    /// </summary>
-    public async Task<bool> RenameBackupSetAsync(int setIndex, string newName)
-    {
-        if (_toc is null || _drive is null)
-        {
-            LastError = "No media loaded";
-            return false;
-        }
-
-        _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
-        return await Task.Run(async () =>
-        {
-            await _operationLock.WaitAsync().ConfigureAwait(false);
-            try
-            {
-                var setTOC = _toc[setIndex];
-                LogInfo($"Renaming backup set #{setIndex} to: {newName}");
-                setTOC.Description = newName;
-
-                _agent?.Dispose();
-                _agent = new TapeAgentBase(_drive, _toc);
-                var tocResult = SaveTocCore(_agent);
-                ReportTocAnomalyOutcome(_agent);
-                if (!tocResult)
-                {
-                    LastError = tocResult.ErrorMessage;
-                    LogErr($"Failed to write TOC to media: {tocResult.ErrorMessage}");
-                    return false;
-                }
-
-                LogOk($"Backup set #{setIndex} renamed to: {newName}");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                LastError = ex.Message;
-                LogErr($"Exception renaming backup set: {ex.Message}");
-                return false;
-            }
-            finally
-            {
-                _agent?.Dispose();
-                _agent = null;
-                _operationLock.Release();
-                _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
-            }
-        });
-    }
-
-    /// <summary>
-    /// Asks the host for a new backup-set description
-    ///  <see cref="ITapeServiceHost.OnAskBackupSetName"/>, then renames the set if confirmed.
-    /// Returns <see langword="false"/> when the user cancelled or the rename failed.
-    /// </summary>
-    /// <param name="setIndex">Standard (1-based) index of the set to rename.</param>
-    public async Task<bool> RenameBackupSetAsync(int setIndex)
-    {
-        if (_toc is null)
-        {
-            LastError = "No media loaded";
-            return false;
-        }
-
-        var setTOC = _toc[setIndex];
-        int altIndex = _toc.SetIndexToAlt(setIndex);
-        var newName = _host.OnAskBackupSetName(setIndex, altIndex, setTOC.Description ?? string.Empty);
-        if (newName is null || newName == setTOC.Description)
-            return false;
-
-        return await RenameBackupSetAsync(setIndex, newName);
-    }
-    */
 
     #endregion // TOC operations
 

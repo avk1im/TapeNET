@@ -203,6 +203,10 @@ public class TapeTreeItemViewModel : ViewModelBase
     public TapeTreeItemViewModel? Parent { get; set; }
 
     // Convenience properties for specific item types
+
+    /// <summary>The set a backup-set node shows — to find it again after a rebuild, whatever its index now.</summary>
+    public TapeSetTOC? SetTOC { get; private set; }
+    
     public int? SetIndex => ItemType == TreeItemType.BackupSet ? Tag : null;
     public int? VolumeNumber => ItemType == TreeItemType.Tape ? Tag : null;
 
@@ -298,6 +302,7 @@ public class TapeTreeItemViewModel : ViewModelBase
     /// </summary>
     public void RefreshFromSet(TapeSetTOC setTOC)
     {
+        SetTOC = setTOC;
         IsEncrypted = setTOC.IsEncrypted;
         IsLocked = setTOC.IsLocked;
         string description = setTOC.IsLocked ? $"\U0001F512 {setTOC.DisplayName}"

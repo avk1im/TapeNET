@@ -10,14 +10,14 @@ namespace TapeWinNET.Models;
 
 
 /// <summary>
-/// Per-backup-set snapshot view of the file content. Encapsulates the resolved
-/// source file list (flat or incremental), the <see cref="FilteredFileList"/> for
-/// filtering and checked state, and the <see cref="FileListItem"/> binding proxies.
+/// A copy of the resolved file list taken when the view was created. Encapsulates
+///  this copy (flat or incremental), the <see cref="FilteredFileList"/> for
+///  filtering and checked state, and the <see cref="FileListItem"/> binding proxies.
 /// <para>
 /// Created lazily by <see cref="TOCView.GetOrCreate"/> on first navigation to a
-/// set, then cached for reuse across tree navigation. Invalidated when
-/// <see cref="IsIncrementalView"/> no longer matches the current
-/// <c>ShowIncrementalSets</c> setting.
+///  set, then cached for reuse across tree navigation. Invalidated when
+///  <see cref="IsIncrementalView"/> no longer matches the current
+///  <c>ShowIncrementalSets</c> setting.
 /// </para>
 /// </summary>
 public class BackupSetView(int setIndex, bool isIncrementalView,
@@ -235,22 +235,11 @@ public class TOCView(TapeTOC toc)
             return existing;
 
         // Resolve source files
-        IReadOnlyList<TapeFileInfo> sourceFiles;
-        if (needsIncremental)
-        {
-            // Encryption note: the chain walk for needsIncremental stays safe:
-            //  TapeTOC.SelectFiles() treats a locked set as its own chain start,
-            //  so an unlocked incremental never enumerates a locked base.
-            _toc.CurrentSetIndex = setIndex;
-            var filesBySets = _toc.SelectFiles(incremental: true, filter: null);
-            sourceFiles = _toc.SelectedFilesToList(filesBySets);
-        }
-        else
-        {
-            // notice for non-incremental we intentionally do not want multi-volume resolution,
-            //  therefore we don't call _toc.SelectFiles(incremental: false, filter: null)
-            sourceFiles = setTOC;
-        }
+        //  A COPY of the list: Lock() empties the live set's list, and a view must not change under the user.
+        //  Non-incremental: the set's own files only (no multi-volume resolution, as before).
+        IReadOnlyList<TapeFileInfo> sourceFiles = needsIncremental
+            ? _toc.GetSetFiles(setIndex, incremental: true)
+            : [.. setTOC];
 
         var view = new BackupSetView(setIndex, needsIncremental, sourceFiles, setTOC);
 

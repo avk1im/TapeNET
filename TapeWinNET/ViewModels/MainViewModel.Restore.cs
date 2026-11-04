@@ -139,37 +139,15 @@ public partial class MainViewModel
 
     private RestoreSelection _selection = RestoreSelection.Empty;
 
-    /// <summary>Whether <paramref name="setIndex"/> exists in <paramref name="toc"/> — a safety belt against stale indexes.</summary>
-    private static bool IsValidSetIndex(TapeTOC toc, int setIndex) => setIndex >= 1 && setIndex <= toc.Count;
-
     /// <summary>
-    /// Whether <paramref name="item"/> still shows the set the TOC holds at its index — not deleted, not replaced by
-    ///  another set (after a delete and a new backup the same index names a different set).
+    /// Type 1, else 2a, else 2b, else 3 — see <see cref="RestoreSelectionKind"/>. Reads the TOC: call only while it is quiet
+    ///  (the views are built from the current TOC, so every index here is valid).
     /// </summary>
-    private static bool IsLive(TapeTOC toc, BackupSetListItem item)
-        => IsValidSetIndex(toc, item.SetIndex) && ReferenceEquals(toc[item.SetIndex], item.SetTOC);
-
-    /// <summary>
-    /// Drops highlighted rows whose set is gone or replaced. The TOC can change before the views are rebuilt — a
-    ///  <see cref="ServiceStateChange.TocChanged"/> arrives while the delete or backup is still awaited — so the
-    ///  selection must never outlive its sets. Returns whether anything was dropped.
-    /// </summary>
-    private bool PruneStaleSelection(TapeTOC toc)
-    {
-        if (_selectedBackupSets.All(s => IsLive(toc, s)))
-            return false;
-        _selectedBackupSets = [.. _selectedBackupSets.Where(s => IsLive(toc, s))];
-        return true;
-    }
-
-    /// <summary>Type 1, else 2a, else 2b, else 3 — see <see cref="RestoreSelectionKind"/>.</summary>
     private RestoreSelection ComputeRestoreSelection()
     {
+        AssertTocQuiet();
         if (_tapeService.TOC is not { Count: > 0 } toc || _tocView is null)
             return RestoreSelection.Empty;
-
-        if (PruneStaleSelection(toc))
-            UpdateUsageBarHighlight();
 
         var checkedSel = _tocView.GetCheckedSummary();
         if (checkedSel.SetIndexes.Count > 0)
@@ -177,7 +155,7 @@ public partial class MainViewModel
                 checkedSel.Files, checkedSel.Bytes, checkedSel.LockedSets);
 
         // A tree node outlives its set until the tree is rebuilt: range-checked, else ignored
-        if (_selectedTreeItem is { ItemType: TreeItemType.BackupSet, SetIndex: int treeSet } && IsValidSetIndex(toc, treeSet))
+        if (_selectedTreeItem is { ItemType: TreeItemType.BackupSet, SetIndex: int treeSet })
             return WholeSets(RestoreSelectionKind.TreeSet, [treeSet]);
 
         if (_selectedBackupSets.Count > 0)
@@ -192,7 +170,7 @@ public partial class MainViewModel
             long bytes = 0;
             foreach (int i in sets)
             {
-                var set = toc[i];       // valid: pruned / range-checked above
+                var set = toc[i];
                 if (set.IsLocked)
                 {
                     locked++;
@@ -300,6 +278,9 @@ public partial class MainViewModel
     /// </summary>
     private void StartRestore(RestoreMode mode, string? targetDirectory)
     {
+        if (_tocStale)
+            RefreshAfterTocChange();            // a TOC change not yet shown: rebuild before acting
+
         var toc = _tapeService.TOC;
         if (toc == null || _tocView == null)
             return;
@@ -381,9 +362,6 @@ public partial class MainViewModel
 
         foreach (var idx in setIndexes)
         {
-            if (!IsValidSetIndex(toc, idx))
-                continue; // safety belt: a selection computed before the TOC changed might've gone stale!
-
             var setTOC = toc[idx];
             var altIdx = toc.SetIndexToAlt(idx);
             items.Add(new BackupSetListItem(setTOC, idx, altIdx, setTOC.Volume == toc.Volume)
@@ -648,7 +626,10 @@ public partial class MainViewModel
     /// </summary>
     private void NotifyCommandTextChanged()
     {
-        _selection = ComputeRestoreSelection();
+        if (IsTocQuiet)
+            _selection = ComputeRestoreSelection();
+        // else keep the last selection: the refresh recomputes it
+
         OnPropertyChanged(nameof(RestoreCommandText));
         OnPropertyChanged(nameof(ValidateCommandText));
         OnPropertyChanged(nameof(VerifyCommandText));

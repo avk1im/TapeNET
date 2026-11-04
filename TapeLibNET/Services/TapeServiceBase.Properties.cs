@@ -53,9 +53,8 @@ public partial class TapeServiceBase
     //   the app's business: the List hooks log each property as a sub-entry, the WPF view model adds each one as a
     //   PropertyItem. A new fact is added here and appears in both apps.
     //
-    //  Pure reads of in-memory state, no tape I/O and no lock — callable from the UI thread between operations,
-    //   exactly as the view model read the same properties before. DescribeSet moves TOC.CurrentSetIndex, as the
-    //   callers already did, because the volume-continuation flags are relative to the current set.
+    //  Pure reads of in-memory state, no tape I/O and no lock — callable from the UI thread between operations.
+    //   None of them moves TOC.CurrentSetIndex.
 
     /// <summary>The drive model ("vendor product rev X"), or empty when the drive reports none.</summary>
     public string DeviceModel
@@ -149,25 +148,26 @@ public partial class TapeServiceBase
         return props;
     }
 
-    /// <summary>One backup set. Makes it the TOC's current set (the continuation flags are relative to it).</summary>
+    /// <summary>One backup set. Leaves the TOC's current set as it is.</summary>
     /// <remarks>A locked set shows its plain stub only (Design-Encryption §10.6) — never a hidden value.</remarks>
-    /// <param name="setIndex">Standard (1-based) set index.</param>
+    /// <param name="setIndex">Standard (1-based) set index; out of range: no properties.</param>
     public IReadOnlyList<ServiceProperty> DescribeSet(int setIndex)
     {
-        if (_toc is not TapeTOC toc)
+        if (_toc is not TapeTOC toc || setIndex < 1 || setIndex > toc.Count)
             return [];
-        toc.CurrentSetIndex = setIndex;
-        var set = toc.CurrentSetTOC;
+
+        var set = toc[setIndex];
         uint blockSize = _drive?.DefaultBlockSize ?? 0;
 
         ServiceProperty encryption = new("Encryption",
             EncryptionPreset.DisplayName(set.Encryption) + (set.IsLocked ? " — locked" : string.Empty),
             set.IsLocked ? ServiceReportLevel.Warning : ServiceReportLevel.None);
+
         ServiceProperty continuedFrom = new("Continued from Previous Volume",
-            toc.IsCurrentSetContFromPrevVolume ? "Yes, directly"
-            : !set.IsLocked && toc.IsCurrentSetContFromPrevVolumeInc ? "Yes, incrementally"
+            toc.IsSetContFromPrevVolume(setIndex) ? "Yes, directly"
+            : !set.IsLocked && toc.IsSetContFromPrevVolumeInc(setIndex) ? "Yes, incrementally"
             : "No");
-        ServiceProperty continuedOn = new("Continued on Next Volume", YesNo(toc.IsCurrentSetContOnNextVolume));
+        ServiceProperty continuedOn = new("Continued on Next Volume", YesNo(toc.IsSetContOnNextVolume(setIndex)));
 
         long totalFileSizeOnTape = set.ComputeTotalFileSizeOnTape(blockSize);
 

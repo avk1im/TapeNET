@@ -132,21 +132,13 @@ public class BackupViewModel : ViewModelBase
         Action onCancel)
     {
         // Source file generator from an existing backup set. Used by the "Add from set" combo box via BackupSourceView.
-        //  We define it here to ensure it runs on the UI thread, since it may update the TOC's CurrentSetIndex.
+        //  We define it here to ensure it runs on the UI thread.
         List<TapeFileInfo> GetSourceFilesFromSet(int setIndex)
         {
             var toc = _tapeService.TOC;
-            if (toc is null || setIndex < 1 || setIndex > toc.Count)
-                return [];
-
-            if (toc[setIndex].IsLocked)
-                return [];      // hidden files — the [+] is disabled for a locked set (Design-Encryption §11.1.4)
-
-            toc.CurrentSetIndex = setIndex;
-            // if the source set is incremental, then we list all files from the incremental chain
-            var filesBySets = toc.SelectFiles(incremental: true, filter: null);
-            var sourceFiles = toc.SelectedFilesToList(filesBySets);
-            return sourceFiles;
+            if (toc is null || setIndex < 1 || setIndex > toc.Count || toc[setIndex].IsLocked)
+                return [];      // locked: hidden files — the [+] is disabled for it (Design-Encryption §11.1.4)
+            return toc.GetSetFiles(setIndex, incremental: true);   // an incremental set lists its whole chain
         }
 
         _tapeService = tapeService;

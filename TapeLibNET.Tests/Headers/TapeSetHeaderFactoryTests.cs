@@ -130,6 +130,7 @@ public class TapeSetHeaderFactoryTests
     /// </summary>
     [Theory]
     [InlineData(1)]
+    [InlineData(2)] // set 2, the second set on volume 1, expected on-volume index 1
     [InlineData(3)]
     [InlineData(5)]
     public void CurrentSetHeader_AgreesWithCurrentSetIndexOnVolume(int setIndex)
