@@ -71,6 +71,15 @@ public enum TOCSource
 
     /// <summary>TOC recovered during media scan / repair.</summary>
     Recovered,
+
+    /// <summary>
+    /// The series TOC a multi-volume operation kept, while the drive holds another cartridge
+    ///  — not that volume's own TOC.
+    /// <para>
+    /// Read-only: writes refuse until the loaded volume's TOC is read (Reread Media).
+    /// </para>
+    /// </summary>
+    Series,
 }
 
 // ── TapeServiceBase ───────────────────────────────────────────────────────────
@@ -1081,6 +1090,17 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// </summary>
     protected virtual void OnImportTOCExtra() { }
 
+    /// <summary>A write that would put the held series TOC onto the loaded cartridge —
+    ///  refused (<see cref="TOCSource.Series"/>).</summary>
+    protected bool RefuseOnSeriesToc(string what)
+    {
+        if (TOCIsFrom != TOCSource.Series)
+            return false;
+        LastError = $"Cannot {what}: the table of contents shown is the series' — reread the loaded volume's own first";
+        LogErr(LastError);
+        return true;
+    }
+
     /// <summary>
     /// Signals the in-progress TOC load to abort cooperatively.
     /// Intentionally lock-free: <see cref="RestoreTOCAsync"/> holds the lock for its entire
@@ -1847,6 +1867,8 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             LastError = "No media loaded";
             return false;
         }
+
+        if (RefuseOnSeriesToc(what: "rename the media")) return false;
 
         var newName = _host.OnAskMediaName(_toc.Description ?? string.Empty);
         if (newName is null || newName == _toc.Description)

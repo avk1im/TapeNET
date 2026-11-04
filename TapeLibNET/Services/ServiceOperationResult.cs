@@ -201,6 +201,18 @@ public sealed record RestoreResult : FileOperationResult
     ///  Their files are unknown and appear in no file counter.
     /// </summary>
     public int SetsLocked { get; init; }
+
+    /// <summary>A volume swap took place during the operation.</summary>
+    public bool MediaSwapped { get; init; }
+
+    /// <summary>The volume number of the cartridge in the drive at the end, by its media header; null when unknown or empty.</summary>
+    public int? VolumeInDrive { get; init; }
+
+    /// <summary>
+    /// The TOC held at the end describes the cartridge in the drive — no swap, or the swaps returned to the volume the
+    ///  operation started on. False: <see cref="TapeServiceBase.TOCIsFrom"/> is <see cref="TOCSource.Series"/>.
+    /// </summary>
+    public bool TocDescribesDrive { get; init; } = true;
 }
 
 // ── Calibrate ────────────────────────────────────────────────────────────────

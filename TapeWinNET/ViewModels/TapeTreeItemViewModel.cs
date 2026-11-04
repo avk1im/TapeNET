@@ -231,7 +231,7 @@ public class TapeTreeItemViewModel : ViewModelBase
     }
 
     public static TapeTreeItemViewModel CreateTapeItem(TapeTOC toc, TapeTreeItemViewModel parent,
-        string? tocFileName = null, bool isInMemory = false, bool tocRecovered = false)
+        string? tocFileName = null, bool isInMemory = false, bool tocRecovered = false, bool tocSeries = false)
     {
         bool fromFile = tocFileName != null;
         string baseName = string.IsNullOrEmpty(toc.Description)
@@ -244,6 +244,8 @@ public class TapeTreeItemViewModel : ViewModelBase
             displayName = $"{baseName}  ⚠ TOC: {tocFileName}";
         else if (tocRecovered)
             displayName = $"{baseName}  ⚠ [recovered TOC]";
+        else if (tocSeries)
+            displayName = $"{baseName}  ⚠ [series TOC — reread to edit]";
         else if (isInMemory)
             displayName = $"{baseName}  ℹ In-memory";
 
@@ -255,7 +257,7 @@ public class TapeTreeItemViewModel : ViewModelBase
             Tag = toc.Volume,
             Parent = parent,
             IsExpanded = true,
-            IsTOCImported = fromFile || tocRecovered, // a recovered TOC gets the same warning foreground
+            IsTOCImported = fromFile || tocRecovered || tocSeries, // a recovered TOC gets the same warning foreground
             IsInMemory = isInMemory
         };
 

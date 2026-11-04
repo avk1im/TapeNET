@@ -147,6 +147,11 @@ public partial class TapeServiceBase
                 return MakeResult(failed: true,
                     diagnosis: TapeResult.Fail((uint)Windows.Win32.Foundation.WIN32_ERROR.ERROR_INVALID_STATE, LastError));
             }
+
+            if (request.AppendMode && RefuseOnSeriesToc(what: "append"))
+                return MakeResult(failed: true,
+                    diagnosis: TapeResult.Fail((uint)Windows.Win32.Foundation.WIN32_ERROR.ERROR_INVALID_STATE, LastError!));
+
             bool append = request.AppendMode;
 
             // --- TOC preparation ---

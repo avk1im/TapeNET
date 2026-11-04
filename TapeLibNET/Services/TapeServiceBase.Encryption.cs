@@ -665,6 +665,8 @@ public partial class TapeServiceBase
             return false;
         }
 
+        if (RefuseOnSeriesToc(what: "rename the backup set")) return false;
+
         _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
         return await Task.Run(async () =>
         {
@@ -815,6 +817,9 @@ public partial class TapeServiceBase
             LastError = "No media loaded";
             return false;
         }
+
+        if (RefuseOnSeriesToc(what: "rename the backup set")) return false;
+
         if (_toc[setIndex].IsLocked && !await UnlockSetsAsync([setIndex]))
             return false;
         var setTOC = _toc[setIndex];

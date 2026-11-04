@@ -737,6 +737,19 @@ public partial class MainViewModel
                         $"{modeName} Complete", MessageBoxButton.OK, SimpleBox.ImageComplete);
                 }
             }
+
+            // A swap left the series TOC held while the drive holds another cartridge (TOCSource.Series)
+            if (!request.EjectWhenDone && operationResult is { TocDescribesDrive: false } && _tapeService.IsMediaLoaded)
+            {
+                string inDrive = operationResult.VolumeInDrive is int v
+                    ? $"The cartridge in the drive is volume #{v}"
+                    : "The cartridge in the drive is not identified";
+                if (SimpleBox.Show(
+                        $"{inDrive}; the view shows the series' table of contents.\n\n" +
+                        "Read the loaded cartridge's table of contents now? Until then, backup, delete and rename are unavailable.",
+                        $"{modeName} — Volume Changed", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+                    await RereadMediaAsync();
+            }
         }
         catch (Exception ex)
         {

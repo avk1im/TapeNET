@@ -1571,7 +1571,8 @@ public partial class MainViewModel : ViewModelBase
             : null;
         var tapeItem = TapeTreeItemViewModel.CreateTapeItem(toc, driveItem, tocFileName,
             isInMemory: _tapeService.IsInMemoryDrive,
-            tocRecovered: _tapeService.TOCIsFrom is TOCSource.Recovered);
+            tocRecovered: _tapeService.TOCIsFrom is TOCSource.Recovered,
+            tocSeries: _tapeService.TOCIsFrom is TOCSource.Series);
         driveItem.Children.Add(tapeItem);
 
         // Add backup sets (from latest to oldest for consistency with alt index display)
@@ -1596,6 +1597,8 @@ public partial class MainViewModel : ViewModelBase
 
         if (_tapeService.TOCIsFrom is TOCSource.Recovered)
             StatusMessage += " (using recovered TOC)";
+        else if (_tapeService.TOCIsFrom is TOCSource.Series)
+            StatusMessage += " (series TOC — Reread TOC to edit)";
     }
 
     private void SelectMostRecentSet()

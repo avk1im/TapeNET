@@ -275,6 +275,9 @@ public partial class TapeServiceBase
             long dataElapsedUs = 0;
             long dataIoElapsedUs = 0;
 
+            int startVolume = toc.Volume;       // the volume whose own TOC we hold
+            bool mediaSwapped = false;
+
             // ── Agent invocation ────────────────────────────────
             _drive.IoTimeCounterUs = 0; // reset I/O time counter for this volume
             dataTimer.Start();
@@ -348,6 +351,7 @@ public partial class TapeServiceBase
                         throw new InvalidOperationException($"Couldn't eject media: {_drive.LastErrorMessage}");
 
                     LogOk($"Volume #{toc.Volume} ejected");
+                    mediaSwapped = true;
 
                     // Step 3: Ask user to insert the required volume
                     if (!_host.OnInsertMediaConfirm(volumeNeeded, request.Mode))
@@ -425,6 +429,27 @@ public partial class TapeServiceBase
             } // multi-volume continuation while-loop
             // ─────────────────────────────────────────────────────────────────
 
+            // ── Find out what volume is in drive and if the TOC matches ────────
+
+            // Which cartridge is in the drive, and does the held TOC still describe it? After a swap the agent left the
+            //  series TOC in place with TOC.Volume moved along — the loaded volume's own TOC it is not, unless the swaps
+            //  came back to the start volume (identified by its header).
+            int? volumeInDrive = _drive.IsMediaLoaded && LoadedMediaHeader is { } h && h.MediaId == toc.MediaId
+                ? h.Volume : null;
+            bool tocDescribesDrive = !mediaSwapped || volumeInDrive == startVolume;
+            if (!tocDescribesDrive)
+            {
+                TOCIsFrom = TOCSource.Series;
+                TOCFilePath = null;
+                LogInfo(volumeInDrive is int v
+                    ? $"Volume #{v} remains in the drive; the table of contents held is the series' (volume #{startVolume})"
+                    : _drive.IsMediaLoaded
+                        ? $"An unidentified cartridge remains in the drive; the table of contents held is the series' (volume #{startVolume})"
+                        : $"The drive is empty; the table of contents held is the series' (volume #{startVolume})");
+            }
+
+            // ── Build the result ────────────────────────────────
+
             var result = progressHandler.GenerateResult() with
             {
                 Diagnosis = agentResult,
@@ -436,6 +461,11 @@ public partial class TapeServiceBase
                 TocStats = agent.Statistics.TocStats,
                 TocAnomalies = [.. agent.TocAnomalies],
                 SetsLocked = lockedSets,
+
+                // What volume is in drive and if the TOC matches
+                MediaSwapped = mediaSwapped,
+                VolumeInDrive = volumeInDrive,
+                TocDescribesDrive = tocDescribesDrive,
             };
 
             // Ended on a volume that could not be used: no file counter shows it (nothing of that volume was

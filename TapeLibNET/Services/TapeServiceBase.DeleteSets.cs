@@ -47,6 +47,9 @@ public partial class TapeServiceBase
                 TapeResult.Fail((uint)WIN32_ERROR.ERROR_INVALID_STATE, "No media loaded"), 0);
         }
 
+        if (RefuseOnSeriesToc(what: "delete backup sets"))
+            return DeleteSetsResult.Failed(TapeResult.Fail((uint)WIN32_ERROR.ERROR_INVALID_STATE, LastError!), 0);
+
         _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
         return await Task.Run(async () =>
         {
@@ -86,8 +89,9 @@ public partial class TapeServiceBase
 
                 // navigateFromBegin when the TOC came from a file: its mark arithmetic describes a tape
                 //  we have not verified, so the forced forward count is the safer anchor from the outset.
+                //  We refuse delete on TOCSource.Series, but check here still as a safety belt.
                 var result = agent.DeleteSetsFromCurrentSetUp(
-                    navigateFromBegin: TOCIsFrom is TOCSource.File or TOCSource.Recovered,
+                    navigateFromBegin: TOCIsFrom is TOCSource.File or TOCSource.Recovered or TOCSource.Series,
                     setNotify: progressHandler);
 
                 ReportTocUpgrade(wasLegacy, toc);   // silent unless the TOC really reached the tape as 2.1

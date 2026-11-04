@@ -139,9 +139,10 @@ public partial class TapeServiceBase
         string placement = TOCIsFrom is TOCSource.File
             ? $"File: {TOCFilePath}"
             : (HasInitiatorPartition ? "Partition" : "Set")
-                + (TOCIsFrom is TOCSource.Recovered ? " (recovered TOC)" : string.Empty);
+                + (TOCIsFrom is TOCSource.Recovered ? " (recovered TOC)" : string.Empty)
+                + (TOCIsFrom is TOCSource.Series ? " (series TOC)" : string.Empty);
         props.Add(new("TOC Placement", placement,
-            TOCIsFrom is TOCSource.File or TOCSource.Recovered ? ServiceReportLevel.Warning : ServiceReportLevel.None));
+            TOCIsFrom is TOCSource.File or TOCSource.Recovered or TOCSource.Series ? ServiceReportLevel.Warning : ServiceReportLevel.None));
 
         props.Add(new("Volume", $"#{toc.Volume}"));
         props.Add(new("Continued on Next Volume", YesNo(toc.ContinuedOnNextVolume)));
