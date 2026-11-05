@@ -1,8 +1,9 @@
 # TapeLibNET.Services — Architecture Reference
 
-Status: **Implemented and in production.**
-Owner: avk1im
-Last updated: 2025
+Status: **Implemented and in production.** Owner: avk1im.
+**Partly out of date:** §3.3 (host interface) and §5 (adapter sizes) predate the multi-volume, TOC location, TOC
+reserve and encryption work — Design-MultiVolume §8.1, Design-TocLocation §5.2 and Design-Encryption §10 are current.
+A full rewrite (split into TapeLib / TapeCon / TapeWin architecture documents) follows the encryption branch.
 
 ---
 
@@ -249,6 +250,7 @@ gRPC/AspNetCore dependencies of the full physical-test rig). It retains CLI-laye
 | **D-5** | Audited and completed `OperationStarted`/`OperationEnded` signals across all 10 public operation methods in `TapeServiceBase`. |
 | **D-6** | Moved service-layer round-trip tests from `TapeConNET.Tests.Services` → `TapeLibNET.Tests.Services`; moved `MultiVolumeTapeServiceHost` and `TempVirtualMedia` to `TapeLibNET.Tests.Helpers`; rewired `TapeConNET.Tests.csproj` links. |
 | **D-7** | Removed `Status()` no-op shim from `TapeConNET.TapeService`. Rewrote this document as an as-built reference. |
+| **E** (encryption branch) | Volume prompts with Insert / Skip / End (Design-MultiVolume §8). TOC anomalies and advice. Encryption: key ring, OnAskPassword, unlock / forget / verify verbs, wrong-password delay, RetainKeysAcrossMedia. TOCSource.Series and RefuseOnSeriesToc; RestoreResult.MediaSwapped / VolumeInDrive / TocDescribesDrive. IsOperationRunning. DescribeSet without moving the TOC cursor; DescribeUsage for the usage bar. RenameMediaAsync raises TocChanged. The info / list overview unlocks with a given password, never prompting. |
 
 ---
 

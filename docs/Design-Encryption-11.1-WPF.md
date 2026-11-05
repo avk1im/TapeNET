@@ -28,7 +28,7 @@ Replaces §11.1 of Design-Encryption v1.3. Phase 7 of §20. Sources checked: `Ma
 | Backup sets list | Description `🔒 encrypted set`, grey italic; Files, Size, Created, Inc?, Block, Hash, Compression `—`; **on Tape** shown (plain stub) | all columns |
 | Details pane | `DescribeSet` already returns only the visible rows (§10.6) | all rows |
 | Files pane | one centred placeholder: *"This set is encrypted. Unlock it to see its files."* with **[Unlock…]** | files |
-| Usage bar segment | label `#3\|0`, tooltip `Set #3\|0: 🔒 encrypted set`, size on tape | as now |
+| Usage bar segment | the bar is fed by the service's usage figures (it never reads the TOC); label #3\|0, tooltip: the placeholder name, "locked", size on tape | as now |
 
 ### Unlock gestures
 
@@ -47,23 +47,25 @@ Unlock is enabled only when its target holds a locked set. Unlocking always trie
 **Today:** the backup sets list allows Ctrl/Shift multi-selection (`ListView` default `Extended`), but the view model binds
 only `SelectedItem` — so Restore, Validate and Verify act on one highlighted set however many are highlighted.
 
-**Selection model.** `BackupSetsListView.SelectionChanged` feeds `MainViewModel.SelectedBackupSets` (the highlighted
-rows). The target of a set command, in order:
+**Selection model (as implemented — the TapeNET primer, "Selection model").** One selection, computed once per change
+(ComputeRestoreSelection), feeds the command texts, their enabled state, StartRestore and the status bar:
 
-1. checked files / checked sets (the existing restore marking) — unchanged;
-2. **the highlighted rows in the backup sets list** — new: one or many;
-3. the set selected in the tree;
-4. all sets (Restore only).
-
-| Target | Restore / Validate / Verify | Unlock |
+| Type | Source | Used when |
 |---|---|---|
-| checked files | `Restore 53 files selected…` | `Unlock 2 sets…` — the locked sets owning them |
-| 2 highlighted rows | `Restore 2 sets…` | `Unlock 2 sets…` (locked ones only); `Unlock set #3 \| 0…` when one |
-| tree set | `Restore set #3 \| 0…` | `Unlock set #3 \| 0…` |
-| nothing | `Restore all sets…` | `Unlock Encrypted Sets…` (all locked) |
+| 1 Checked | file and set checkboxes, incl. locked sets checked as a whole | anything is checked |
+| 2a Tree set | the set selected in the tree | nothing checked, set view |
+| 2b Highlighted | the rows highlighted in the sets list (Ctrl/Shift) | nothing checked, media view |
+| 3 All sets | — | nothing else |
 
-`SelectedSetIndexes` uses the same order, so `StartRestore` processes every highlighted set. `SelectedBackupSet` (single)
-stays for navigation and the usage-bar highlight.
+| Type | Restore / Validate / Verify | Unlock |
+|---|---|---|
+| 1 | Restore 195 files selected from 2 sets… (…; 1 set locked) | Unlock 1 set… — the locked sets among them |
+| 2b | Restore 2 sets… | Unlock 2 sets… (locked ones only); Unlock set #3 \| 0… when one |
+| 2a | Restore set #3 \| 0… | Unlock set #3 \| 0… |
+| 3 | Restore all sets… | Unlock Encrypted Sets… (all locked) |
+
+Locked sets stay selectable for Restore (§11.1.5 unlocks them first). Unlock's text comes from SelectionText like
+Restore's; it is enabled only when the selection holds a locked set.
 
 ## 11.1.3 The password dialog (`PasswordDialog`, new)
 
@@ -167,8 +169,7 @@ lock."*
 
 ## 11.1.8 Delete, Scan
 
-- **DeleteBackupSetsWindow:** no password. Locked sets listed with the padlock; file count `—`; the summary reads
-  *"~1.2 GB, 340 files + 1 locked set"*; deleted by position, verified by header.
+- **DeleteBackupSetsWindow:** no password. Locked sets listed with the padlock; file count `—`; The summary reads _"~1.2 GB, 340 files + 1 locked set"_ (as implemented: the size line adds "+ N locked set(s)").
 - **ScanMediaWindow:** no option. **ScanResultWindow:** no unlock — fragments carry no key. A TOC row reads
   *"recovered — 3 set(s), 1 encrypted"*; unlocking happens in the main window after **Use this TOC**.
 
@@ -183,7 +184,7 @@ lock."*
 | `DeleteBackupSetsViewModel.DeleteFileCount` | `toc[i].Count` | skip locked; count them separately |
 | `BackupViewModel` | `GetSourceFilesFromSet` (`SelectFiles`), `LoadFromLastBackup` | guarded by the disabled [+] / disabled command |
 | `MainViewModel` | `CreateAdHocSetItems` (`Count`), `LoadBackupSetInfo` (`GetOrCreate`), `ApplyBackupSetCheckedState`, `AreAllBackupSetsChecked`, `RenameBackupSetAsync` (`Description`) | locked → placeholder pane; skip in "check all"; rename via §11.1.6 |
-| `TOCView` | `GetOrCreate`, `BuildBackupSetItemList` (pending global filter) | `TryGetOrCreate` returns null for a locked set; skipped by the filter pass |
+| `TOCView` | `GetOrCreate`, `BuildBackupSetItemList` (pending global filter); whole-set checks of locked sets (keyed by set object, so a delete or a new backup never hands a check to another set) | `TryGetOrCreate` returns null for a locked set; skipped by the filter pass |
 | `ScanResultViewModel` | `setNames` (`Description` of harvested sets) | `DisplayName` (a recovered TOC loads its encrypted sets locked) |
 
 ## 11.1.10 Library additions (step 1)
@@ -215,14 +216,45 @@ No CLI code changes in Phase 7; `EncryptionCliTests` must stay green.
 Step 2 can be tested before step 5: `tapecon backup --encrypt --password-file …` writes encrypted sets to a virtual
 cartridge file that TapeWin opens.
 
+Status: steps 1–3 done. Step 3 grew beyond the multi-set selection — it also delivered the TOC barrier, the usage bar
+fed by the service, the series TOC after a multi-volume restore, the sets-list context menu and the RestoreWindow fixes
+(see the TapeNET primer and Design-MultiVolume §5.5).
+
 | Step | Content | Exit | Files |
 |---|---|---|---|
 | 1 | Library §11.1.10 + tests | all green | `Services/TapeServiceBase.Encryption.cs`, `TapeServiceBase.cs`, `TapeServiceBase.Scan.cs`, `Encryption/TapeKeyRing.cs`, `Services/PasswordPrompt.cs`; tests `ServiceUnlockTests.cs` (new) |
 | 2 | Crash-proofing §11.1.9, locked rendering §11.1.1 — no prompts | a tapecon-encrypted cartridge browses without exception | `BackupSetListItem`, `TapeTreeItemViewModel`, `AppendAfterOption`, `DeleteFromSetOption`, `MediaUsageBarPresenter`, `DeleteBackupSetsViewModel`, `BackupViewModel`, `TOCView`, `ScanResultViewModel`, `TapeIcons`, `MainViewModel.cs`, `MainViewModel.Restore.cs`, `MainWindow.xaml`, `App.xaml` |
-| 3 | Multi-set selection §11.1.2 (independent of encryption) | `Restore 2 sets…` processes both | `MainViewModel.cs`, `MainViewModel.Restore.cs`, `MainWindow.xaml` + `.cs` |
-| 4 | `PasswordDialog` §11.1.3, unlock gestures, Media menu, `WpfServiceHost.OnAskPassword`, retention on | unlock / wrong ×4 wait / forget / reload by hand | `AskDialog.xaml` + `.cs` (template), `WpfServiceHost.cs`, `TapeService.cs`, `MainViewModel.cs`, `MainWindow.xaml` + `.cs`, `App.xaml` |
+| 3 | Multi-set selection §11.1.2 + TOC barrier, usage bar, series TOC, menus (done) | Restore 2 sets… processes both | `MainViewModel*.cs`, `TOCView.cs`, `SelectionText.cs`, `MainWindow.xaml` + `.cs`, the usage-bar presenters and control |
+| 4 | PasswordDialog §11.1.3, unlock gestures §11.1.1, Media menu, `WpfServiceHost.OnAskPassword` (no validator, §11.1.13), `RetainKeysAcrossMedia = true` | unlock / wrong ×4 wait / forget / reload by hand; Unlock text follows the selection | see the list below |
 | 5 | BackupWindow §11.1.4 | new encrypted set; incremental with wrong then right base password keeps selections | `BackupWindow.xaml` + `.cs`, `BackupViewModel.cs`, `MainViewModel.Backup.cs` |
 | 6 | Restore pre-unlock §11.1.5, `RenameBackupSetWindow` §11.1.6 | mixed selection restores; rename + password change | `RestoreViewModel.cs`, `RestoreWindow.xaml`, `MainViewModel.Restore.cs`, `MainViewModel.cs` |
 | 7 | Delete and Scan §11.1.8 | — | `DeleteBackupSetsViewModel.cs`, `DeleteBackupSetsWindow.xaml`, `ScanResultViewModel.cs`, `ScanResultWindow.xaml` |
 
 WPF help topics: deferred to the help revamp at the end of the encryption branch.
+
+Step 4 file list:
+
+| Area | Files |
+|---|---|
+| Service | TapeServiceBase.Encryption.cs, PasswordPrompt.cs, ITapeServiceHost.cs, TapeServiceBase.cs |
+| WPF services | Services/WpfServiceHost.cs, Services/TapeService.cs and its partials |
+| View models | MainViewModel.cs, .Restore.cs, .TocBarrier.cs, .Backup.cs, .DeleteSets.cs, .Remote.cs, .Scan.cs |
+| Models / utils | TOCView.cs, SelectionText.cs, BackupSetListItem.cs, Utils/SimpleBox.cs, Models/LogEntry.cs (WarningLevel), Utils/AppSettings.cs |
+| Views | MainWindow.xaml + .cs, App.xaml, AskDialog.xaml + .cs, one window with a warning pane as a template (e.g. DeleteBackupSetsWindow.xaml + .cs) |
+| Converters | the file with the warning-pane converters |
+
+### 11.1.13 Constraints from the TOC barrier and the service lock
+
+*Derived during the implementation.*
+
+- **OnAskPassword runs inside an operation** — the worker holds the service lock while it waits for the answer. Its
+  PasswordDialog therefore gets **no validator**: VerifyPasswordAsync waits for that very lock (deadlock). It returns the
+  password and the service checks it (its own attempt loop, W8). The in-dialog check (W3) applies to every dialog
+  opened between operations: Unlock, BackupWindow, RenameBackupSetWindow.
+- **Unlock and Forget run as their own busy scope.** The service raises TocChanged; the TOC barrier refreshes tree, panes
+  and selection when the scope ends — the view stays on the same set (now unlocked), checks carry over (a set checked as
+  a whole becomes "all files checked").
+- **Keys survive a series TOC** (TOCSource.Series, Design-MultiVolume §5.5) like any other TOC change; rereading the
+  loaded volume re-applies them.
+
+

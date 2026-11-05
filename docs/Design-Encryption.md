@@ -1,7 +1,7 @@
 # Design — Set Encryption (AES-256-GCM) for TapeNET
 
-**Status:** v1.3 · Phases 0–3 implemented; Phase 4 (service) next. Revised after the MultiVolume, TocLocation and
-TocReserve work (§20.4). Hooks for hardware (drive) encryption as v2 (§9.1, §19).
+**Status:** v1.3 · Phases 0–6 implemented; Phase 7 (WPF, §11.1 / Design-Encryption-11.1-WPF) in progress — Steps 1–3
+done, Step 4 next. Revised after the MultiVolume, TocLocation and TocReserve work (§20.4).
 **Scope:** password-based encryption of whole backup sets — content AND metadata — as a pure add-on to on-tape format
 2.1. Plain sets and plain tapes stay byte-identical (the 2.1 goldens keep passing unchanged). v1 ships **software**
 encryption; **hardware** (LTO drive) encryption is v2, prepared by the hooks of §19.
@@ -765,6 +765,9 @@ default implementation does exactly that (minus the log), so every host compiles
 | `RenameBackupSetAsync(setIndex, newName, password?, newPassword?)` | §9.7 |
 | `DeleteBackupSetsExAsync`, `RenameMediaAsync`, `ExportTOCToFileAsync` | unchanged — no password (locked sets carried verbatim) |
 | `ScanMediaAsync`, `RecoverTocAsync` | unchanged — a harvested TOC loads its sealed sets locked |
+| `VerifyPasswordAsync(setIndex, password, unlock)` | checks against the set's envelope, never a held key; the in-dialog check |
+| `UnlockWithPasswordAsync(password)` | one password tried on every locked chain; `UnlockOutcome(Sets, Chains, Result)` |
+| `PasswordRetryDelay` | session-wide wrong-password delay: 3 free, then 5 s doubling to 60 s; a success resets |
 
 ### 10.6 Property sheets, listings, progress text — the sites
 
@@ -862,7 +865,7 @@ How the scanner implements it: s. Design-ScanMedia §4.8.
 | **E14** | An encrypted set accepts files only during the operation that created it (and its continuations); an encrypted set loaded from tape never accepts files. |
 | **E15** | An encryption kind this build does not implement loads as a permanently locked set — carried, navigated, listed and deletable — never refusing the TOC. |
 | **E16** | (v2) A drive key is loaded only for the content of one set and cleared when that set's content session ends, on every path; set headers, tapemarks and TOC copies are always written with drive encryption off. |
-| **E17** | Every TOC replacement or cartridge change clears the key ring, locking the old TOC's sets (§10.1). |
+| **E17** | Every TOC replacement or cartridge change locks the old TOC's sets (§10.1). The keys are dropped too — unless `RetainKeysAcrossMedia` keeps them for the session (`TapeWin`), offering them to every newly loaded TOC; `ForgetPasswords` always drops them. |
 | **E18** | An overview uses the password it is GIVEN — tried on every locked chain, like TapeWin's "Unlock Encrypted Sets…" — but never prompts: a glance at the cartridge must not stop for input. Without a password, locked sets stay `[Locked]` in the table. The per-file `list` keeps prompting per set. |
 
 ## 14. Performance
@@ -939,10 +942,10 @@ set → `Unknown`, no diagnosis; harvested TOC with sealed sets loads locked.
 | 2 | domain: locked state, all TOC-model sites | full suite green | done |
 | 3 | agents: cipher seam, call sites, E9, resume, verification | agent matrix green | done |
 | — | MultiVolume, TocLocation, TocReserve (§20.4) | | done |
-| 4 | service: ring ownership and Clear sites, requests, backup configuration, pre-flight, `OnAskPassword` (default), new verbs, rename + password change, sheets and listings; test host | service tests green | **next** |
-| 5 | Scan Media additions | scan tests green | |
-| 6 | CLI + docs | TapeConNET.Tests round trips | |
-| 7 | WPF | manual acceptance | |
+| 4 | service: ring ownership and Clear sites, requests, backup configuration, pre-flight, `OnAskPassword` (default), new verbs, rename + password change, sheets and listings; test host | service tests green | done |
+| 5 | Scan Media additions | scan tests green | done |
+| 6 | CLI + docs | TapeConNET.Tests round trips | done |
+| 7 | WPF -- S. Design-Encryption-11.1 | manual acceptance | **in progress (Steps 1–3 of 7 done)** |
 | 8 | Design-FormatV21 §4.3 / §13 point here; Help revamp | docs merged | |
 | v2 | §19 | hardware probe on real drives first | |
 
