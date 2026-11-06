@@ -63,6 +63,11 @@
             <Separator/>
             <MenuItem Header="Re_name..." Command="{Binding RenameSelectedCommand}"/>
             <MenuItem Header="_Reread Media" Command="{Binding RereadMediaCommand}"/>
+            <Separator Visibility="{Binding HasEncryptionActions, Converter={StaticResource BoolToVis}}"/>
+            <MenuItem Header="{Binding UnlockCommandText}" Command="{Binding UnlockCommand}"
+                      Visibility="{Binding HasUnlockTargets, Converter={StaticResource BoolToVis}}"/>
+            <MenuItem Header="_Forget Passwords" Command="{Binding ForgetPasswordsCommand}"
+                      Visibility="{Binding HasHeldPasswords, Converter={StaticResource BoolToVis}}"/>
             <Separator/>
             <MenuItem Header="E_xport TOC to File..." Command="{Binding ExportTOCCommand}"/>
             <MenuItem Header="_Import TOC from File..." Command="{Binding ImportTOCCommand}"/>
@@ -79,6 +84,8 @@
             <MenuItem Header="{Binding RestoreCommandText}" Command="{Binding RestoreCommand}"/>
             <MenuItem Header="{Binding ValidateCommandText}" Command="{Binding ValidateCommand}"/>
             <MenuItem Header="{Binding VerifyCommandText}" Command="{Binding VerifyCommand}"/>
+            <MenuItem Header="{Binding UnlockCommandText}" Command="{Binding UnlockCommand}"
+                      Visibility="{Binding HasUnlockTargets, Converter={StaticResource BoolToVis}}"/>
             <Separator/>
             <MenuItem Header="Re_name..." Command="{Binding RenameSelectedCommand}"/>
         </ContextMenu>
@@ -89,6 +96,8 @@
             <MenuItem Header="{Binding RestoreCommandText}" Command="{Binding RestoreCommand}"/>
             <MenuItem Header="{Binding ValidateCommandText}" Command="{Binding ValidateCommand}"/>
             <MenuItem Header="{Binding VerifyCommandText}" Command="{Binding VerifyCommand}"/>
+            <MenuItem Header="{Binding UnlockCommandText}" Command="{Binding UnlockCommand}"
+                      Visibility="{Binding HasUnlockTargets, Converter={StaticResource BoolToVis}}"/>
             <Separator/>
             <MenuItem Header="Re_name Set..." Command="{Binding RenameBackupSetCommand}" InputGestureText="F2"/>
         </ContextMenu>
@@ -299,6 +308,11 @@
                 <MenuItem Header="Re_name..." Command="{Binding RenameMediaCommand}"/>
                 <MenuItem Header="_Reread Media" Command="{Binding RereadMediaCommand}"/>
                 <MenuItem Header="_Scan Media..." Command="{Binding ScanMediaCommand}"/>
+                <Separator Visibility="{Binding ShowEncryptionMenu, Converter={StaticResource BoolToVis}}"/>
+                <MenuItem Header="{Binding UnlockCommandText}" Command="{Binding UnlockCommand}"
+                          Visibility="{Binding ShowEncryptionMenu, Converter={StaticResource BoolToVis}}"/>
+                <MenuItem Header="_Forget Passwords" Command="{Binding ForgetPasswordsCommand}"
+                          Visibility="{Binding ShowEncryptionMenu, Converter={StaticResource BoolToVis}}"/>
                 <Separator/>
                 <MenuItem Header="E_xport TOC to File..." Command="{Binding ExportTOCCommand}"/>
                 <MenuItem Header="_Import TOC from File..." Command="{Binding ImportTOCCommand}"/>
@@ -733,7 +747,7 @@
                                 </ListView.ContextMenu>
                             </ListView>
 
-                            <!-- Locked set: no file list (Design-Encryption §11.1.1). [Unlock…] joins in step 4. -->
+                            <!-- Locked set: no file list, an Unlock button (Design-Encryption §11.1.1) -->
                             <Border Grid.Row="0" Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}"
                                     Visibility="{Binding IsLockedSetShown, Converter={StaticResource BoolToVis}}">
                                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -742,6 +756,8 @@
                                                Margin="0,0,0,8"/>
                                     <TextBlock Text="This set is encrypted. Unlock it to see its files."
                                                Foreground="{StaticResource LockedFg}" HorizontalAlignment="Center"/>
+                                    <Button Content="_Unlock..." Command="{Binding UnlockShownSetCommand}"
+                                            HorizontalAlignment="Center" Margin="0,12,0,0" Padding="16,3"/>
                                 </StackPanel>
                             </Border>
 

@@ -26,13 +26,15 @@ public enum PasswordPurpose
 /// <param name="SetDisplay">The set's name for display — <c>DisplayName</c>, never a hidden description.</param>
 /// <param name="Attempt">1-based attempt of this prompt.</param>
 /// <param name="LastFailure">Why the previous attempt failed (wrong password, mismatch); null on the first.</param>
+/// <param name="PartOfSeries">The TOC describes a multi-volume series: a wrong password may be an old one (§9.7).</param>
 public readonly record struct PasswordRequest(
     PasswordPurpose Purpose,
     int SetIndex,
     int AltIndex,
     string SetDisplay,
     int Attempt,
-    TapeResult? LastFailure);
+    TapeResult? LastFailure,
+    bool PartOfSeries = false);
 
 /// <summary>What one password opened (Design-Encryption §11.1.10).</summary>
 /// <param name="Sets">Sets unlocked.</param>

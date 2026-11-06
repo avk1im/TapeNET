@@ -133,8 +133,22 @@ public interface ITapeServiceHost
     ///  refused.
     /// </summary>
     /// <remarks>
+    /// <para>
+    /// <b>Threading — critical.</b> Called on the service's WORKER thread while the operation holds the service lock (a
+    ///  restore's pre-flight, an incremental's base, a rename, an explicit unlock). The host may block that thread for the
+    ///  user's answer, but must NOT call any service verb that takes the lock — <c>VerifyPasswordAsync</c>,
+    ///  <c>UnlockWithPasswordAsync</c>, <c>UnlockSetsAsync</c>, … — that deadlocks. Lock-free reads are fine, notably
+    ///  <c>PasswordRetryDelay</c> for a countdown.
+    /// </para>
+    /// <para>
+    /// The service checks the returned password itself and asks again after a wrong one (<see cref="PasswordRequest.Attempt"/>,
+    ///  <see cref="PasswordRequest.LastFailure"/>, at most <c>TapeServiceBase.MaxPasswordAttempts</c>). While the
+    ///  wrong-password delay runs, a host should show it and hold the answer back; the service waits it out regardless.
+    /// </para>
+    /// <para>
     /// HOST GUIDANCE: a non-interactive host returns <see langword="null"/> and logs the auto-decision — an unattended run
     ///  must not stall. This default does exactly that (minus the log), so a host that never asks still compiles.
+    /// </para>
     /// </remarks>
     char[]? OnAskPassword(in PasswordRequest request) => null;
 

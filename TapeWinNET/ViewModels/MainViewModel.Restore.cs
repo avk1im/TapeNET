@@ -458,7 +458,7 @@ public partial class MainViewModel
                 else
                 {
                     if (item.IsLocked)
-                        _tocView?.SetLockedChecked(item.SetIndex, check);   // no view: TOCView keeps the set-level choice
+                        _tocView?.SetCheckedWhole(item.SetIndex, check);   // no view: TOCView keeps the set-level choice
                     item.CheckedFileCount = null;
                 }
 
@@ -599,7 +599,7 @@ public partial class MainViewModel
         else
         {
             if (item.IsLocked)
-                _tocView?.SetLockedChecked(item.SetIndex, check);   // no view: TOCView keeps the set-level choice
+                _tocView?.SetCheckedWhole(item.SetIndex, check);   // no view: TOCView keeps the set-level choice
             item.CheckedFileCount = null;
         }
 
@@ -627,7 +627,10 @@ public partial class MainViewModel
     private void NotifyCommandTextChanged()
     {
         if (IsTocQuiet)
+        {
             _selection = ComputeRestoreSelection();
+            UpdateUnlockTargets();          // the Unlock command follows the same selection (MainViewModel.Encryption.cs)
+        }
         // else keep the last selection: the refresh recomputes it
 
         OnPropertyChanged(nameof(RestoreCommandText));

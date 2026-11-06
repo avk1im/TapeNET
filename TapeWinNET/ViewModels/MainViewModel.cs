@@ -124,7 +124,7 @@ public partial class MainViewModel : ViewModelBase
             // We can handle the case of missing TOC in TapeServiceBase.DeleteBackupSetsAsync() --> no need to check for TOCIsFrom
         ExportTOCCommand = new AsyncRelayCommand(ExportTOCAsync, () => !IsBusy && _tapeService.TOC != null);
         ImportTOCCommand = new AsyncRelayCommand(ImportTOCAsync, () => !IsBusy && _tapeService.IsDriveOpen);
-        NavigateToBackupSetCommand = new RelayCommand(NavigateToSelectedBackupSet, _ => SelectedBackupSet != null);
+        NavigateToBackupSetCommand = new AsyncRelayCommand(NavigateToSelectedBackupSetAsync, () => SelectedBackupSet != null);
         UsageBar = new MediaUsageBarPresenter(_tapeService, SelectBackupSetByIndex);
 
         RenameSelectedCommand = new AsyncRelayCommand(RenameSelectedAsync, () => CanRenameSelected);
@@ -147,6 +147,8 @@ public partial class MainViewModel : ViewModelBase
 
         // Initialize calibration commands (from MainViewModel.Calibration.cs)
         InitializeCalibrationCommands();
+
+        // Initialize scan commands (from MainViewModel.Scan.cs)
         InitializeScanCommands();
 
         // Initialize restore commands (from MainViewModel.Restore.cs)
@@ -154,6 +156,9 @@ public partial class MainViewModel : ViewModelBase
 
         // Initialize remote host commands (from MainViewModel.Remote.cs)
         InitializeRemoteCommands();
+
+        // Initialize encryption commands (from MainViewModel.Encryption.cs)
+        InitializeEncryptionCommands();
 
         // Initialize drive menu items
         InitializeDriveMenu();
@@ -542,7 +547,7 @@ public partial class MainViewModel : ViewModelBase
 
     /// <summary>
     /// The selected backup set is encrypted and locked: the files pane shows the placeholder instead of the list
-    ///  (Design-Encryption §11.1.1). The [Unlock…] button joins in step 4.
+    ///  (Design-Encryption §11.1.1). The [Unlock…] button unlocks it (<see cref="UnlockShownSetCommand"/>).
     /// </summary>
     public bool IsLockedSetShown
     {
@@ -1793,12 +1798,25 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
-    private void NavigateToSelectedBackupSet(object? parameter)
+    /// <summary>
+    /// Double-click / Enter on a backup set row: navigates into the set — a locked one is unlocked first
+    ///  (Design-Encryption §11.1.1), and declining leaves the view where it is.
+    /// </summary>
+    private async Task NavigateToSelectedBackupSetAsync()
     {
-        if (SelectedBackupSet != null)
+        if (SelectedBackupSet is not { } item)
+            return;
+        if (item.IsLocked)
         {
-            OnBackupSetSelectedInTable(SelectedBackupSet);
+            var set = item.SetTOC;
+            if (!await UnlockWithDialogAsync([item.SetIndex], all: false))
+                return;
+            // The list was rebuilt from the refreshed TOC: find the set again by object
+            item = BackupSetList.FirstOrDefault(b => ReferenceEquals(b.SetTOC, set));
+            if (item is null)
+                return;
         }
+        OnBackupSetSelectedInTable(item);
     }
 
     /// <summary>

@@ -17,7 +17,8 @@ public partial class TapeServiceBase
     #region *** Key ring (§10.1, E17, §11.1.7) ***
 
     /// <summary>Most password attempts per set and operation.</summary>
-    protected const int MaxPasswordAttempts = 3;
+    /// <remarks><see langword="public"/> since the host UI may want to inform the user "Attempt 2 of 3"</remarks>
+    public const int MaxPasswordAttempts = 3;
 
     // Session-scoped keys. Driven under _operationLock (the ring is not thread-safe).
     private readonly TapeKeyRing _keyRing = new(loggerFactory?.CreateLogger<TapeKeyRing>());
@@ -34,6 +35,9 @@ public partial class TapeServiceBase
     ///  <see cref="ForgetPasswordsAsync"/> drops the keys regardless.
     /// </summary>
     public bool RetainKeysAcrossMedia { get; set; }
+
+    /// <summary>Whether passwords (keys) are held for the session — lock-free, for enabling "Forget Passwords".</summary>
+    public bool HasPasswords => _keyRing.Count > 0;
 
     /// <summary>
     /// Locks the sets of the CURRENT TOC the keys opened — before that TOC is replaced or the cartridge leaves (E17) — and
@@ -175,10 +179,17 @@ public partial class TapeServiceBase
 
     private static TapeResult Fail(WIN32_ERROR error, string message) => TapeResult.Fail((uint)error, message);
 
-    /// <summary>Asks the host for a password for set <paramref name="setIndex"/>; null = the user declined.</summary>
+    /// <summary>
+    /// Asks the host for a password for set <paramref name="setIndex"/>; null = the user declined.
+    /// </summary>
+    /// <remarks>
+    /// Runs the host's prompt on THIS worker thread while the operation lock is held — the host must not call back into a
+    ///  lock-taking verb (<see cref="ITapeServiceHost.OnAskPassword"/>).
+    /// </remarks>
     private char[]? AskPassword(TapeTOC toc, PasswordPurpose purpose, int setIndex, int attempt, TapeResult? lastFailure)
         => _host.OnAskPassword(new PasswordRequest(purpose, setIndex, toc.SetIndexToAlt(setIndex),
-            toc[setIndex].DisplayName, attempt, lastFailure));
+            toc[setIndex].DisplayName, attempt, lastFailure,
+            PartOfSeries: toc.Volume > 1 || toc.ContinuedOnNextVolume));
 
     /// <summary>
     /// Asks for a NEW password, twice, until both entries agree (at most <see cref="MaxPasswordAttempts"/>). Null when the
@@ -252,24 +263,27 @@ public partial class TapeServiceBase
 
         for (int attempt = 1; attempt <= MaxPasswordAttempts; attempt++)
         {
-            if (!WaitForPasswordRetry())
-                return Fail(WIN32_ERROR.ERROR_CANCELLED, "Cancelled while waiting to retry the password");
             char[]? asked = AskPassword(toc, purpose, setIndex, attempt, last);
             if (asked is null)
                 return Fail(WIN32_ERROR.ERROR_CANCELLED, $"Set #{setIndex} is locked — no password supplied");
             TapeResult result;
             try
             {
+                // W8 after asking: the prompt shows the countdown; this wait is the belt for a host that does not
+                if (!WaitForPasswordRetry())
+                    return Fail(WIN32_ERROR.ERROR_CANCELLED, "Cancelled while waiting to retry the password");
                 result = UnlockCounted(toc, setIndex, asked);
             }
             finally
             {
                 Array.Clear(asked);
             }
+
             if (result || result.ErrorCode != (uint)WIN32_ERROR.ERROR_INVALID_PASSWORD)
                 return result;
             last = result;
         }
+
         return last ?? Fail(WIN32_ERROR.ERROR_INVALID_PASSWORD, $"Set #{setIndex}: the password is not correct");
     }
 
@@ -425,8 +439,6 @@ public partial class TapeServiceBase
         TapeResult? last = null;
         for (int attempt = 0; attempt <= MaxPasswordAttempts; attempt++)
         {
-            if (!WaitForPasswordRetry())
-                return Fail(WIN32_ERROR.ERROR_CANCELLED, "Cancelled while waiting to retry the password");
             char[]? password = attempt == 0
                 ? (supplied is { Length: > 0 } ? supplied : null)
                 : AskPassword(toc, PasswordPurpose.Incremental, baseIndex, attempt, last);
@@ -437,8 +449,12 @@ public partial class TapeServiceBase
                 return Fail(WIN32_ERROR.ERROR_INVALID_PASSWORD,
                     "An incremental backup on an encrypted set needs that set's password — none was supplied");
             }
+            
             try
             {
+                if (!WaitForPasswordRetry())
+                    return Fail(WIN32_ERROR.ERROR_CANCELLED, "Cancelled while waiting to retry the password");
+
                 TapeResult unwrap = CheckEnvelope(previous, password, out TapeSetKey? fresh);
                 if (!unwrap)
                 {
@@ -769,19 +785,22 @@ public partial class TapeServiceBase
         TapeResult? last = null;
         for (int attempt = 0; attempt <= MaxPasswordAttempts; attempt++)
         {
-            if (!WaitForPasswordRetry())
-                return Fail(WIN32_ERROR.ERROR_CANCELLED, "Cancelled while waiting to retry the password");
             char[]? password = attempt == 0
                 ? (supplied is { Length: > 0 } ? supplied : null)
                 : AskPassword(toc, PasswordPurpose.Rename, setIndex, attempt, last);
+            
             if (password is null)
             {
                 if (attempt == 0)
                     continue;
                 return Fail(WIN32_ERROR.ERROR_CANCELLED, "Changing the password needs the current one — none was supplied");
             }
+            
             try
             {
+                if (!WaitForPasswordRetry())
+                    return Fail(WIN32_ERROR.ERROR_CANCELLED, "Cancelled while waiting to retry the password");
+
                 TapeResult check = CheckEnvelope(set, password, out TapeSetKey? key);
                 if (!check)
                 {

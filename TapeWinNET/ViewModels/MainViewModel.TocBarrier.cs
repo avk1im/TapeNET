@@ -87,8 +87,6 @@ public partial class MainViewModel
             return;
         }
 
-        var selectedKind = _selectedTreeItem?.ItemType;
-        var selectedSet = selectedKind == TreeItemType.BackupSet ? _selectedTreeItem!.SetTOC : null;
         int driveNumber = _tapeService.DriveNumber;
 
         if (_tapeService.TOC is null)
@@ -101,8 +99,6 @@ public partial class MainViewModel
                 UpdateTreeForDriveOnly(driveNumber);
             return;
         }
-
-        UpdateTreeFromTOC(driveNumber);     // remote-aware
 
         RebuildTreeKeepingSelection(keepSelection: true);
     }
