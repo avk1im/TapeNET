@@ -480,6 +480,7 @@ public partial class TapeServiceBase
         {
             var (envelope, minted) = TapeSetEncryption.CreateChain(password);
             set.EnableEncryption(TapeEncryption.Software, envelope, _keyRing.Add(minted));
+            OpenOtherChainsWith(toc, password);     // as everywhere: the password opens every chain it fits (§11.1.1)
         }
         catch (ArgumentException ex)
         {

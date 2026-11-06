@@ -342,6 +342,27 @@ public class ServiceUnlockTests : EncryptionServiceTestBase
         }
     }
 
+    /// <summary>The in-window check (unlock: false) counts toward the delay and is refused while it runs.</summary>
+    [Fact]
+    public async Task Verify_WithoutUnlock_CountsTowardTheDelay()
+    {
+        using var _ = TapeCrypto.UseIterations(1_000);
+        using var media = NewMedia();
+        await SeedAsync(media, Pw);
+        var (svc, host) = await ReopenAsync(media);
+        using (svc)
+        {
+            var clock = new TestClock();
+            svc.UtcNowOverride = () => clock.Now;
+            for (int i = 0; i < 4; i++)
+                Assert.Equal(86u, (await svc.VerifyPasswordAsync(1, Wrong(), unlock: false)).ErrorCode);
+            Assert.Equal(TimeSpan.FromSeconds(5), svc.PasswordRetryDelay);
+            Assert.Equal(1909u, (await svc.VerifyPasswordAsync(1, Pw(), unlock: false)).ErrorCode);  // refused, not tried
+            clock.Advance(TimeSpan.FromSeconds(5));
+            Assert.True(await svc.VerifyPasswordAsync(1, Pw(), unlock: false));
+        }
+    }
+
     #endregion
 
     #region *** Retention across media changes (§11.1.7) ***

@@ -1,13 +1,14 @@
 using System.Collections.ObjectModel;
 using System.Windows.Input;
+
 using TapeLibNET;
 using TapeLibNET.Compression;
 using TapeLibNET.Encryption;
 using TapeLibNET.Toc;
 using TapeWinNET.Controls;
-using TapeWinNET.Models;
 
 namespace TapeWinNET.ViewModels;
+
 
 /// <summary>A choice in the "Password" selector of the BackupWindow (Design-Encryption §11.1.4).</summary>
 /// <param name="SetIndex">Standard index of the set whose password is reused; −1 = a new password.</param>
