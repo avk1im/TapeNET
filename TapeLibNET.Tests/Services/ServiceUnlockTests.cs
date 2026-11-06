@@ -1,7 +1,6 @@
 using Windows.Win32.Foundation;
 using TapeLibNET.Encryption;
 using TapeLibNET.Services;
-using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests.Services;
 
@@ -9,48 +8,8 @@ namespace TapeLibNET.Tests.Services;
 /// Design-Encryption §11.1.10 (Phase 7, step 1): the in-dialog password check, unlocking every chain with one password,
 ///  the session-wide wrong-password delay, key retention across media changes, and the password-change proof.
 /// </summary>
-public class ServiceUnlockTests : ServiceTestBase
+public class ServiceUnlockTests : EncryptionServiceTestBase
 {
-    #region *** Helpers ***
-
-    private static char[] PwA() => "correct horse battery".ToCharArray();
-    private static char[] PwB() => "a different password".ToCharArray();
-    private static char[] Wrong() => "not the password".ToCharArray();
-
-    private static TempFileTree Tree(string name)
-    {
-        var tree = new TempFileTree();
-        tree.AddFiles(name, 3, minSize: 512, maxSize: 4 * 1024);
-        return tree;
-    }
-
-    /// <summary>Formats, then backs up one encrypted set per password — each a chain of its own.</summary>
-    private async Task SeedAsync(TempVirtualMedia media, params Func<char[]>[] passwords)
-    {
-        var (svc, host) = await OpenAndFormatAsync(media);
-        using (svc)
-        {
-            for (int i = 0; i < passwords.Length; i++)
-            {
-                using var tree = Tree($"set{i}");
-                var result = await svc.ExecuteBackupAsync(MakeBackupRequest(svc, tree.RootPath, $"Secret {i}", append: i > 0)
-                    with { Encryption = TapeEncryption.Software, Password = passwords[i](), ProceedOnMediaMismatch = true });
-                Assert.True(result.Success, host.DumpReports());
-            }
-        }
-    }
-
-    private static TempVirtualMedia NewMedia() => new(withInitiator: false, ContentCapacity, InitiatorCapacity);
-
-    /// <summary>A controllable clock for the delay.</summary>
-    private sealed class TestClock
-    {
-        public DateTime Now = new(2026, 11, 1, 12, 0, 0, DateTimeKind.Utc);
-        public void Advance(TimeSpan by) => Now += by;
-    }
-
-    #endregion
-
     #region *** VerifyPasswordAsync ***
 
     [Fact]
@@ -58,12 +17,12 @@ public class ServiceUnlockTests : ServiceTestBase
     {
         using var _ = TapeCrypto.UseIterations(1_000);
         using var media = NewMedia();
-        await SeedAsync(media, PwA);
+        await SeedAsync(media, Pw);
         var (svc, host) = await ReopenAsync(media);
         using (svc)
         {
             int set = svc.TOC!.LastSetOnVolume;
-            Assert.True(await svc.VerifyPasswordAsync(set, PwA(), unlock: false));
+            Assert.True(await svc.VerifyPasswordAsync(set, Pw(), unlock: false));
             Assert.True(svc.TOC[set].IsLocked);
         }
     }
@@ -73,12 +32,12 @@ public class ServiceUnlockTests : ServiceTestBase
     {
         using var _ = TapeCrypto.UseIterations(1_000);
         using var media = NewMedia();
-        await SeedAsync(media, PwA);
+        await SeedAsync(media, Pw);
         var (svc, host) = await ReopenAsync(media);
         using (svc)
         {
             int set = svc.TOC!.LastSetOnVolume;
-            Assert.True(await svc.VerifyPasswordAsync(set, PwA(), unlock: true));
+            Assert.True(await svc.VerifyPasswordAsync(set, Pw(), unlock: true));
             Assert.False(svc.TOC[set].IsLocked);
             Assert.Equal("Secret 0", svc.TOC[set].Description);
         }
@@ -89,7 +48,7 @@ public class ServiceUnlockTests : ServiceTestBase
     {
         using var _ = TapeCrypto.UseIterations(1_000);
         using var media = NewMedia();
-        await SeedAsync(media, PwA);
+        await SeedAsync(media, Pw);
         var (svc, host) = await ReopenAsync(media);
         using (svc)
         {
@@ -106,12 +65,12 @@ public class ServiceUnlockTests : ServiceTestBase
     {
         using var _ = TapeCrypto.UseIterations(1_000);
         using var media = NewMedia();
-        await SeedAsync(media, PwA);
+        await SeedAsync(media, Pw);
         var (svc, host) = await ReopenAsync(media);
         using (svc)
         {
             int set = svc.TOC!.LastSetOnVolume;
-            Assert.True(await svc.VerifyPasswordAsync(set, PwA(), unlock: true));
+            Assert.True(await svc.VerifyPasswordAsync(set, Pw(), unlock: true));
             var result = await svc.VerifyPasswordAsync(set, Wrong(), unlock: false);
             Assert.Equal((uint)WIN32_ERROR.ERROR_INVALID_PASSWORD, result.ErrorCode);
         }
@@ -127,13 +86,13 @@ public class ServiceUnlockTests : ServiceTestBase
     {
         using var _ = TapeCrypto.UseIterations(1_000);
         using var media = NewMedia();
-        await SeedAsync(media, PwA, PwB, PwA);
+        await SeedAsync(media, Pw, OtherPw, Pw);
         var (svc, host) = await ReopenAsync(media);
         using (svc)
         {
             var toc = svc.TOC!;
             int last = toc.LastSetOnVolume;
-            var outcome = await svc.UnlockWithPasswordAsync(PwA());
+            var outcome = await svc.UnlockWithPasswordAsync(Pw());
             Assert.True(outcome.Result, outcome.Result.ErrorMessage);
             Assert.Equal((2, 2), (outcome.Sets, outcome.Chains));
             Assert.False(toc[last].IsLocked);
@@ -148,7 +107,7 @@ public class ServiceUnlockTests : ServiceTestBase
     {
         using var _ = TapeCrypto.UseIterations(1_000);
         using var media = NewMedia();
-        await SeedAsync(media, PwA);
+        await SeedAsync(media, Pw);
         var (svc, host) = await ReopenAsync(media);
         using (svc)
         {
@@ -168,16 +127,16 @@ public class ServiceUnlockTests : ServiceTestBase
     {
         using var _ = TapeCrypto.UseIterations(1_000);
         using var media = NewMedia();
-        await SeedAsync(media, PwA, PwB);
+        await SeedAsync(media, Pw, OtherPw);
         var (svc, host) = await ReopenAsync(media);
         using (svc)
         {
             var toc = svc.TOC!;
             int last = toc.LastSetOnVolume;
-            var result = await svc.ListContentsAsync(new ListRequest(Depth: ListDepth.SetsOverview) { Password = PwA() });
+            var result = await svc.ListContentsAsync(new ListRequest(Depth: ListDepth.SetsOverview) { Password = Pw() });
             Assert.True(result.Success, host.DumpReports());
-            Assert.True(toc[last].IsLocked, "PwB's chain");
-            Assert.False(toc[last - 1].IsLocked, "PwA's chain");
+            Assert.True(toc[last].IsLocked, "OtherPw's chain");
+            Assert.False(toc[last - 1].IsLocked, "Pw's chain");
             Assert.True(host.ContainsMessage("Secret 0"), host.DumpReports());
             Assert.Empty(host.PasswordPrompts);
         }
@@ -189,7 +148,7 @@ public class ServiceUnlockTests : ServiceTestBase
     {
         using var _ = TapeCrypto.UseIterations(1_000);
         using var media = NewMedia();
-        await SeedAsync(media, PwA);
+        await SeedAsync(media, Pw);
         var (svc, host) = await ReopenAsync(media);
         using (svc)
         {
@@ -198,6 +157,113 @@ public class ServiceUnlockTests : ServiceTestBase
             Assert.True(svc.TOC![svc.TOC.LastSetOnVolume].IsLocked);
             Assert.True(host.ContainsMessage("[Locked]"), host.DumpReports());
             Assert.Empty(host.PasswordPrompts);
+        }
+    }
+
+    #endregion
+
+    #region *** One password, every chain it fits — whichever verb carries it (§11.1.1) ***
+
+    // Seed for every test here: three chains — #1 Pw, #2 OtherPw, #3 Pw. A password entered for #3 opens #1 too.
+
+    /// <summary>The restore request's password, entered for #3, opens #1 as well; #2 (another password) stays locked.</summary>
+    [Fact]
+    public async Task Restore_RequestPassword_OpensOtherChainsSharingIt()
+    {
+        using var _ = TapeCrypto.UseIterations(1_000);
+        using var media = NewMedia();
+        await SeedAsync(media, Pw, OtherPw, Pw);
+        var (svc, host) = await ReopenAsync(media);
+        using (svc)
+        {
+            var result = await svc.ExecuteRestoreAsync(RestoreSets(RestoreDir(media, "r"), false, Pw(), 3));
+            Assert.True(result.Success, host.DumpReports());
+
+            var toc = svc.TOC!;
+            Assert.False(toc[3].IsLocked);
+            Assert.False(toc[1].IsLocked, "the same password opens the other chain sharing it");
+            Assert.True(toc[2].IsLocked);
+            Assert.True(host.ContainsMessage("also opened 1 other set(s)"), host.DumpReports());
+            Assert.Empty(host.PasswordPrompts);
+        }
+    }
+
+    /// <summary>The same through the prompt: the answer for #3 opens #1 — the prompt loop applies passwords the same way.</summary>
+    [Fact]
+    public async Task Restore_PromptedPassword_OpensOtherChainsSharingIt()
+    {
+        using var _ = TapeCrypto.UseIterations(1_000);
+        using var media = NewMedia();
+        await SeedAsync(media, Pw, OtherPw, Pw);
+        var (svc, host) = await ReopenAsync(media);
+        using (svc)
+        {
+            host.PasswordAnswers.Enqueue(Pw());
+            var result = await svc.ExecuteRestoreAsync(RestoreSets(RestoreDir(media, "r"), false, null, 3));
+            Assert.True(result.Success, host.DumpReports());
+
+            var toc = svc.TOC!;
+            Assert.False(toc[1].IsLocked);
+            Assert.True(toc[2].IsLocked);
+            var prompt = Assert.Single(TakePasswordPrompts(host));
+            Assert.Equal(3, prompt.SetIndex);
+        }
+    }
+
+    /// <summary>
+    /// A restore of #3 and #1 asks once: opening #3 opened #1 before the pre-flight reached it. #2, also selected, is asked
+    ///  for (declined: skipped).
+    /// </summary>
+    [Fact]
+    public async Task Restore_SeveralSetsSharingPassword_AskedOnce()
+    {
+        using var _ = TapeCrypto.UseIterations(1_000);
+        using var media = NewMedia();
+        await SeedAsync(media, Pw, OtherPw, Pw);
+        var (svc, host) = await ReopenAsync(media);
+        using (svc)
+        {
+            host.PasswordAnswers.Enqueue(Pw());     // for #3; nothing queued for #2: declined
+            var result = await svc.ExecuteRestoreAsync(RestoreSets(RestoreDir(media, "r"), false, null, 1, 2, 3));
+
+            Assert.Equal(1, result.SetsLocked);     // #2
+            var prompts = TakePasswordPrompts(host);
+            Assert.Equal([3, 2], prompts.Select(p => p.SetIndex));   // newest first; #1 never asked for
+        }
+    }
+
+    /// <summary>A rename's password, entered for #3, opens #1 as well.</summary>
+    [Fact]
+    public async Task Rename_Password_OpensOtherChainsSharingIt()
+    {
+        using var _ = TapeCrypto.UseIterations(1_000);
+        using var media = NewMedia();
+        await SeedAsync(media, Pw, OtherPw, Pw);
+        var (svc, host) = await ReopenAsync(media);
+        using (svc)
+        {
+            Assert.True(await svc.RenameBackupSetAsync(3, "Renamed", Pw()), host.DumpReports());
+
+            var toc = svc.TOC!;
+            Assert.Equal("Renamed", toc[3].Description);
+            Assert.False(toc[1].IsLocked);
+            Assert.True(toc[2].IsLocked);
+            Assert.Empty(host.PasswordPrompts);
+        }
+    }
+
+    /// <summary>The in-dialog check with <c>unlock: false</c> opens nothing — not even the chains the password fits.</summary>
+    [Fact]
+    public async Task Verify_WithoutUnlock_OpensNoOtherChain()
+    {
+        using var _ = TapeCrypto.UseIterations(1_000);
+        using var media = NewMedia();
+        await SeedAsync(media, Pw, OtherPw, Pw);
+        var (svc, host) = await ReopenAsync(media);
+        using (svc)
+        {
+            Assert.True(await svc.VerifyPasswordAsync(3, Pw(), unlock: false));
+            Assert.All(svc.TOC!, s => Assert.True(s.IsLocked));
         }
     }
 
@@ -214,7 +280,7 @@ public class ServiceUnlockTests : ServiceTestBase
     {
         using var _ = TapeCrypto.UseIterations(1_000);
         using var media = NewMedia();
-        await SeedAsync(media, PwA);
+        await SeedAsync(media, Pw);
         var (svc, host) = await ReopenAsync(media);
         using (svc)
         {
@@ -232,12 +298,12 @@ public class ServiceUnlockTests : ServiceTestBase
                 (await svc.VerifyPasswordAsync(set, Wrong(), unlock: false)).ErrorCode);
             Assert.Equal(TimeSpan.FromSeconds(5), svc.PasswordRetryDelay);
 
-            var refused = await svc.VerifyPasswordAsync(set, PwA(), unlock: true);
+            var refused = await svc.VerifyPasswordAsync(set, Pw(), unlock: true);
             Assert.Equal((uint)WIN32_ERROR.ERROR_ACCOUNT_LOCKED_OUT, refused.ErrorCode);
             Assert.True(svc.TOC[set].IsLocked, "nothing tried while the delay runs");
 
             clock.Advance(TimeSpan.FromSeconds(5));
-            Assert.True(await svc.VerifyPasswordAsync(set, PwA(), unlock: true));
+            Assert.True(await svc.VerifyPasswordAsync(set, Pw(), unlock: true));
             Assert.Equal(TimeSpan.Zero, svc.PasswordRetryDelay);
 
             // Reset: three more wrong ones are free again
@@ -253,7 +319,7 @@ public class ServiceUnlockTests : ServiceTestBase
     {
         using var _ = TapeCrypto.UseIterations(1_000);
         using var media = NewMedia();
-        await SeedAsync(media, PwA);
+        await SeedAsync(media, Pw);
         var (svc, host) = await ReopenAsync(media);
         using (svc)
         {
@@ -286,13 +352,13 @@ public class ServiceUnlockTests : ServiceTestBase
     {
         using var _ = TapeCrypto.UseIterations(1_000);
         using var media = NewMedia();
-        await SeedAsync(media, PwA);
+        await SeedAsync(media, Pw);
         var (svc, host) = await ReopenAsync(media);
         using (svc)
         {
             svc.RetainKeysAcrossMedia = true;
             int set = svc.TOC!.LastSetOnVolume;
-            Assert.True(await svc.VerifyPasswordAsync(set, PwA(), unlock: true));
+            Assert.True(await svc.VerifyPasswordAsync(set, Pw(), unlock: true));
 
             Assert.True(await svc.LoadMediaAsync(), svc.LastError);
             Assert.True(await svc.RestoreTOCAsync(), svc.LastError);
@@ -314,14 +380,14 @@ public class ServiceUnlockTests : ServiceTestBase
         using var _ = TapeCrypto.UseIterations(1_000);
         using var first = NewMedia();
         using var other = NewMedia();
-        await SeedAsync(first, PwA);
-        await SeedAsync(other, PwA);                 // the same password, but a chain of its own
+        await SeedAsync(first, Pw);
+        await SeedAsync(other, Pw);                 // the same password, but a chain of its own
 
         var (svc, host) = await ReopenAsync(first);
         using (svc)
         {
             svc.RetainKeysAcrossMedia = true;
-            Assert.True(await svc.VerifyPasswordAsync(svc.TOC!.LastSetOnVolume, PwA(), unlock: true));
+            Assert.True(await svc.VerifyPasswordAsync(svc.TOC!.LastSetOnVolume, Pw(), unlock: true));
 
             Assert.True(await svc.OpenVirtualDriveAsync(CapsFor(other), VmdFor(other), FileMode.Open), svc.LastError);
             Assert.True(await svc.LoadMediaAsync(), svc.LastError);
@@ -336,12 +402,12 @@ public class ServiceUnlockTests : ServiceTestBase
     {
         using var _ = TapeCrypto.UseIterations(1_000);
         using var media = NewMedia();
-        await SeedAsync(media, PwA);
+        await SeedAsync(media, Pw);
         var (svc, host) = await ReopenAsync(media);
         using (svc)
         {
             int set = svc.TOC!.LastSetOnVolume;
-            Assert.True(await svc.VerifyPasswordAsync(set, PwA(), unlock: true));
+            Assert.True(await svc.VerifyPasswordAsync(set, Pw(), unlock: true));
             Assert.True(await svc.LoadMediaAsync(), svc.LastError);
             Assert.True(await svc.RestoreTOCAsync(), svc.LastError);
             Assert.True(svc.TOC![set].IsLocked);
@@ -358,14 +424,14 @@ public class ServiceUnlockTests : ServiceTestBase
     {
         using var _ = TapeCrypto.UseIterations(1_000);
         using var media = NewMedia();
-        await SeedAsync(media, PwA);
+        await SeedAsync(media, Pw);
         var (svc, host) = await ReopenAsync(media);
         using (svc)
         {
             int set = svc.TOC!.LastSetOnVolume;
-            Assert.True(await svc.VerifyPasswordAsync(set, PwA(), unlock: true));
+            Assert.True(await svc.VerifyPasswordAsync(set, Pw(), unlock: true));
 
-            Assert.False(await svc.RenameBackupSetAsync(set, null, Wrong(), PwB()));
+            Assert.False(await svc.RenameBackupSetAsync(set, null, Wrong(), OtherPw()));
             // The wrong supplied password is not accepted on the strength of the held key; the user is asked once and
             //  declines (no queued answer).
             var prompt = Assert.Single(host.PasswordPrompts);
@@ -376,7 +442,7 @@ public class ServiceUnlockTests : ServiceTestBase
 
         var (rsvc, rhost) = await ReopenAsync(media);
         using (rsvc)
-            Assert.True(await rsvc.VerifyPasswordAsync(rsvc.TOC!.LastSetOnVolume, PwA(), unlock: false),
+            Assert.True(await rsvc.VerifyPasswordAsync(rsvc.TOC!.LastSetOnVolume, Pw(), unlock: false),
                 "the old password still opens it: nothing was changed");
     }
 
@@ -385,17 +451,17 @@ public class ServiceUnlockTests : ServiceTestBase
     {
         using var _ = TapeCrypto.UseIterations(1_000);
         using var media = NewMedia();
-        await SeedAsync(media, PwA);
+        await SeedAsync(media, Pw);
         var (svc, host) = await ReopenAsync(media);
         using (svc)
-            Assert.True(await svc.RenameBackupSetAsync(svc.TOC!.LastSetOnVolume, null, PwA(), PwB()), host.DumpReports());
+            Assert.True(await svc.RenameBackupSetAsync(svc.TOC!.LastSetOnVolume, null, Pw(), OtherPw()), host.DumpReports());
 
         var (rsvc, rhost) = await ReopenAsync(media);
         using (rsvc)
         {
             int set = rsvc.TOC!.LastSetOnVolume;
-            Assert.False(await rsvc.VerifyPasswordAsync(set, PwA(), unlock: false));
-            Assert.True(await rsvc.VerifyPasswordAsync(set, PwB(), unlock: false));
+            Assert.False(await rsvc.VerifyPasswordAsync(set, Pw(), unlock: false));
+            Assert.True(await rsvc.VerifyPasswordAsync(set, OtherPw(), unlock: false));
         }
     }
 

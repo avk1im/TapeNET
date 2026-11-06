@@ -1,5 +1,4 @@
 using Windows.Win32.Foundation;
-using TapeLibNET.Agents;
 using TapeLibNET.Compression;
 using TapeLibNET.Encryption;
 using TapeLibNET.Services;
@@ -14,66 +13,10 @@ namespace TapeLibNET.Tests.Services;
 ///  change, and the encryption verbs.
 /// </summary>
 /// <remarks>
-/// PBKDF2 runs at 1,000 iterations (<see cref="TapeCrypto.UseIterations"/>, AsyncLocal — it flows into the service's
-///  worker tasks). Passwords are fresh arrays per use: the service clears every array it receives.
+/// Helpers: Passwords are fresh arrays per use: the service clears every array it receives.
 /// </remarks>
-public class ServiceEncryptionTests : ServiceTestBase
+public class ServiceEncryptionTests : EncryptionServiceTestBase
 {
-    #region *** Helpers ***
-
-    private const string Secret = "Secret set";
-    private static char[] Pw() => "correct horse battery".ToCharArray();
-    private static char[] OtherPw() => "a different password".ToCharArray();
-    private static char[] Wrong() => "not the password".ToCharArray();
-
-    private static TempFileTree Tree(string name, int count = 4)
-    {
-        var tree = new TempFileTree();
-        tree.AddFiles(name, count, minSize: 512, maxSize: 8 * 1024);
-        return tree;
-    }
-
-    private static BackupRequest Encrypted(BackupRequest request, char[]? password = null)
-        => request with { Encryption = TapeEncryption.Software, Password = password ?? Pw(), ProceedOnMediaMismatch = true };
-
-    private static RestoreRequest RestoreSets(string target, bool incremental, char[]? password, params int[] sets) => new(
-        Mode: RestoreMode.Restore,
-        CheckedFilesBySet: sets.ToDictionary(s => s, _ => (IReadOnlyList<TapeFileInfo>?)null),
-        Incremental: incremental,
-        TargetDirectory: target,
-        RecurseSubdirectories: true,
-        HandleExisting: TapeHowToHandleExisting.Overwrite,
-        SkipAllErrors: false,
-        EjectWhenDone: false) { Password = password };
-
-    private static string RestoreDir(TempVirtualMedia media, string name)
-    {
-        string dir = Path.Combine(media.Root, name);
-        Directory.CreateDirectory(dir);
-        return dir;
-    }
-
-    private static List<PasswordRequest> TakePasswordPrompts(TestTapeServiceHost host)
-    {
-        var prompts = host.PasswordPrompts.ToList();
-        host.PasswordPrompts.Clear();
-        return prompts;
-    }
-
-    /// <summary>Formats, then backs up <paramref name="tree"/> as one encrypted set. Returns the media for reopening.</summary>
-    private async Task SeedEncryptedAsync(TempVirtualMedia media, TempFileTree tree)
-    {
-        var (svc, host) = await OpenAndFormatAsync(media);
-        using (svc)
-        {
-            var result = await svc.ExecuteBackupAsync(Encrypted(MakeBackupRequest(svc, tree.RootPath, Secret)));
-            Assert.True(result.Success, host.DumpReports());
-            Assert.True(svc.TOC![svc.TOC.LastSetOnVolume].IsEncrypted);
-        }
-    }
-
-    #endregion
-
     #region *** Backup and restore ***
 
     /// <summary>An encrypted set round-trips; reopened, it is locked; the request's password opens it without a prompt.</summary>
@@ -83,7 +26,7 @@ public class ServiceEncryptionTests : ServiceTestBase
     public async Task Backup_Encrypted_ReopenedLocked_RestoredWithRequestPassword(bool withInitiator)
     {
         using var _ = TapeCrypto.UseIterations(1_000);
-        using var media = new TempVirtualMedia(withInitiator, ContentCapacity, InitiatorCapacity);
+        using var media = NewMedia(withInitiator);
         using var tree = Tree("enc");
         await SeedEncryptedAsync(media, tree);
 
@@ -107,7 +50,7 @@ public class ServiceEncryptionTests : ServiceTestBase
     public async Task Restore_Locked_PromptWrongThenRight_Restores()
     {
         using var _ = TapeCrypto.UseIterations(1_000);
-        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity, InitiatorCapacity);
+        using var media = NewMedia();
         using var tree = Tree("prompt");
         await SeedEncryptedAsync(media, tree);
 
@@ -135,7 +78,7 @@ public class ServiceEncryptionTests : ServiceTestBase
     public async Task Restore_LockedDeclined_SkipsTheSet_RestoresTheRest_CountsLocked()
     {
         using var _ = TapeCrypto.UseIterations(1_000);
-        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity, InitiatorCapacity);
+        using var media = NewMedia();
         using var plain = Tree("plain");
         using var enc = Tree("enc");
         var (seed, seedHost) = await OpenAndFormatAsync(media);
@@ -164,7 +107,7 @@ public class ServiceEncryptionTests : ServiceTestBase
     public async Task Restore_OnlyLockedSelected_NothingProcessed_WithReason()
     {
         using var _ = TapeCrypto.UseIterations(1_000);
-        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity, InitiatorCapacity);
+        using var media = NewMedia();
         using var tree = Tree("only");
         await SeedEncryptedAsync(media, tree);
 
@@ -189,7 +132,7 @@ public class ServiceEncryptionTests : ServiceTestBase
     public async Task Backup_EncryptedNoPassword_Refused_TocUnchanged()
     {
         using var _ = TapeCrypto.UseIterations(1_000);
-        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity, InitiatorCapacity);
+        using var media = NewMedia();
         using var tree = Tree("nopw");
         var (svc, host) = await OpenAndFormatAsync(media);
         using (svc)
@@ -209,7 +152,7 @@ public class ServiceEncryptionTests : ServiceTestBase
     public async Task Backup_Encrypted_PromptedTwice_MismatchRetried()
     {
         using var _ = TapeCrypto.UseIterations(1_000);
-        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity, InitiatorCapacity);
+        using var media = NewMedia();
         using var tree = Tree("twice");
         var (svc, host) = await OpenAndFormatAsync(media);
         using (svc)
@@ -234,7 +177,7 @@ public class ServiceEncryptionTests : ServiceTestBase
         uint expected)
     {
         using var _ = TapeCrypto.UseIterations(1_000);
-        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity, InitiatorCapacity);
+        using var media = NewMedia();
         using var tree = Tree("refused");
         var (svc, host) = await OpenAndFormatAsync(media);
         using (svc)
@@ -257,7 +200,7 @@ public class ServiceEncryptionTests : ServiceTestBase
     public async Task Incremental_OnEncryptedBase_ImpliedEncryption_ChainRestores()
     {
         using var _ = TapeCrypto.UseIterations(1_000);
-        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity, InitiatorCapacity);
+        using var media = NewMedia();
         using var tree = Tree("chain");
         await SeedEncryptedAsync(media, tree);
 
@@ -291,7 +234,7 @@ public class ServiceEncryptionTests : ServiceTestBase
     public async Task Incremental_OnEncryptedBase_NoPassword_Refused()
     {
         using var _ = TapeCrypto.UseIterations(1_000);
-        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity, InitiatorCapacity);
+        using var media = NewMedia();
         using var tree = Tree("incnopw");
         var (svc, host) = await OpenAndFormatAsync(media);
         using (svc)
@@ -312,7 +255,7 @@ public class ServiceEncryptionTests : ServiceTestBase
     public async Task Incremental_EncryptedOnPlainBase_Refused()
     {
         using var _ = TapeCrypto.UseIterations(1_000);
-        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity, InitiatorCapacity);
+        using var media = NewMedia();
         using var tree = Tree("mixed");
         var (svc, host) = await OpenAndFormatAsync(media);
         using (svc)
@@ -336,7 +279,7 @@ public class ServiceEncryptionTests : ServiceTestBase
     public async Task DescribeSet_Locked_ShowsNoHiddenValue()
     {
         using var _ = TapeCrypto.UseIterations(1_000);
-        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity, InitiatorCapacity);
+        using var media = NewMedia();
         using var tree = Tree("sheet");
         await SeedEncryptedAsync(media, tree);
 
@@ -356,7 +299,7 @@ public class ServiceEncryptionTests : ServiceTestBase
     public async Task List_FileDetails_LockedDeclined_SaysNotListed()
     {
         using var _ = TapeCrypto.UseIterations(1_000);
-        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity, InitiatorCapacity);
+        using var media = NewMedia();
         using var tree = Tree("list");
         await SeedEncryptedAsync(media, tree);
 
@@ -375,7 +318,7 @@ public class ServiceEncryptionTests : ServiceTestBase
     public async Task List_FileDetails_WithPassword_ListsTheFiles()
     {
         using var _ = TapeCrypto.UseIterations(1_000);
-        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity, InitiatorCapacity);
+        using var media = NewMedia();
         using var tree = Tree("listpw");
         await SeedEncryptedAsync(media, tree);
 
@@ -400,7 +343,7 @@ public class ServiceEncryptionTests : ServiceTestBase
     public async Task Rename_ChangesPassword_LocksBack_OldFails_NewOpens()
     {
         using var _ = TapeCrypto.UseIterations(1_000);
-        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity, InitiatorCapacity);
+        using var media = NewMedia();
         using var tree = Tree("rekey");
         await SeedEncryptedAsync(media, tree);
 
@@ -433,7 +376,7 @@ public class ServiceEncryptionTests : ServiceTestBase
     public async Task UnlockThenForget_LocksBack()
     {
         using var _ = TapeCrypto.UseIterations(1_000);
-        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity, InitiatorCapacity);
+        using var media = NewMedia();
         using var tree = Tree("forget");
         await SeedEncryptedAsync(media, tree);
 
@@ -455,7 +398,7 @@ public class ServiceEncryptionTests : ServiceTestBase
     public async Task LoadMedia_ClearsTheRing()
     {
         using var _ = TapeCrypto.UseIterations(1_000);
-        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity, InitiatorCapacity);
+        using var media = NewMedia();
         using var tree = Tree("reload");
         await SeedEncryptedAsync(media, tree);
 
