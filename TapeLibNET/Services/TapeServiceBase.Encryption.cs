@@ -12,6 +12,19 @@ namespace TapeLibNET.Services;
 ///  configuration, the pre-flight unlock, the password prompts, the wrong-password delay, and the encryption verbs.
 ///  Agents never see a password (E10) — they find keys inside the unlocked <see cref="TapeSetTOC"/>s this partial prepares.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <b>Three building blocks carry every password</b> (region "Passwords"):
+/// </para>
+/// <list type="bullet">
+///   <item><see cref="TryPassword"/> — the one way a password is applied to a set: checked against its envelope (counts
+///     toward W8), its key held and applied (E13), then tried on the other locked chains (§11.1.1).</item>
+///   <item><see cref="WithPassword"/> — the one prompt loop: the supplied password first, then up to
+///     <see cref="MaxPasswordAttempts"/> asked ones, W8 waited before each try, asked arrays cleared.</item>
+///   <item><see cref="TryPasswordOnAllChains"/> — one password on every locked chain, for the "unlock everything it
+///     fits" verbs and after every successful <see cref="TryPassword"/>.</item>
+/// </list>
+/// </remarks>
 public partial class TapeServiceBase
 {
     #region *** Key ring (§10.1, E17, §11.1.7) ***
@@ -161,8 +174,8 @@ public partial class TapeServiceBase
     }
 
     /// <summary>
-    /// Waits out the delay before a prompt loop asks again (W8). Returns <see langword="false"/> when the operation was
-    ///  cancelled meanwhile.
+    /// Waits out the delay before a prompt loop tries a password (W8). Returns <see langword="false"/> when the operation
+    ///  was cancelled meanwhile.
     /// </summary>
     private bool WaitForPasswordRetry()
     {
@@ -175,7 +188,7 @@ public partial class TapeServiceBase
 
     #endregion
 
-    #region *** Prompting ***
+    #region *** Passwords: asking, checking, applying ***
 
     private static TapeResult Fail(WIN32_ERROR error, string message) => TapeResult.Fail((uint)error, message);
 
@@ -219,71 +232,50 @@ public partial class TapeServiceBase
         return null;
     }
 
-    /// <summary>Unlocks through the ring with <paramref name="password"/> and counts the outcome (W8).</summary>
-    private TapeResult UnlockCounted(TapeTOC toc, int setIndex, char[] password)
-    {
-        TapeResult result = _keyRing.Unlock(toc, setIndex, password);
-        RecordPasswordOutcome(result);
-        return result;
-    }
-
     /// <summary>
-    /// Unlocks set <paramref name="setIndex"/> (standard index) — with a held key, the supplied password, or prompts
-    ///  (at most <see cref="MaxPasswordAttempts"/>, each after the W8 delay). Through E13 every set of its chain opens with it.
+    /// The one prompt loop: <paramref name="supplied"/> first (when given), then up to <see cref="MaxPasswordAttempts"/>
+    ///  passwords asked for set <paramref name="setIndex"/> — each with the previous failure — until
+    ///  <paramref name="tryPassword"/> answers anything but a wrong password.
     /// </summary>
-    /// <returns>
-    /// OK (also when it was not locked); <c>ERROR_CANCELLED</c> when the user declined or the wait was cancelled;
-    ///  <c>ERROR_INVALID_PASSWORD</c> after the last wrong attempt; <c>ERROR_NOT_SUPPORTED</c> for a scheme this build cannot
-    ///  open (E15); <c>ERROR_INVALID_DATA</c> for a tampered set.
-    /// </returns>
-    /// <remarks>Never stores the password; prompted arrays are cleared here, <paramref name="password"/> by its owner.</remarks>
-    protected TapeResult EnsureSetUnlocked(TapeTOC toc, int setIndex, char[]? password, PasswordPurpose purpose)
+    /// <param name="declined">Returned when the user declines a prompt.</param>
+    /// <param name="tryPassword">
+    /// Applies one password; the array is valid only during the call (asked arrays are cleared afterwards,
+    ///  <paramref name="supplied"/> by its owner).
+    /// </param>
+    /// <remarks>
+    /// W8 is waited right before each try — after asking, so an interactive prompt can show the countdown itself; this
+    ///  wait is the belt for a host that does not.
+    /// </remarks>
+    private TapeResult WithPassword(TapeTOC toc, int setIndex, PasswordPurpose purpose, char[]? supplied,
+        TapeResult declined, Func<char[], TapeResult> tryPassword)
     {
-        TapeSetTOC set = toc[setIndex];
-        if (!set.IsLocked)
-            return TapeResult.OK;
-        if (!set.IsUnlockable)
-            return Fail(WIN32_ERROR.ERROR_NOT_SUPPORTED,
-                $"Set #{setIndex} is encrypted with a method this build does not support ({EncryptionPreset.DisplayName(set.Encryption)})");
-
-        _keyRing.UnlockAll(toc);                       // trial first: a held key may open it
-        if (!set.IsLocked)
-            return TapeResult.OK;
-
         TapeResult? last = null;
-        if (password is { Length: > 0 })
+        for (int attempt = 0; attempt <= MaxPasswordAttempts; attempt++)
         {
-            if (!WaitForPasswordRetry())
-                return Fail(WIN32_ERROR.ERROR_CANCELLED, "Cancelled while waiting to retry the password");
-            TapeResult result = UnlockCounted(toc, setIndex, password);
-            if (result || result.ErrorCode != (uint)WIN32_ERROR.ERROR_INVALID_PASSWORD)
-                return result;
-            last = result;                             // a wrong supplied password: ask the user
-        }
-
-        for (int attempt = 1; attempt <= MaxPasswordAttempts; attempt++)
-        {
-            char[]? asked = AskPassword(toc, purpose, setIndex, attempt, last);
-            if (asked is null)
-                return Fail(WIN32_ERROR.ERROR_CANCELLED, $"Set #{setIndex} is locked — no password supplied");
-            TapeResult result;
+            char[]? password = attempt == 0
+                ? (supplied is { Length: > 0 } ? supplied : null)
+                : AskPassword(toc, purpose, setIndex, attempt, last);
+            if (password is null)
+            {
+                if (attempt == 0)
+                    continue;                           // nothing supplied: ask
+                return declined;
+            }
             try
             {
-                // W8 after asking: the prompt shows the countdown; this wait is the belt for a host that does not
                 if (!WaitForPasswordRetry())
                     return Fail(WIN32_ERROR.ERROR_CANCELLED, "Cancelled while waiting to retry the password");
-                result = UnlockCounted(toc, setIndex, asked);
+                TapeResult result = tryPassword(password);
+                if (result || result.ErrorCode != (uint)WIN32_ERROR.ERROR_INVALID_PASSWORD)
+                    return result;
+                last = result;                          // wrong: ask (again)
             }
             finally
             {
-                Array.Clear(asked);
+                if (!ReferenceEquals(password, supplied))
+                    Array.Clear(password);
             }
-
-            if (result || result.ErrorCode != (uint)WIN32_ERROR.ERROR_INVALID_PASSWORD)
-                return result;
-            last = result;
         }
-
         return last ?? Fail(WIN32_ERROR.ERROR_INVALID_PASSWORD, $"Set #{setIndex}: the password is not correct");
     }
 
@@ -307,13 +299,39 @@ public partial class TapeServiceBase
     }
 
     /// <summary>
-    /// Tries <paramref name="password"/> on every locked chain of <paramref name="toc"/>: each still-locked set's envelope
-    ///  in turn until one opens; its key then opens its whole chain (E13) without further KDF. Neither counts toward the
-    ///  delay nor logs — the callers do.
+    /// The one way a password is applied to a set: checked against <paramref name="set"/>'s envelope (counts toward W8),
+    ///  its key held and applied to every set it opens (E13) — then, being correct, tried on the other locked chains
+    ///  (§11.1.1). Works on a locked and an unlocked set alike: a held key proves nothing, the envelope does.
     /// </summary>
+    /// <param name="held">The ring's instance of the set's key on success — e.g. to wrap it for an incremental.</param>
+    private TapeResult TryPassword(TapeTOC toc, TapeSetTOC set, char[] password, out TapeSetKey? held)
+    {
+        held = null;
+        TapeResult check = CheckEnvelope(set, password, out TapeSetKey? fresh);
+        if (!check)
+            return check;
+        held = _keyRing.Add(fresh!);                    // the ring keeps one instance per DEK
+        _keyRing.UnlockAll(toc);
+        if (set.IsLocked)
+            return Fail(WIN32_ERROR.ERROR_INVALID_DATA,
+                "The password is correct, but the set's TOC entry did not authenticate — " +
+                "it is corrupted or has been tampered with");
+        OpenOtherChainsWith(toc, password);
+        return TapeResult.OK;
+    }
+
+    /// <summary>
+    /// Tries <paramref name="password"/> on every locked chain of <paramref name="toc"/>: held keys first, then each
+    ///  still-locked set's envelope in turn; a key that opens one opens its whole chain (E13) without further KDF. Neither
+    ///  counts toward the delay nor logs — the callers do. One KDF per locked set of a foreign chain.
+    /// </summary>
+    /// <returns>
+    /// Sets and chains opened; the result is OK when anything opened, else the first non-password failure (tampering,
+    ///  KDF), else a wrong password.
+    /// </returns>
     private UnlockOutcome TryPasswordOnAllChains(TapeTOC toc, ReadOnlySpan<char> password)
     {
-        _keyRing.UnlockAll(toc);                // held keys first: free
+        _keyRing.UnlockAll(toc);                        // held keys first: free
         int sets = 0, chains = 0;
         TapeResult? hardFailure = null;
         foreach (TapeSetTOC set in toc)
@@ -337,12 +355,67 @@ public partial class TapeServiceBase
             else
             {
                 hardFailure ??= Fail(WIN32_ERROR.ERROR_INVALID_DATA,
-                    $"Set {set.DisplayName}: the password is correct, but its table-of-contents entry did not authenticate");
+                    $"Set {set.DisplayName}: the password is correct, but its TOC entry did not authenticate");
             }
         }
         TapeResult result = chains > 0 ? TapeResult.OK
             : hardFailure ?? Fail(WIN32_ERROR.ERROR_INVALID_PASSWORD, "The password opens none of the locked sets");
         return new UnlockOutcome(sets, chains, result);
+    }
+
+    /// <summary>
+    /// After a correct password opened its target: the same password opens every other locked chain it fits — whichever
+    ///  verb asked for it (Design-Encryption §11.1.1). Not counted (the target's attempt was).
+    /// </summary>
+    private void OpenOtherChainsWith(TapeTOC toc, ReadOnlySpan<char> password)
+    {
+        UnlockOutcome outcome = TryPasswordOnAllChains(toc, password);
+        if (outcome.Chains > 0)
+            LogInfoSub($"The password also opened {outcome.Sets} other set(s) ({outcome.Chains} key chain(s))");
+    }
+
+    /// <summary>
+    /// The "unlock everything it fits" verbs (<see cref="UnlockWithPasswordAsync"/>, the overviews): refused while the
+    ///  delay runs, else <see cref="TryPasswordOnAllChains"/>, counted once (W8), success logged.
+    /// </summary>
+    private UnlockOutcome UnlockAllChainsCounted(TapeTOC toc, char[] password)
+    {
+        if (DelayRefusal() is { } refused)
+            return new UnlockOutcome(0, 0, refused);
+        UnlockOutcome outcome = TryPasswordOnAllChains(toc, password);
+        RecordPasswordOutcome(outcome.Result);
+        if (outcome.Chains > 0)
+            LogOk($"Unlocked {outcome.Sets} set(s) ({outcome.Chains} key chain(s))");
+        return outcome;
+    }
+
+    /// <summary>
+    /// Unlocks set <paramref name="setIndex"/> (standard index) — with a held key, the supplied password, or prompts
+    ///  (<see cref="WithPassword"/>). Through E13 every set of its chain opens with it; the password then opens every other
+    ///  chain it fits (§11.1.1).
+    /// </summary>
+    /// <returns>
+    /// OK (also when it was not locked); <c>ERROR_CANCELLED</c> when the user declined or the wait was cancelled;
+    ///  <c>ERROR_INVALID_PASSWORD</c> after the last wrong attempt; <c>ERROR_NOT_SUPPORTED</c> for a scheme this build cannot
+    ///  open (E15); <c>ERROR_INVALID_DATA</c> for a tampered set.
+    /// </returns>
+    /// <remarks>Never stores the password; prompted arrays are cleared, <paramref name="password"/> by its owner.</remarks>
+    protected TapeResult EnsureSetUnlocked(TapeTOC toc, int setIndex, char[]? password, PasswordPurpose purpose)
+    {
+        TapeSetTOC set = toc[setIndex];
+        if (!set.IsLocked)
+            return TapeResult.OK;
+        if (!set.IsUnlockable)
+            return Fail(WIN32_ERROR.ERROR_NOT_SUPPORTED,
+                $"Set #{setIndex} is encrypted with a method this build does not support ({EncryptionPreset.DisplayName(set.Encryption)})");
+
+        _keyRing.UnlockAll(toc);                       // trial first: a held key may open it
+        if (!set.IsLocked)
+            return TapeResult.OK;
+
+        return WithPassword(toc, setIndex, purpose, password,
+            declined: Fail(WIN32_ERROR.ERROR_CANCELLED, $"Set #{setIndex} is locked — no password supplied"),
+            tryPassword: p => TryPassword(toc, set, p, out _));
     }
 
     /// <summary>
@@ -354,16 +427,8 @@ public partial class TapeServiceBase
     {
         if (password is not { Length: > 0 } || !toc.Any(s => s.IsLocked && s.IsUnlockable))
             return;
-        if (DelayRefusal() is { } refused)
-        {
-            LogWarn(refused.ErrorMessage);
-            return;
-        }
-        UnlockOutcome outcome = TryPasswordOnAllChains(toc, password);
-        RecordPasswordOutcome(outcome.Result);
-        if (outcome.Chains > 0)
-            LogOk($"Unlocked {outcome.Sets} set(s) ({outcome.Chains} key chain(s))");
-        else
+        UnlockOutcome outcome = UnlockAllChainsCounted(toc, password);
+        if (outcome.Chains == 0)
             LogWarn($"Encrypted sets stay locked: {outcome.Result.ErrorMessage}");
     }
 
@@ -431,54 +496,24 @@ public partial class TapeServiceBase
 
     /// <summary>
     /// An incremental on an encrypted base (§8.2): the password must open the base's envelope — that proves it and unlocks
-    ///  the chain (E13) — and wraps the same DEK in a fresh envelope for the new set.
+    ///  the chain (E13), even when a held key had opened it already — and wraps the same DEK in a fresh envelope for the
+    ///  new set.
     /// </summary>
     private TapeResult JoinChain(TapeTOC toc, TapeSetTOC set, TapeSetTOC previous, char[]? supplied)
     {
-        int baseIndex = toc.CurrentSetIndex - 1;
-        TapeResult? last = null;
-        for (int attempt = 0; attempt <= MaxPasswordAttempts; attempt++)
-        {
-            char[]? password = attempt == 0
-                ? (supplied is { Length: > 0 } ? supplied : null)
-                : AskPassword(toc, PasswordPurpose.Incremental, baseIndex, attempt, last);
-            if (password is null)
+        TapeResult result = WithPassword(toc, toc.CurrentSetIndex - 1, PasswordPurpose.Incremental, supplied,
+            declined: Fail(WIN32_ERROR.ERROR_INVALID_PASSWORD,
+                "An incremental backup on an encrypted set needs that set's password — none was supplied"),
+            tryPassword: p =>
             {
-                if (attempt == 0)
-                    continue;
-                return Fail(WIN32_ERROR.ERROR_INVALID_PASSWORD,
-                    "An incremental backup on an encrypted set needs that set's password — none was supplied");
-            }
-            
-            try
-            {
-                if (!WaitForPasswordRetry())
-                    return Fail(WIN32_ERROR.ERROR_CANCELLED, "Cancelled while waiting to retry the password");
-
-                TapeResult unwrap = CheckEnvelope(previous, password, out TapeSetKey? fresh);
-                if (!unwrap)
-                {
-                    if (unwrap.ErrorCode != (uint)WIN32_ERROR.ERROR_INVALID_PASSWORD)
-                        return unwrap;
-                    last = unwrap;
-                    continue;
-                }
-                TapeSetKey key = _keyRing.Add(fresh!);
-                _keyRing.UnlockAll(toc);
-                if (previous.IsLocked)
-                    return Fail(WIN32_ERROR.ERROR_INVALID_DATA,
-                        "The password is correct, but the base set's table-of-contents entry did not authenticate");
-                set.EnableEncryption(previous.Encryption, TapeSetEncryption.Wrap(key, password), key);
-                LogInfoSub($"Encryption: {EncryptionPreset.DisplayName(previous.Encryption)} — continues the base set's key chain");
-                return TapeResult.OK;
-            }
-            finally
-            {
-                if (!ReferenceEquals(password, supplied))
-                    Array.Clear(password);
-            }
-        }
-        return last ?? Fail(WIN32_ERROR.ERROR_INVALID_PASSWORD, "The password is not correct for the base set");
+                TapeResult tried = TryPassword(toc, previous, p, out TapeSetKey? key);
+                if (tried)      // wrap here: the array is valid only during this call
+                    set.EnableEncryption(previous.Encryption, TapeSetEncryption.Wrap(key!, p), key!);
+                return tried;
+            });
+        if (result)
+            LogInfoSub($"Encryption: {EncryptionPreset.DisplayName(previous.Encryption)} — continues the base set's key chain");
+        return result;
     }
 
     #endregion
@@ -561,7 +596,10 @@ public partial class TapeServiceBase
     /// </summary>
     /// <param name="setIndex">Standard or alternative index.</param>
     /// <param name="password">Cleared by the service.</param>
-    /// <param name="unlock">On success, also unlock the set's chain (E13) and keep its key for the session.</param>
+    /// <param name="unlock">
+    /// On success, also unlock the set's chain (E13) and keep its key for the session — and open every other chain the
+    ///  password fits (§11.1.1). False: a pure check, nothing changes.
+    /// </param>
     /// <returns>
     /// OK; <c>ERROR_INVALID_PASSWORD</c>; <c>ERROR_ACCOUNT_LOCKED_OUT</c> while the delay runs (nothing tried);
     ///  <c>ERROR_INVALID_PARAMETER</c> for a plain set; <c>ERROR_NOT_SUPPORTED</c>; <c>ERROR_INVALID_DATA</c>.
@@ -579,22 +617,16 @@ public partial class TapeServiceBase
                 if (DelayRefusal() is { } refused)
                     return refused;
                 TapeSetTOC set = toc[setIndex];
-                TapeResult checkResult = CheckEnvelope(set, password, out TapeSetKey? key);
-                if (!checkResult)
-                    return checkResult;
                 if (!unlock)
                 {
-                    key!.Dispose();
-                    return TapeResult.OK;
+                    TapeResult check = CheckEnvelope(set, password, out TapeSetKey? key);
+                    key?.Dispose();
+                    return check;
                 }
-                _keyRing.Add(key!);                     // the ring keeps one instance per DEK
-                _keyRing.UnlockAll(toc);
-                if (set.IsLocked)
-                    return Fail(WIN32_ERROR.ERROR_INVALID_DATA,
-                        "The password is correct, but the set's table-of-contents entry did not authenticate — " +
-                        "it is corrupted or has been tampered with");
-                _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
-                return TapeResult.OK;
+                TapeResult result = TryPassword(toc, set, password, out _);
+                if (result)
+                    _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
+                return result;
             }
             finally
             {
@@ -623,16 +655,9 @@ public partial class TapeServiceBase
             {
                 if (_toc is not TapeTOC toc)
                     return new UnlockOutcome(0, 0, Fail(WIN32_ERROR.ERROR_INVALID_STATE, "No TOC loaded"));
-                if (DelayRefusal() is { } refused)
-                    return new UnlockOutcome(0, 0, refused);
-
-                UnlockOutcome outcome = TryPasswordOnAllChains(toc, password);
-                RecordPasswordOutcome(outcome.Result);
+                UnlockOutcome outcome = UnlockAllChainsCounted(toc, password);
                 if (outcome.Chains > 0)
-                {
-                    LogOk($"Unlocked {outcome.Sets} set(s) ({outcome.Chains} key chain(s))");
                     _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
-                }
                 return outcome;
             }
             finally
@@ -680,7 +705,6 @@ public partial class TapeServiceBase
             LastError = "No media loaded";
             return false;
         }
-
         if (RefuseOnSeriesToc(what: "rename the backup set"))
             return false;
 
@@ -777,53 +801,12 @@ public partial class TapeServiceBase
 
     /// <summary>
     /// A password change's proof (§11.1.10): the current password against the set's ENVELOPE — supplied, else asked
-    ///  (at most <see cref="MaxPasswordAttempts"/>, W8 obeyed). On success the chain is unlocked with the held instance.
+    ///  (<see cref="WithPassword"/>) — held key or not. On success the chain is unlocked with the held instance.
     /// </summary>
     private TapeResult VerifyCurrentPassword(TapeTOC toc, int setIndex, char[]? supplied)
-    {
-        TapeSetTOC set = toc[setIndex];
-        TapeResult? last = null;
-        for (int attempt = 0; attempt <= MaxPasswordAttempts; attempt++)
-        {
-            char[]? password = attempt == 0
-                ? (supplied is { Length: > 0 } ? supplied : null)
-                : AskPassword(toc, PasswordPurpose.Rename, setIndex, attempt, last);
-            
-            if (password is null)
-            {
-                if (attempt == 0)
-                    continue;
-                return Fail(WIN32_ERROR.ERROR_CANCELLED, "Changing the password needs the current one — none was supplied");
-            }
-            
-            try
-            {
-                if (!WaitForPasswordRetry())
-                    return Fail(WIN32_ERROR.ERROR_CANCELLED, "Cancelled while waiting to retry the password");
-
-                TapeResult check = CheckEnvelope(set, password, out TapeSetKey? key);
-                if (!check)
-                {
-                    if (check.ErrorCode != (uint)WIN32_ERROR.ERROR_INVALID_PASSWORD)
-                        return check;
-                    last = check;
-                    continue;
-                }
-                _keyRing.Add(key!);
-                _keyRing.UnlockAll(toc);
-                return set.IsLocked
-                    ? Fail(WIN32_ERROR.ERROR_INVALID_DATA,
-                        "The password is correct, but the set's table-of-contents entry did not authenticate")
-                    : TapeResult.OK;
-            }
-            finally
-            {
-                if (!ReferenceEquals(password, supplied))
-                    Array.Clear(password);
-            }
-        }
-        return last ?? Fail(WIN32_ERROR.ERROR_INVALID_PASSWORD, $"Set #{setIndex}: the current password is not correct");
-    }
+        => WithPassword(toc, setIndex, PasswordPurpose.Rename, supplied,
+            declined: Fail(WIN32_ERROR.ERROR_CANCELLED, "Changing the password needs the current one — none was supplied"),
+            tryPassword: p => TryPassword(toc, toc[setIndex], p, out _));
 
     /// <summary>
     /// Asks the host for a new backup-set description (<see cref="ITapeServiceHost.OnAskBackupSetName"/>) — after unlocking
@@ -837,12 +820,11 @@ public partial class TapeServiceBase
             LastError = "No media loaded";
             return false;
         }
-
         if (RefuseOnSeriesToc(what: "rename the backup set"))
             return false;
-
         if (_toc[setIndex].IsLocked && !await UnlockSetsAsync([setIndex]))
             return false;
+
         var setTOC = _toc[setIndex];
         int altIndex = _toc.SetIndexToAlt(setIndex);
         var newName = _host.OnAskBackupSetName(setIndex, altIndex, setTOC.Description ?? string.Empty);

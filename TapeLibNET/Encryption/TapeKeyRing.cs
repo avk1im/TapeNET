@@ -198,7 +198,7 @@ public sealed class TapeKeyRing(ILogger? logger = null)
 
         if (target.IsLocked)
             return Failed(WIN32_ERROR.ERROR_INVALID_DATA,
-                $"Backup set {target.SetId:N}: the password is correct, but the set's table-of-contents entry did not " +
+                $"Backup set {target.SetId:N}: the password is correct, but the set's TOC entry did not " +
                 "authenticate — it is corrupted or has been tampered with");
 
         m_logger.LogInformation("{Prefix}: chain unlocked by password — {Count} set(s) opened", LogPrefix, unlocked);
