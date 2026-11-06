@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 
@@ -15,6 +15,15 @@ public interface IPasswordSource
 
     /// <summary>The typed password as a fresh array — the caller (or the service it is passed to) clears it — and clears the box.</summary>
     char[] TakePassword();
+
+    /// <summary>
+    /// The typed password as a fresh array, the box KEPT — for an in-window check (W3) whose field must stay filled for a
+    ///  later <see cref="TakePassword"/>. The caller (or the service) clears the array.
+    /// </summary>
+    char[] CopyPassword();
+
+    /// <summary>Raised whenever the typed password changes.</summary>
+    event EventHandler? PasswordChanged;
 
     /// <summary>Empties the box.</summary>
     void Clear();
@@ -131,6 +140,9 @@ public partial class PasswordInput : UserControl, IPasswordSource
     }
 
     /// <inheritdoc/>
+    public char[] CopyPassword() => Box.Password.ToCharArray();
+
+    /// <inheritdoc/>
     public void Clear() => Box.Clear();
 
     /// <summary>Moves the keyboard focus into the box.</summary>
@@ -142,8 +154,10 @@ public partial class PasswordInput : UserControl, IPasswordSource
     private void Box_PasswordChanged(object sender, RoutedEventArgs e)
     {
         SetValue(HasPasswordKey, Box.Password.Length > 0);
-        ErrorText = null;       // a new attempt: the old verdict no longer applies
-        IsVerified = false;
+        // A new attempt: the old verdict no longer applies. SetCurrentValue, not SetValue: a host may BIND ErrorText and
+        //  IsVerified (BackupWindow) — a local value would replace its binding for good.
+        SetCurrentValue(ErrorTextProperty, null);
+        SetCurrentValue(IsVerifiedProperty, false);
         PasswordChanged?.Invoke(this, EventArgs.Empty);
     }
 

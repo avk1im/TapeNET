@@ -1,9 +1,10 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using Microsoft.Win32;
 using TapeLibNET.Compression;
+using TapeLibNET.Encryption;
 using TapeLibNET.Services;
 using TapeLibNET.Toc;
 using TapeWinNET.Models;
@@ -28,6 +29,11 @@ namespace TapeWinNET.ViewModels;
 /// <param name="IncludeSubdirectories">Whether sources were scanned with subdirectory recursion.</param>
 /// <param name="MediaName">New media description when writing to media with no existing TOC;
 ///  <see langword="null"/> when the media already has a TOC.</param>
+/// <param name="Encryption">The new set's encryption scheme (Design-Encryption §11.1.4).</param>
+/// <param name="Password">
+/// The new set's password — new, or that of an existing set (reused, or the base of an incremental). The service clears
+///  the array after use.
+/// </param>
 public record BackupFormData(
     string Description,
     List<TapeFileInfo> CheckedFiles,
@@ -45,7 +51,9 @@ public record BackupFormData(
     int CompressionLevel = ZstdLevel.Default,
     bool ProceedOnMediaMismatch = false,
     bool CorrectSetNavigation = true,
-    bool VerifySetHeader = true);
+    bool VerifySetHeader = true,
+    TapeEncryption Encryption = TapeEncryption.None,
+    char[]? Password = null);
 
 /// <summary>
 /// ViewModel for the BackupWindow (Option B: Source-Drill-Down).
@@ -56,7 +64,7 @@ public record BackupFormData(
 /// Right panel contains backup options and preview.
 /// </para>
 /// </summary>
-public class BackupViewModel : ViewModelBase
+public partial class BackupViewModel : ViewModelBase
 {
     private readonly TapeService _tapeService;
     private readonly Action<BackupFormData> _onStartBackup;
@@ -98,7 +106,7 @@ public class BackupViewModel : ViewModelBase
     private int _selectedBlockSizeIndex;
     private readonly int _defaultBlockSizeIndex;        // initial drive default; used by Load Defaults
     private int _selectedHashIndex = 1;        // Default CRC32
-    private int _selectedCompressionIndex;     // Default None; overridden in constructor
+    private TapeCompression _selectedCompression = TapeCompression.Software;     // Default Software
     private int _compressionLevel = ZstdLevel.Default;
     private bool _appendToSet = true;
     private AppendAfterOption? _selectedAppendOption;
@@ -189,8 +197,8 @@ public class BackupViewModel : ViewModelBase
         StartBackupCommand = new RelayCommand(ExecuteStart, _ => CanStart);
         CancelCommand = new RelayCommand(_ => _onCancel());
 
-        // Default to Software compression
-        _selectedCompressionIndex = Array.IndexOf(CompressionModeValues, TapeCompression.Software);
+        // Encryption: options and password sources (Design-Encryption §11.1.4)
+        RefreshPasswordSourceOptions();
 
         // Commands — compression level presets
         SetCompressionFastCommand     = new RelayCommand(_ => CompressionLevel = ZstdLevel.Fast);
@@ -382,7 +390,10 @@ public class BackupViewModel : ViewModelBase
         set
         {
             if (SetProperty(ref _incrementalBackup, value))
+            {
                 UsageBar?.Rebuild();
+                NotifyEncryptionChanged();
+            }
         }
     }
 
@@ -441,6 +452,7 @@ public class BackupViewModel : ViewModelBase
                 UsageBar?.Rebuild();
                 UsageBar?.UpdateHighlight(
                     _appendToSet ? _selectedAppendOption?.SetIndex : null);
+                NotifyEncryptionChanged();
             }
         }
     }
@@ -537,6 +549,7 @@ public class BackupViewModel : ViewModelBase
                 UsageBar?.Rebuild();
                 UsageBar?.UpdateHighlight(
                     OverwriteMedia ? null : value?.SetIndex);
+                NotifyEncryptionChanged();
             }
         }
     }
@@ -562,14 +575,21 @@ public class BackupViewModel : ViewModelBase
     public bool SupportsHardwareCompression => _tapeService.SupportsCompression;
 
     /// <summary>
-    /// Compression mode display names. Includes "Hardware" only when the drive supports it.
+    /// Hardware compression is offered: the drive supports it, and the new set is not software-encrypted — encrypted data
+    ///  does not compress (Design-Encryption §11.1.4).
     /// </summary>
-    public string[] CompressionModeOptions => _tapeService.SupportsCompression
+    private bool OffersHardwareCompression => _tapeService.SupportsCompression
+        && EffectiveEncryption != TapeEncryption.Software;
+
+    /// <summary>
+    /// Compression mode display names. Includes "Hardware" only when <see cref="OffersHardwareCompression"/>.
+    /// </summary>
+    public string[] CompressionModeOptions => OffersHardwareCompression
         ? ["None", "Hardware", "Software"]
         : ["None", "Software"];
 
     /// <summary>Corresponding <see cref="TapeCompression"/> values for each option.</summary>
-    public TapeCompression[] CompressionModeValues => _tapeService.SupportsCompression
+    public TapeCompression[] CompressionModeValues => OffersHardwareCompression
         ? [TapeCompression.None, TapeCompression.Hardware, TapeCompression.Software]
         : [TapeCompression.None, TapeCompression.Software];
 
@@ -579,22 +599,40 @@ public class BackupViewModel : ViewModelBase
     /// <summary>Selected hash algorithm.</summary>
     public TapeHashAlgorithm SelectedHashAlgorithm => HashValues[SelectedHashIndex];
 
-    /// <summary>Index into <see cref="CompressionModeOptions"/> / <see cref="CompressionModeValues"/>.</summary>
+    /// <summary>
+    /// Index into <see cref="CompressionModeOptions"/> / <see cref="CompressionModeValues"/> — derived from the selected
+    ///  VALUE, so the choice survives the list changing (Hardware dropping out under software encryption).
+    /// </summary>
     public int SelectedCompressionIndex
     {
-        get => _selectedCompressionIndex;
+        get => Array.IndexOf(CompressionModeValues, _selectedCompression);
         set
         {
-            if (SetProperty(ref _selectedCompressionIndex, value))
-            {
-                OnPropertyChanged(nameof(SelectedCompression));
-                OnPropertyChanged(nameof(IsSoftwareCompression));
-            }
+            var values = CompressionModeValues;
+            if (value < 0 || value >= values.Length)
+                return;     // the ComboBox resets to -1 while its ItemsSource is replaced
+            SetSelectedCompression(values[value], byUser: true);
         }
     }
 
     /// <summary>Selected compression mode.</summary>
-    public TapeCompression SelectedCompression => CompressionModeValues[_selectedCompressionIndex];
+    public TapeCompression SelectedCompression => _selectedCompression;
+
+    /// <summary>Sets the compression; <paramref name="byUser"/> clears the "switched by encryption" note.</summary>
+    private void SetSelectedCompression(TapeCompression value, bool byUser)
+    {
+        if (byUser)
+            _compressionSwitchedByEncryption = false;
+        if (_selectedCompression != value)
+        {
+            _selectedCompression = value;
+            OnPropertyChanged(nameof(SelectedCompression));
+            OnPropertyChanged(nameof(IsSoftwareCompression));
+        }
+        OnPropertyChanged(nameof(SelectedCompressionIndex));
+        OnPropertyChanged(nameof(WarningMessage));
+        OnPropertyChanged(nameof(WarningLevel));
+    }
 
     /// <summary>
     /// ZSTD compression level (1–19). Only meaningful when
@@ -711,6 +749,14 @@ public class BackupViewModel : ViewModelBase
                 message += "Backup set verification disabled — an overwrite may destroy the WRONG backup set.";
             }
 
+            // Encryption lines (Design-Encryption §11.1.4, W6) — each only while its condition holds
+            foreach (var (_, line) in EncryptionWarnings())
+            {
+                if (message != string.Empty)
+                    message += "\r\n";
+                message += line;
+            }
+
             return message;
         }
     }
@@ -739,7 +785,11 @@ public class BackupViewModel : ViewModelBase
                 return WarningLevel.Info;
             }
 
-            return BumpForAdvancedRisk(BaseLevel());
+            // The pane shows the most severe of all its lines
+            WarningLevel level = BumpForAdvancedRisk(BaseLevel());
+            foreach (var (lineLevel, _) in EncryptionWarnings())
+                level = MaxLevel(level, lineLevel);
+            return level;
         }
     }
 
@@ -790,8 +840,12 @@ public class BackupViewModel : ViewModelBase
         private set => SetProperty(ref _previewCheckedSize, value);
     }
 
-    /// <summary>Whether the Start Backup button is enabled.</summary>
-    public bool CanStart => !IsScanning && _sourceView.GetTotalCheckedCount() > 0;
+    /// <summary>
+    /// Whether the Start Backup button is enabled: files checked, and — when encrypting — no conflict and a usable
+    ///  password (<see cref="IsPasswordReady"/>).
+    /// </summary>
+    public bool CanStart => !IsScanning && _sourceView.GetTotalCheckedCount() > 0
+        && !IsEncryptionConflict && IsPasswordReady && !_isVerifyingPassword;
 
     // ═════════════════════════════════════════════════
     //  Tri-state "select all" header checkbox
@@ -1284,7 +1338,7 @@ public class BackupViewModel : ViewModelBase
     //  Start backup
     // ═════════════════════════════════════════════════
 
-    private void ExecuteStart(object? _)
+    private async void ExecuteStart(object? _)
     {
         var checkedFiles = _sourceView.CollectCheckedFiles(
             SourceItems.Select(s => s.Entry));
@@ -1295,6 +1349,15 @@ public class BackupViewModel : ViewModelBase
                 "Backup", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
+
+        // An existing set's password is checked in this window, before it closes (W3): a typo keeps every selection.
+        if (ShowExistingPassword && !_existingPasswordVerified && !await VerifyExistingPasswordAsync())
+            return;
+
+        TapeEncryption encryption = EffectiveEncryption;
+        char[]? password = encryption == TapeEncryption.None ? null
+            : UsesExistingPassword ? _existingPasswordSource?.TakePassword()
+            : _newPasswordSource?.TakePassword();
 
         var request = new BackupFormData(
             Description: _description,
@@ -1313,7 +1376,9 @@ public class BackupViewModel : ViewModelBase
             CompressionLevel: _compressionLevel,
             ProceedOnMediaMismatch: _proceedOnMediaMismatch,
             CorrectSetNavigation: _correctSetNavigation,
-            VerifySetHeader: _verifySetHeader);
+            VerifySetHeader: _verifySetHeader,
+            Encryption: encryption,
+            Password: password);
 
         _onStartBackup(request);
     }
@@ -1380,8 +1445,9 @@ public class BackupViewModel : ViewModelBase
         SelectedBlockSizeIndex = _defaultBlockSizeIndex;
         SelectedHashIndex      = 1; // CRC32
 
-        // Default compression: Software
-        SelectedCompressionIndex = Array.IndexOf(CompressionModeValues, TapeCompression.Software);
+        // Default compression: Software; no encryption
+        SelectedEncryptionIndex = 0;    // None
+        SetSelectedCompression(TapeCompression.Software, byUser: true);
         CompressionLevel = ZstdLevel.Default;
     }
 
@@ -1389,8 +1455,9 @@ public class BackupViewModel : ViewModelBase
     private bool IsLastSetLocked => _tapeService.TOC is { Count: > 0 } toc && toc[toc.LastSetOnVolume].IsLocked;
 
     /// <summary>
-    /// Copies backup options (block size, hash, compression, incremental flag) from the
-    ///  last backup set on the current media. Disabled when no sets exist.
+    /// Copies backup options (block size, hash, compression, incremental flag, encryption) from the
+    ///  last backup set on the current media. Disabled when no sets exist, or when the last set is locked (its settings are
+    ///  hidden). An encrypted last set also selects "Password of set #…" as the password source — never a password.
     /// </summary>
     private void LoadFromLastBackup()
     {
@@ -1411,14 +1478,21 @@ public class BackupViewModel : ViewModelBase
         if (blockIdx >= 0)
             SelectedBlockSizeIndex = blockIdx;
 
-        // Map compression mode to combo-box index (values array may differ when
-        //  the drive doesn't support hardware compression)
-        int compIdx = Array.IndexOf(CompressionModeValues, lastSet.Compression);
-        if (compIdx >= 0)
-            SelectedCompressionIndex = compIdx;
+        // Encryption first: it decides whether Hardware compression is offered at all
+        int encIdx = Array.IndexOf(EncryptionValues, lastSet.Encryption);
+        SelectedEncryptionIndex = encIdx >= 0 ? encIdx : 0;
+
+        // Compression by value (Hardware is kept only where offered)
+        if (Array.IndexOf(CompressionModeValues, lastSet.Compression) >= 0)
+            SetSelectedCompression(lastSet.Compression, byUser: true);
 
         CompressionLevel  = lastSet.CompressionLevel;
         IncrementalBackup = lastSet.Incremental;
+
+        // A new encrypted chain: reuse the last set's password (an incremental on it uses it anyway)
+        if (ShowPasswordSourceSelector
+            && PasswordSourceOptions.FirstOrDefault(o => o.SetIndex == toc.LastSetOnVolume) is { } same)
+            SelectedPasswordSource = same;
     }
 
     // ═════════════════════════════════════════════════

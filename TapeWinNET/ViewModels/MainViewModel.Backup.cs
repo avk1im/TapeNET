@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Input;
 
 using TapeLibNET.Services;
@@ -150,6 +150,8 @@ public partial class MainViewModel
 
         if (fileList.Count == 0)
         {
+            if (request.Password is not null)
+                Array.Clear(request.Password);     // never handed to the service: clear it here
             SimpleBox.Show("No files to backup.", "Backup", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
@@ -186,6 +188,8 @@ public partial class MainViewModel
                     ProceedOnMediaMismatch = request.ProceedOnMediaMismatch,
                     CorrectSetNavigation  = request.CorrectSetNavigation,
                     VerifySetHeader       = request.VerifySetHeader,
+                    Encryption            = request.Encryption,     // Design-Encryption §11.1.4
+                    Password              = request.Password,       // the service clears it after use
                 });
 
             // Refresh tree after backup to keep TOCView in sync with the (possibly modified) TOC.
