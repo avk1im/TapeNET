@@ -392,7 +392,8 @@ public partial class MainViewModel
         {
             var setTOC = toc[idx];
             var altIdx = toc.SetIndexToAlt(idx);
-            items.Add(new BackupSetListItem(setTOC, idx, altIdx, setTOC.Volume == toc.Volume)
+            items.Add(new BackupSetListItem(setTOC, idx, altIdx, setTOC.Volume == toc.Volume,
+                continuesOnNextVolume: toc.IsSetContOnNextVolume(idx))
             {
                 IsCheckedForRestore = true,
                 CheckedFileCount = setTOC.IsLocked ? null : setTOC.Count,   // hidden while locked

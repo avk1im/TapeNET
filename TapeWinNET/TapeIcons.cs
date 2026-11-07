@@ -188,29 +188,64 @@ public static class TapeIcons
         return composed;
     }
 
-    // ── Backup set icons by encryption state (Design-Encryption §11.1.1) ──────
-    private static BitmapSource? _setIcon, _lockedSetIcon, _unlockedSetIcon;
+    // ── Backup set icons: the set's states as corner overlays (Design-Encryption §11.1.1) ─────────
+    //  Bottom-right: encryption (closed / open padlock) · Bottom-left: incremental (+)
+    //  Top-left: continued from the previous volume (←) · Top-right: continues on the next volume (→)
+    //  Each combination is composed once and cached — 3 × 2 × 2 × 2 = 24 at most.
 
-    /// <summary>The plain backup-set icon, small, frozen.</summary>
-    public static BitmapSource? BackupSetIconSmall => _setIcon ??= Frozen(GetBackupSetIcon(large: false));
+    private const string GlyphLock = "\uE72E";          // Segoe MDL2 Assets: Lock
+    private const string GlyphUnlock = "\uE785";        // Segoe MDL2 Assets: Unlock
+    private const string GlyphIncremental = "\uE710";   // Segoe MDL2 Assets: Add — on its disc it reads as ⊕
+    private const string GlyphForward = "\uE72A";       // Segoe MDL2 Assets: Forward (→)
+    private const string GlyphBack = "\uE72B";          // Segoe MDL2 Assets: Back (←)
 
-    /// <summary>The backup-set icon with a closed padlock (bottom-right): an encrypted, locked set.</summary>
-    public static BitmapSource? LockedBackupSetIconSmall => _lockedSetIcon ??= WithPadlock(GlyphLock);
+    private static readonly Color OverlayGrey = Color.FromRgb(0x40, 0x40, 0x40);
+    private static readonly Color OverlayGreen = Color.FromRgb(0x10, 0x7C, 0x10);
+    private static readonly Color OverlayBlue = Color.FromRgb(0, 80, 160);         // as the globe and digit badges
 
-    /// <summary>The backup-set icon with an open padlock: an encrypted set whose key is applied.</summary>
-    public static BitmapSource? UnlockedBackupSetIconSmall => _unlockedSetIcon ??= WithPadlock(GlyphUnlock);
+    private static readonly Dictionary<BackupSetIconState, BitmapSource?> _setIcons = [];
+    private static readonly Dictionary<string, BitmapSource?> _setOverlays = [];
 
-    private const string GlyphLock = "\uE72E";      // Segoe MDL2 Assets: Lock
-    private const string GlyphUnlock = "\uE785";    // Segoe MDL2 Assets: Unlock
-
-    private static BitmapSource? WithPadlock(string glyph)
+    /// <summary>
+    /// The small backup-set icon for <paramref name="state"/> — the plain folder with one overlay per state, each in its own
+    ///  corner, all the size of the padlock. Composed on first use, then cached (frozen; UI thread).
+    /// </summary>
+    /// <remarks>
+    /// A method, not an indexer: C# has no static indexers. Every combination is legal; the four-overlay case (an
+    ///  unlocked incremental continued across both volume boundaries) covers the folder almost entirely — rare by nature.
+    /// </remarks>
+    public static BitmapSource? GetBackupSetIcon(BackupSetIconState state)
     {
-        if (GetBackupSetIcon(large: false) is not { } baseIcon)
-            return null;
-        var padlock = IconComposer.RenderGlyph(glyph, pixelSize: 32,
-            color: Color.FromRgb(0x40, 0x40, 0x40), backgroundColor: Colors.White);
-        padlock?.Freeze();
-        return IconComposer.ComposeWithOverlay(baseIcon, padlock, OverlayCorner.BottomRight);   // frozen
+        if (_setIcons.TryGetValue(state, out var cached))
+            return cached;
+
+        BitmapSource? icon = Frozen(GetBackupSetIcon(large: false));
+        if (icon is not null)
+        {
+            if (state.Lock != SetLockState.None)
+                icon = IconComposer.ComposeWithOverlay(icon,
+                    Overlay(state.Lock == SetLockState.Locked ? GlyphLock : GlyphUnlock, OverlayGrey),
+                    OverlayCorner.BottomRight);
+            if (state.Incremental)
+                icon = IconComposer.ComposeWithOverlay(icon, Overlay(GlyphIncremental, OverlayGreen), OverlayCorner.BottomLeft);
+            if (state.ContinuedFromPrevVolume)
+                icon = IconComposer.ComposeWithOverlay(icon, Overlay(GlyphBack, OverlayBlue), OverlayCorner.TopLeft);
+            if (state.ContinuesOnNextVolume)
+                icon = IconComposer.ComposeWithOverlay(icon, Overlay(GlyphForward, OverlayBlue), OverlayCorner.TopRight);
+        }
+        _setIcons[state] = icon;
+        return icon;
+    }
+
+    /// <summary>One overlay: the glyph on a white disc, rendered 4× for a crisp downscale — as the padlock always was.</summary>
+    private static BitmapSource? Overlay(string glyph, Color color)
+    {
+        if (_setOverlays.TryGetValue(glyph, out var cached))
+            return cached;
+        var overlay = IconComposer.RenderGlyph(glyph, pixelSize: 32, color: color, backgroundColor: Colors.White);
+        overlay?.Freeze();
+        _setOverlays[glyph] = overlay;
+        return overlay;
     }
 
     private static BitmapSource? Frozen(BitmapSource? icon)
@@ -222,6 +257,43 @@ public static class TapeIcons
 
 /// <summary>Corner of the output canvas where an overlay badge sits.</summary>
 public enum OverlayCorner { TopLeft, TopRight, BottomLeft, BottomRight }
+
+/// <summary>A backup set's encryption as its icon shows it.</summary>
+public enum SetLockState
+{
+    /// <summary>Not encrypted: no padlock.</summary>
+    None,
+    /// <summary>Encrypted, no key: closed padlock.</summary>
+    Locked,
+    /// <summary>Encrypted, key applied: open padlock.</summary>
+    Unlocked,
+}
+
+/// <summary>
+/// The states a backup-set icon shows, independent of each other (<see cref="TapeIcons.GetBackupSetIcon"/>). A value type:
+///  it keys the icon cache.
+/// </summary>
+/// <param name="Lock">Encryption — bottom-right.</param>
+/// <param name="Incremental">An incremental set — bottom-left. Unknown (false) while locked.</param>
+/// <param name="ContinuedFromPrevVolume">The set continues a set of the previous volume — top-left.</param>
+/// <param name="ContinuesOnNextVolume">The set continues on the next volume — top-right.</param>
+public readonly record struct BackupSetIconState(
+    SetLockState Lock = SetLockState.None,
+    bool Incremental = false,
+    bool ContinuedFromPrevVolume = false,
+    bool ContinuesOnNextVolume = false)
+{
+    /// <summary>The state of set <paramref name="setIndex"/> of <paramref name="toc"/> — read between operations only.</summary>
+    public static BackupSetIconState Of(TapeLibNET.Toc.TapeTOC toc, int setIndex)
+    {
+        var set = toc[setIndex];
+        return new(
+            Lock: !set.IsEncrypted ? SetLockState.None : set.IsLocked ? SetLockState.Locked : SetLockState.Unlocked,
+            Incremental: !set.IsLocked && set.Incremental,         // hidden while locked
+            ContinuedFromPrevVolume: set.ContinuedFromPrevVolume,
+            ContinuesOnNextVolume: toc.IsSetContOnNextVolume(setIndex));
+    }
+}
 
 /// <summary>
 /// Utilities for composing toolbar icons from a main image and a small overlay badge.

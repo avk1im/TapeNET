@@ -31,12 +31,11 @@ public class TapeTreeItemViewModel : ViewModelBase
     private TreeItemType _itemType;
     private int _tag;
     private bool _isOnCurrentVolume = true;
+    private BackupSetIconState _setIconState;
     private bool _isTOCImported;
     private bool _isInMemory;
     private bool _isRemote;
     private string? _remoteHost;
-    private bool _isEncrypted;
-    private bool _isLocked;
 
     static TapeTreeItemViewModel()
     {
@@ -100,43 +99,40 @@ public class TapeTreeItemViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Gets the icon for this tree item based on its type — and, for a backup set, its encryption state.
+    /// Gets the icon for this tree item based on its type — and, for a backup set, its states (§11.1.1).
     /// </summary>
     public ImageSource? Icon => ItemType switch
     {
         TreeItemType.Drive => _driveIcon,
         TreeItemType.Tape => _tapeIcon,
-        TreeItemType.BackupSet => !_isEncrypted ? TapeIcons.BackupSetIconSmall
-            : _isLocked ? TapeIcons.LockedBackupSetIconSmall
-            : TapeIcons.UnlockedBackupSetIconSmall,
+        TreeItemType.BackupSet => TapeIcons.GetBackupSetIcon(_setIconState),
         TreeItemType.CalibrationCartridge => _calibrationIcon,
         _ => null
     };
 
-    /// <summary>A backup set that is encrypted (locked or not).</summary>
-    public bool IsEncrypted
+    /// <summary>The states a backup-set node shows; changing it repaints the icon.</summary>
+    private BackupSetIconState SetIconState
     {
-        get => _isEncrypted;
-        private set
+        get => _setIconState;
+        set
         {
-            if (SetProperty(ref _isEncrypted, value))
-                OnPropertyChanged(nameof(Icon));
+            if (_setIconState == value)
+                return;
+            _setIconState = value;
+            OnPropertyChanged(nameof(Icon));
+            OnPropertyChanged(nameof(IsEncrypted));
+            OnPropertyChanged(nameof(IsLocked));
         }
     }
+
+    /// <summary>A backup set that is encrypted (locked or not).</summary>
+    public bool IsEncrypted => _setIconState.Lock != SetLockState.None;
 
     /// <summary>
     /// A backup set that is encrypted and locked: shown grey italic with a padlock (Design-Encryption §11.1.1) — normal,
     ///  never a warning colour.
     /// </summary>
-    public bool IsLocked
-    {
-        get => _isLocked;
-        private set
-        {
-            if (SetProperty(ref _isLocked, value))
-                OnPropertyChanged(nameof(Icon));
-        }
-    }
+    public bool IsLocked => _setIconState.Lock == SetLockState.Locked;
 
     /// <summary>
     /// Whether this backup set resides on the currently loaded volume.
@@ -294,19 +290,19 @@ public class TapeTreeItemViewModel : ViewModelBase
             Parent = parent,
             IsOnCurrentVolume = setTOC.Volume == toc.Volume
         };
-        item.RefreshFromSet(setTOC);
+        item.RefreshFromSet(toc, setIndex);
         return item;
     }
 
     /// <summary>
-    /// Re-reads name and encryption state from <paramref name="setTOC"/> — after an unlock, a lock or a rename.
-    ///  A locked set shows <see cref="TapeSetTOC.DisplayName"/>, never its hidden description.
+    /// Re-reads name and states from set <paramref name="setIndex"/> of <paramref name="toc"/> — after an unlock, a lock
+    ///  or a rename. A locked set shows <see cref="TapeSetTOC.DisplayName"/>, never its hidden description.
     /// </summary>
-    public void RefreshFromSet(TapeSetTOC setTOC)
+    public void RefreshFromSet(TapeTOC toc, int setIndex)
     {
+        var setTOC = toc[setIndex];
         SetTOC = setTOC;
-        IsEncrypted = setTOC.IsEncrypted;
-        IsLocked = setTOC.IsLocked;
+        SetIconState = BackupSetIconState.Of(toc, setIndex);
         string description = setTOC.IsLocked ? $"\U0001F512 {setTOC.DisplayName}"
             : string.IsNullOrEmpty(setTOC.Description) ? "[Unnamed Set]"
             : setTOC.Description;

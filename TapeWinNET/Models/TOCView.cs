@@ -536,7 +536,8 @@ public class TOCView(TapeTOC toc)
                     continue; // skip sets with no checked files when building a checked-only list
 
                 int sourceCount = ffiles.SourceCount;
-                var item = new BackupSetListItem(setTOC, setIndex, alt, setTOC.Volume == _toc.Volume)
+                var item = new BackupSetListItem(setTOC, setIndex, alt, setTOC.Volume == _toc.Volume,
+                    continuesOnNextVolume: _toc.IsSetContOnNextVolume(setIndex))
                 {
                     CheckedFileCount = checkedCount > 0 ? checkedCount : null,
                     FilteredFileCount = ffiles.IsFiltered ? ffiles.Count : null,
@@ -554,7 +555,8 @@ public class TOCView(TapeTOC toc)
                 if (checkedOnly && !whole)
                     continue;
                 // No view yet: unchecked — or checked as a whole (a locked set, or one unlocked since)
-                var item = new BackupSetListItem(setTOC, setIndex, alt, setTOC.Volume == _toc.Volume)
+                var item = new BackupSetListItem(setTOC, setIndex, alt, setTOC.Volume == _toc.Volume,
+                    continuesOnNextVolume: _toc.IsSetContOnNextVolume(setIndex))
                 {
                     IsCheckedForRestore = whole,
                     CheckedFileCount = whole && !setTOC.IsLocked ? setTOC.Count : null,

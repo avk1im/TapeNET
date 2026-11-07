@@ -18,7 +18,8 @@ namespace TapeWinNET.Models;
 ///  unguarded getter would take the whole list down. The set can unlock (or lock again) while the item lives:
 ///  <see cref="Refresh"/> re-reads everything.
 /// </remarks>
-public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bool isOnCurrentVolume)
+public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bool isOnCurrentVolume,
+    bool continuesOnNextVolume = false)
     : INotifyPropertyChanged
 {
     private const string Dash = "\u2014";
@@ -27,14 +28,17 @@ public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bo
     private readonly int _setIndex = setIndex;
     private readonly int _altIndex = altIndex;
     private readonly bool _isOnCurrentVolume = isOnCurrentVolume;
+    private readonly bool _continuesOnNextVolume = continuesOnNextVolume;
 
-    /// <summary>The plain backup-set icon (shared, frozen).</summary>
-    public static ImageSource? DefaultIcon => TapeIcons.BackupSetIconSmall;
+    /// <summary>The icon by state: encryption, incremental, and the volume boundaries it crosses (§11.1.1).</summary>
+    public ImageSource? Icon => TapeIcons.GetBackupSetIcon(new BackupSetIconState(
+        Lock: !_setTOC.IsEncrypted ? SetLockState.None : _setTOC.IsLocked ? SetLockState.Locked : SetLockState.Unlocked,
+        Incremental: IsIncremental,
+        ContinuedFromPrevVolume: _setTOC.ContinuedFromPrevVolume,
+        ContinuesOnNextVolume: _continuesOnNextVolume));
 
-    /// <summary>The icon by state: plain, locked (padlock) or unlocked encrypted (open padlock).</summary>
-    public ImageSource? Icon => !_setTOC.IsEncrypted ? TapeIcons.BackupSetIconSmall
-        : _setTOC.IsLocked ? TapeIcons.LockedBackupSetIconSmall
-        : TapeIcons.UnlockedBackupSetIconSmall;
+    /// <summary>The set continues on the next volume.</summary>
+    public bool ContinuesOnNextVolume => _continuesOnNextVolume;
 
     /// <summary>Encrypted and without its key: only the stub is known.</summary>
     public bool IsLocked => _setTOC.IsLocked;
