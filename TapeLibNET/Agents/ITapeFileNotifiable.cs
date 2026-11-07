@@ -120,6 +120,12 @@ public interface ITapeFileNotifiable : ITapeSetNotifiable
     void OnFileSkipped(TapeFileInfo fileInfo, in TapeFileStatistics stats);
 
     /// <summary>
+    /// Called when an incremental finds a file up to date in its chain — not written, and no cause for concern. Default:
+    ///  reported like a skip, so an implementer that knows only <see cref="OnFileSkipped"/> still sees every file.
+    /// </summary>
+    void OnFileUpToDate(TapeFileInfo fileInfo, in TapeFileStatistics stats) => OnFileSkipped(fileInfo, stats);
+
+    /// <summary>
     /// A file the tape lost after it was handed over: a media write fault took it with the buffer it was in. REPORTED,
     ///  not asked about — there is nothing to retry or skip, and the set ends with the fault.
     /// </summary>

@@ -140,6 +140,9 @@ public abstract record FileOperationResult : ServiceOperationResult
     /// <summary>Files that were explicitly skipped (e.g. via "Skip" in an error dialog).</summary>
     public int FilesSkipped { get; init; }
 
+    /// <summary>Files an incremental found unchanged — handled, not written, and not counted as skipped.</summary>
+    public int FilesUpToDate { get; init; }
+
     /// <summary>Whether the user aborted the operation before completion.</summary>
     public bool WasAborted { get; init; }
 

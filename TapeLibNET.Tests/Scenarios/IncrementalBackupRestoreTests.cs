@@ -114,7 +114,7 @@ public class IncrementalBackupRestoreTests
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
-    public void MultiWave_IncrementalBackup_CorrectSkipAndSucceedCounts(DriveProfile profile)
+    public void MultiWave_IncrementalBackup_CorrectUpToDateAndSucceedCounts(DriveProfile profile)
     {
         using var tree = new TempFileTree();
         using var fixture = new VirtualTapeFixture(profile);
@@ -124,25 +124,25 @@ public class IncrementalBackupRestoreTests
         // Wave 0: Full backup — all 8 files backed up, none skipped
         Assert.Equal(InitialFileCount, stats[0].FilesTotal);
         Assert.Equal(InitialFileCount, stats[0].FilesSucceeded);
-        Assert.Equal(0, stats[0].FilesSkipped);
+        Assert.Equal(0, stats[0].FilesUpToDate);
         Assert.Equal(0, stats[0].FilesFailed);
 
         // Wave 1: 3 modified ? backed up, 5 unchanged ? skipped
         Assert.Equal(InitialFileCount, stats[1].FilesTotal);
         Assert.Equal(3, stats[1].FilesSucceeded);
-        Assert.Equal(5, stats[1].FilesSkipped);
+        Assert.Equal(5, stats[1].FilesUpToDate);
         Assert.Equal(0, stats[1].FilesFailed);
 
         // Wave 2: 2 modified ? backed up, 6 unchanged ? skipped
         Assert.Equal(InitialFileCount, stats[2].FilesTotal);
         Assert.Equal(2, stats[2].FilesSucceeded);
-        Assert.Equal(6, stats[2].FilesSkipped);
+        Assert.Equal(6, stats[2].FilesUpToDate);
         Assert.Equal(0, stats[2].FilesFailed);
 
         // Wave 3: 1 re-modified + 1 new file ? 2 backed up, 7 unchanged ? skipped
         Assert.Equal(InitialFileCount + 1, stats[3].FilesTotal);
         Assert.Equal(2, stats[3].FilesSucceeded);
-        Assert.Equal(7, stats[3].FilesSkipped);
+        Assert.Equal(7, stats[3].FilesUpToDate);
         Assert.Equal(0, stats[3].FilesFailed);
 
         // TOC should have 4 sets with correct incremental flags
@@ -484,7 +484,7 @@ public class IncrementalBackupRestoreTests
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
-    public void NoChanges_IncrementalBackup_AllFilesSkipped(DriveProfile profile)
+    public void NoChanges_IncrementalBackup_AllFilesUpToDate(DriveProfile profile)
     {
         using var tree = new TempFileTree();
         tree.AddFiles("data", count: 6, minSize: 1024, maxSize: 4 * 1024);
@@ -501,7 +501,7 @@ public class IncrementalBackupRestoreTests
 
         Assert.Equal(6, stats.FilesTotal);
         Assert.Equal(0, stats.FilesSucceeded);
-        Assert.Equal(6, stats.FilesSkipped);
+        Assert.Equal(6, stats.FilesUpToDate);
         Assert.Equal(0, stats.FilesFailed);
 
         // The incremental set should be empty (no files actually written)

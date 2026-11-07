@@ -172,6 +172,10 @@ public partial class TapeServiceBase
 
         return verdict switch
         {
+            FileOperationVerdict.FullSuccess when result.FilesSucceeded == 0 && result.FilesUpToDate > 0 => (
+                ServiceReportLevel.Completed,
+                $"{operationName}: nothing to back up — {result.FilesUpToDate:N0} file(s) unchanged"),
+
             FileOperationVerdict.FullSuccess => (
                 ServiceReportLevel.Completed,
                 $"{operationName} of {result.FilesTotal:N0} file(s) completed successfully"),
@@ -241,9 +245,10 @@ public partial class TapeServiceBase
         if (result.FilesProcessed == 0)
             return;
 
-        var parts = new List<string>(4) { $"{result.FilesSucceeded:N0} succeeded" };
+        var parts = new List<string>(5) { $"{result.FilesSucceeded:N0} succeeded" };
         if (result.FilesFailed > 0) parts.Add($"{result.FilesFailed:N0} failed");
         if (result.FilesSkipped > 0) parts.Add($"{result.FilesSkipped:N0} skipped");
+        if (result.FilesUpToDate > 0) parts.Add($"{result.FilesUpToDate:N0} unchanged");
         parts.Add($"{Helpers.BytesToString(result.BytesProcessed)} {processedVerb}");
 
         var timingParts = new List<string>(2) { FormatElapsed(secsTotal) + " elapsed" };

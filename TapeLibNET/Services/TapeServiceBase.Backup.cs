@@ -96,6 +96,7 @@ public partial class TapeServiceBase
                 FilesSucceeded = progressHandler?.FilesSucceeded ?? 0,
                 FilesFailed = progressHandler?.FilesFailed ?? 0,
                 FilesSkipped = progressHandler?.FilesSkipped ?? 0,
+                FilesUpToDate = progressHandler?.FilesUpToDate ?? 0,
                 BytesProcessed = agent?.BytesBackedup ?? 0,
                 WasAborted = aborted,
                 HasFailed = failed,

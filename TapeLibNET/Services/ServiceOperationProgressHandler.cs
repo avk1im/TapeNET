@@ -53,8 +53,10 @@ public abstract class ServiceOperationProgressHandler(
     public int FilesSucceeded { get; private set; }
     /// <summary>Files that hit an errorEx and were not retried.</summary>
     public int FilesFailed { get; private set; }
-    /// <summary>Files skipped (by pre-processor, incremental, or user choice).</summary>
+    /// <summary>Files skipped (by pre-processor, filter, or user choice).</summary>
     public int FilesSkipped { get; private set; }
+    /// <summary>Files an incremental found unchanged.</summary>
+    public int FilesUpToDate { get; private set; }
     /// <summary>Total logical bytes of the succeeded files.</summary>
     public long BytesProcessed { get; private set; }
 
@@ -74,6 +76,7 @@ public abstract class ServiceOperationProgressHandler(
         FilesSucceeded = stats.FilesSucceeded;
         FilesFailed    = stats.FilesFailed;
         FilesSkipped   = stats.FilesSkipped;
+        FilesUpToDate  = stats.FilesUpToDate;
         BytesProcessed = stats.FileBytesProcessed;
         SetStats       = stats.SetStats; // ← ensure the set-level counters ride along
         TocStats       = stats.TocStats;  // ← and the TOC-level ones
@@ -129,9 +132,10 @@ public abstract class ServiceOperationProgressHandler(
         var level = batch.FilesFailed > 0 ? ServiceReportLevel.Failed
                   : batch.FilesSkipped > 0 ? ServiceReportLevel.Warning
                   : ServiceReportLevel.Completed;
-        var parts = new List<string>(3) { $"{batch.FilesSucceeded:N0} succeeded" };
+        var parts = new List<string>(4) { $"{batch.FilesSucceeded:N0} succeeded" };
         if (batch.FilesFailed > 0) parts.Add($"{batch.FilesFailed:N0} failed");
         if (batch.FilesSkipped > 0) parts.Add($"{batch.FilesSkipped:N0} skipped");
+        if (batch.FilesUpToDate > 0) parts.Add($"{batch.FilesUpToDate:N0} unchanged");
 
         _host.Report(level,
             $"Set #{setIndex} | {toc.SetIndexToAlt(setIndex)} complete: {string.Join(", ", parts)}");
@@ -207,6 +211,15 @@ public abstract class ServiceOperationProgressHandler(
         ThrowIfAbortRequested();
         _host.Report(ServiceReportLevel.None,
             $"Skipped: {Path.GetFileName(fileInfo.FileDescr.FullName)}", isSubEntry: true);
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>No log line per file: the set's summary line counts them.</remarks>
+    public virtual void OnFileUpToDate(TapeFileInfo fileInfo, in TapeFileStatistics stats)
+    {
+        Sync(stats);
+        ThrowIfAbortRequested();
+        ReportProgress(stats);
     }
 
     /// <summary>
@@ -592,6 +605,7 @@ public class ServiceRestoreProgressHandler(
         FilesSucceeded = FilesSucceeded,
         FilesFailed    = FilesFailed,
         FilesSkipped   = FilesSkipped,
+        FilesUpToDate  = FilesUpToDate,
         BytesProcessed = BytesProcessed,
         Success        = FilesFailed == 0,
         Outcome        = FilesFailed > 0  ? ServiceReportLevel.Warning

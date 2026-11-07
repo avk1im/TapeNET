@@ -39,6 +39,10 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     // Design-TocReserve §9.4: the TOC bytes each file adds, measured at hand-off. One per agent; reset per set.
     private readonly TocEntryMeter m_tocMeter = new();
 
+    // File-list indexes the current set found up to date — so an EOM rollback undoes them as such, not as skips.
+    //  Ascending (the loop only moves forward); cleared per set.
+    private readonly List<int> m_upToDateIndexes = [];
+
     // ── Software-compression session state ───────────────────────────────
     //  Allocated lazily on first use of the Software compression path and
     //  reused across every file in the session to avoid per-file GC pressure.
@@ -963,6 +967,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         // One Start per SET, matching the Ends below. The count is contributed only by the first set of
         //  the operation — see NotifySetStart.
         NotifySetStart(bc.fileNotify, filesAdded: bc.isContinuation ? 0 : bc.fileList.Count);
+        m_upToDateIndexes.Clear();
 
         // The volume is full before the current set starts (F32, or a set header that does not fit ahead of the TOC
         //  reserve): nothing of the set is on this volume. Continue on the next one, exactly as an end-of-media on the first
@@ -1058,15 +1063,16 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                 nameof(BackupFilesToCurrentSet), earliestRolledIndex + 1,
                 reportTemplate?.FileDescr.FullName ?? "(unknown)", eomEx.RolledBackTokens.Count);
 
-            // Undo skips that occurred between the earliest rolled-back file and the
-            //  current file index. These files will be re-processed on the next volume,
-            //  so their skip counts must not carry forward. The number of skipped files
-            //  in the range is the total files in [earliestRolledIndex, currentFileIndex)
-            //  minus the ones that were actually written (and are now rolled back).
+            // Undo the files between the earliest rolled-back file and the current one that were not written — skipped
+            //  or up to date. They are re-processed on the next volume, so neither count may carry forward: the files in
+            //  [earliestRolledIndex, currentFileIndex) minus the rolled-back ones, split by kind.
             int filesInRange = currentFileIndex - earliestRolledIndex;
-            int skipsToUndo = filesInRange - eomEx.RolledBackTokens.Count;
-            if (skipsToUndo > 0)
-                StatsUndoSkips(skipsToUndo);
+            int notWritten = filesInRange - eomEx.RolledBackTokens.Count;
+            int upToDateInRange = m_upToDateIndexes.RemoveAll(i => i >= earliestRolledIndex && i < currentFileIndex);
+            if (upToDateInRange > 0)
+                StatsUndoUpToDate(upToDateInRange);
+            if (notWritten - upToDateInRange > 0)
+                StatsUndoSkips(notWritten - upToDateInRange);
 
             // Do NOT BytesBackedupMarker = BytesBackedup here -- we anchor ONLY in BeginWriteContentForCurrentSet()!
             
@@ -1178,7 +1184,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
                     if (TOC.CurrentSetTOC.Incremental && TOC.IsFileUptodateInc(fileInfo))
                     {
-                        NotifyFileSkipped(bc.fileNotify, template);
+                        m_upToDateIndexes.Add(bc.fileIndex);
+                        NotifyFileUpToDate(bc.fileNotify, template);
                         m_logger.LogTrace("File #{Number} >{File}< found up-to-date in an incremental set -> skipping",
                             bc.fileIndex + 1, fileName);
                         continue;
