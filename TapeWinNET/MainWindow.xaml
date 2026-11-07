@@ -84,6 +84,7 @@
             <MenuItem Header="{Binding RestoreCommandText}" Command="{Binding RestoreCommand}"/>
             <MenuItem Header="{Binding ValidateCommandText}" Command="{Binding ValidateCommand}"/>
             <MenuItem Header="{Binding VerifyCommandText}" Command="{Binding VerifyCommand}"/>
+            <Separator Visibility="{Binding HasUnlockTargets, Converter={StaticResource BoolToVis}}"/>
             <MenuItem Header="{Binding UnlockCommandText}" Command="{Binding UnlockCommand}"
                       Visibility="{Binding HasUnlockTargets, Converter={StaticResource BoolToVis}}"/>
             <Separator/>
@@ -96,6 +97,7 @@
             <MenuItem Header="{Binding RestoreCommandText}" Command="{Binding RestoreCommand}"/>
             <MenuItem Header="{Binding ValidateCommandText}" Command="{Binding ValidateCommand}"/>
             <MenuItem Header="{Binding VerifyCommandText}" Command="{Binding VerifyCommand}"/>
+            <Separator Visibility="{Binding HasUnlockTargets, Converter={StaticResource BoolToVis}}"/>
             <MenuItem Header="{Binding UnlockCommandText}" Command="{Binding UnlockCommand}"
                       Visibility="{Binding HasUnlockTargets, Converter={StaticResource BoolToVis}}"/>
             <Separator/>
