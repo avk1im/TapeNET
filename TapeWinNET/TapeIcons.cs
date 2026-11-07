@@ -229,9 +229,11 @@ public static class TapeIcons
             if (state.Incremental)
                 icon = IconComposer.ComposeWithOverlay(icon, Overlay(GlyphIncremental, OverlayGreen), OverlayCorner.BottomLeft);
             if (state.ContinuedFromPrevVolume)
-                icon = IconComposer.ComposeWithOverlay(icon, Overlay(GlyphBack, OverlayBlue), OverlayCorner.TopLeft);
+                icon = IconComposer.ComposeWithOverlay(icon, Overlay(GlyphBack, OverlayBlue), OverlayCorner.TopLeft,
+                    overlayFraction: 0.45);
             if (state.ContinuesOnNextVolume)
-                icon = IconComposer.ComposeWithOverlay(icon, Overlay(GlyphForward, OverlayBlue), OverlayCorner.TopRight);
+                icon = IconComposer.ComposeWithOverlay(icon, Overlay(GlyphForward, OverlayBlue), OverlayCorner.TopRight,
+                    overlayFraction: 0.45);
         }
         _setIcons[state] = icon;
         return icon;
