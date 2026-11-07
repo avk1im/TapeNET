@@ -4,30 +4,15 @@ using System.Windows.Controls;
 namespace TapeWinNET.Controls;
 
 /// <summary>
-/// A new password as a view model sees it: a <see cref="PasswordBox"/> does not bind, so the control hands itself over
-///  through <see cref="NewPasswordInput.PasswordSource"/> (OneWayToSource).
-/// </summary>
-public interface INewPasswordSource
-{
-    /// <summary>Both entries typed and equal.</summary>
-    bool IsValid { get; }
-
-    /// <summary>The password as a fresh array — the caller (or the service) clears it — and clears both boxes.</summary>
-    char[] TakePassword();
-
-    /// <summary>Empties both boxes.</summary>
-    void Clear();
-
-    /// <summary>Raised whenever either entry changes.</summary>
-    event EventHandler? Changed;
-}
-
-/// <summary>
 /// Two <see cref="PasswordInput"/> fields — Password and Confirm — with the cross-check (Design-Encryption §11.1.4):
 ///  "✖ The passwords don't match" under Confirm while they differ, the green tick on Confirm when they match. Any
 ///  non-empty password is accepted; the length is a grey hint only.
 /// </summary>
-public partial class NewPasswordInput : UserControl, INewPasswordSource
+/// <remarks>
+/// Composition, not a base class: the rendering is <see cref="PasswordInput"/>'s, twice; both controls expose the same
+///  <see cref="IPasswordSource"/>. A new password is never checked against an envelope, so it has no countdown.
+/// </remarks>
+public partial class NewPasswordInput : UserControl, IPasswordSource
 {
     public NewPasswordInput()
     {
@@ -37,27 +22,51 @@ public partial class NewPasswordInput : UserControl, INewPasswordSource
         Loaded += (_, _) => SetCurrentValue(PasswordSourceProperty, this);
     }
 
+    public static readonly DependencyProperty LabelProperty = DependencyProperty.Register(
+        nameof(Label), typeof(string), typeof(NewPasswordInput), new PropertyMetadata("New password:"));
+
+    /// <summary>The first field's label.</summary>
+    public string? Label
+    {
+        get => (string?)GetValue(LabelProperty);
+        set => SetValue(LabelProperty, value);
+    }
+
+    public static readonly DependencyProperty ConfirmLabelProperty = DependencyProperty.Register(
+        nameof(ConfirmLabel), typeof(string), typeof(NewPasswordInput), new PropertyMetadata("Confirm password:"));
+
+    /// <summary>The second field's label.</summary>
+    public string? ConfirmLabel
+    {
+        get => (string?)GetValue(ConfirmLabelProperty);
+        set => SetValue(ConfirmLabelProperty, value);
+    }
+
     public static readonly DependencyProperty PasswordSourceProperty = DependencyProperty.Register(
-        nameof(PasswordSource), typeof(INewPasswordSource), typeof(NewPasswordInput), new PropertyMetadata(null));
+        nameof(PasswordSource), typeof(IPasswordSource), typeof(NewPasswordInput), new PropertyMetadata(null));
 
     /// <summary>
     /// This control, as the view model's access to the password — bind with <c>Mode=OneWayToSource</c>:
     ///  <c>PasswordSource="{Binding NewPasswordSource, Mode=OneWayToSource}"</c>.
     /// </summary>
-    public INewPasswordSource? PasswordSource
+    public IPasswordSource? PasswordSource
     {
-        get => (INewPasswordSource?)GetValue(PasswordSourceProperty);
+        get => (IPasswordSource?)GetValue(PasswordSourceProperty);
         set => SetValue(PasswordSourceProperty, value);
     }
 
-    /// <summary>Caps Lock is on in either field — for the host's warning pane.</summary>
+    /// <summary>Caps Lock is on — for the host's warning pane.</summary>
     public bool IsCapsLockOn => First.IsCapsLockOn || Confirm.IsCapsLockOn;
 
     /// <inheritdoc/>
+    public bool HasPassword => First.HasPassword;
+
+    /// <inheritdoc/>
+    /// <remarks>Both entries typed and equal.</remarks>
     public bool IsValid { get; private set; }
 
     /// <inheritdoc/>
-    public event EventHandler? Changed;
+    public event EventHandler? PasswordChanged;
 
     /// <inheritdoc/>
     public char[] TakePassword()
@@ -66,6 +75,9 @@ public partial class NewPasswordInput : UserControl, INewPasswordSource
         Confirm.Clear();
         return password;
     }
+
+    /// <inheritdoc/>
+    public char[] CopyPassword() => First.CopyPassword();
 
     /// <inheritdoc/>
     public void Clear()
@@ -83,7 +95,7 @@ public partial class NewPasswordInput : UserControl, INewPasswordSource
             bool same = a.Length > 0 && a.AsSpan().SequenceEqual(b);
             IsValid = same;
             // Confirm speaks only once something is typed there
-            Confirm.ErrorText = b.Length > 0 && !same ? "✖ The passwords don't match" : null;
+            Confirm.ErrorText = b.Length > 0 && !same ? "\u2716 The passwords don't match" : null;
             Confirm.IsVerified = same;
         }
         finally
@@ -91,6 +103,6 @@ public partial class NewPasswordInput : UserControl, INewPasswordSource
             Array.Clear(a);
             Array.Clear(b);
         }
-        Changed?.Invoke(this, EventArgs.Empty);
+        PasswordChanged?.Invoke(this, EventArgs.Empty);
     }
 }

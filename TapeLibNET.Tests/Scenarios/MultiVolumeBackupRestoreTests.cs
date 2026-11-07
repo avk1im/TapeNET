@@ -1,10 +1,10 @@
-﻿using Grpc.Core;
-using TapeLibNET.Agents;
+﻿using TapeLibNET.Agents;
 using TapeLibNET.Drive;
 using TapeLibNET.Headers;
-using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Toc;
 using TapeLibNET.Virtual;
+
+using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests.Scenarios;
 

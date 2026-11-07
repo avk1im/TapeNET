@@ -53,7 +53,7 @@ public partial class BackupViewModel
     private PasswordSourceOption? _selectedPasswordSource;
 
     private IPasswordSource? _existingPasswordSource;
-    private INewPasswordSource? _newPasswordSource;
+    private IPasswordSource? _newPasswordSource;
 
     private bool _existingPasswordVerified;
     private string? _existingPasswordError;
@@ -183,7 +183,7 @@ public partial class BackupViewModel
     }
 
     /// <summary>Bound OneWayToSource from the <see cref="NewPasswordInput"/>.</summary>
-    public INewPasswordSource? NewPasswordSource
+    public IPasswordSource? NewPasswordSource
     {
         get => _newPasswordSource;
         set
@@ -191,13 +191,16 @@ public partial class BackupViewModel
             if (ReferenceEquals(_newPasswordSource, value))
                 return;
             if (_newPasswordSource is not null)
-                _newPasswordSource.Changed -= OnNewPasswordChanged;
+                _newPasswordSource.PasswordChanged -= OnNewPasswordChanged;
             _newPasswordSource = value;
             if (value is not null)
-                value.Changed += OnNewPasswordChanged;
+                value.PasswordChanged += OnNewPasswordChanged;
             NotifyPasswordReadiness();
         }
     }
+
+    /// <summary>The wrong-password delay, read lock-free — the existing-password field counts it down (W8).</summary>
+    public Func<TimeSpan> PasswordRetryDelaySource => () => _tapeService.PasswordRetryDelay;
 
     /// <summary>The existing set's password was checked against its envelope (the green tick).</summary>
     public bool ExistingPasswordVerified
@@ -214,12 +217,12 @@ public partial class BackupViewModel
     }
 
     /// <summary>
-    /// A password is usable for Start: none needed, two matching new entries, or an existing set's password typed and not
-    ///  known to be wrong (Start checks an unverified one first).
+    /// A password is usable for Start: none needed, two matching new entries, or an existing set's password typed, not held
+    ///  back by the wrong-password delay, and not known to be wrong (Start checks an unverified one first).
     /// </summary>
     private bool IsPasswordReady => EffectiveEncryption == TapeEncryption.None
         || (ShowNewPassword && _newPasswordSource?.IsValid == true)
-        || (ShowExistingPassword && _existingPasswordSource?.HasPassword == true && _existingPasswordError is null);
+        || (ShowExistingPassword && _existingPasswordSource?.IsValid == true && _existingPasswordError is null);
 
     #endregion
 
@@ -231,8 +234,8 @@ public partial class BackupViewModel
     /// </summary>
     public async Task<bool> VerifyExistingPasswordAsync()
     {
-        if (!ShowExistingPassword || _existingPasswordSource is not { HasPassword: true } source)
-            return false;
+        if (!ShowExistingPassword || _existingPasswordSource is not { IsValid: true } source)
+            return false;           // nothing typed, or the delay runs (the field counts it down)
         if (_existingPasswordVerified)
             return true;
 
@@ -249,7 +252,7 @@ public partial class BackupViewModel
             ExistingPasswordVerified = result.Success;
             ExistingPasswordError = result.Success ? null
                 : result.ErrorCode == ErrorInvalidPassword ? "✖ Wrong password"
-                : result.ErrorCode == ErrorAccountLockedOut ? $"✖ {result.ErrorMessage}"
+                : result.ErrorCode == ErrorAccountLockedOut ? null     // the field's countdown says it
                 : $"✖ {result.ErrorMessage}";
             return result.Success;
         }

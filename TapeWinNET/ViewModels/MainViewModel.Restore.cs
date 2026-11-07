@@ -227,18 +227,18 @@ public partial class MainViewModel
     /// </summary>
     private void InitializeRestoreCommands()
     {
-        RestoreCommand = new RelayCommand(
-            _ => StartRestore(RestoreMode.Restore),
-            _ => CanStartRestore);
-        ValidateCommand = new RelayCommand(
-            _ => StartRestore(RestoreMode.Validate),
-            _ => CanStartRestore);
-        VerifyCommand = new RelayCommand(
-            _ => StartRestore(RestoreMode.Verify),
-            _ => CanStartRestore);
-        RestoreAllSetsCommand = new RelayCommand(
-            _ => StartRestoreAllSets(),
-            _ => CanRestoreAllSets);
+        RestoreCommand = new AsyncRelayCommand(
+            () => StartRestoreAsync(RestoreMode.Restore),
+            () => CanStartRestore);
+        ValidateCommand = new AsyncRelayCommand(
+            () => StartRestoreAsync(RestoreMode.Validate),
+            () => CanStartRestore);
+        VerifyCommand = new AsyncRelayCommand(
+            () => StartRestoreAsync(RestoreMode.Verify),
+            () => CanStartRestore);
+        RestoreAllSetsCommand = new AsyncRelayCommand(
+            StartRestoreAllSetsAsync,
+            () => CanRestoreAllSets);
         AbortRestoreCommand = new RelayCommand(AbortRestore, _ => IsRestoreInProgress);
     }
 
@@ -255,19 +255,15 @@ public partial class MainViewModel
     ///  Does not alter the check state of existing <see cref="BackupSetListItem"/>s,
     ///  so cancelling the dialog leaves the UI unchanged.
     /// </summary>
-    private void StartRestoreAllSets()
+    private Task StartRestoreAllSetsAsync()
     {
         var toc = _tapeService.TOC;
         if (toc == null || _tocView == null || toc.Count == 0)
-            return;
+            return Task.CompletedTask;
 
-        var setItems = CreateAdHocSetItems(); // for all sets
-        OpenRestoreWindow(RestoreMode.Restore, setItems, targetDirectory: null);
-    }
-
-    private void StartRestore(RestoreMode mode)
-    {
-        StartRestore(mode, targetDirectory: null);
+        return OpenRestoreWindowUnlockingAsync(RestoreMode.Restore,
+            () => CreateAdHocSetItems(), // for all sets
+            targetDirectory: null);
     }
 
     /// <summary>
@@ -276,38 +272,69 @@ public partial class MainViewModel
     /// (single source of truth), resolves display items, and opens RestoreWindow.
     /// Falls back to all sets when nothing specific is selected.
     /// </summary>
-    private void StartRestore(RestoreMode mode, string? targetDirectory)
+    private Task StartRestoreAsync(RestoreMode mode, string? targetDirectory = null)
     {
         if (_tocStale)
             RefreshAfterTocChange();            // a TOC change not yet shown: rebuild before acting
 
         var toc = _tapeService.TOC;
         if (toc == null || _tocView == null)
-            return;
+            return Task.CompletedTask;
 
-        // Build display items for the selected sets depending on the selection kind
+        // Build display items for the selected sets depending on the selection kind. The selection is captured once:
+        //  the pre-unlock rebuilds the views (and with them the list's highlighted rows) — the set indexes stay.
         var selection = ComputeRestoreSelection();      // fresh — never act on a stale summary
-        var setItems = selection.Kind switch
+        var view = _tocView;
+        return OpenRestoreWindowUnlockingAsync(mode, () => selection.Kind switch
         {
-            RestoreSelectionKind.Checked => _tocView.BuildBackupSetItemList(checkedOnly: true),   // incl. locked (F2)
+            RestoreSelectionKind.Checked => view.BuildBackupSetItemList(checkedOnly: true),   // incl. locked (F2)
             RestoreSelectionKind.AllSets => CreateAdHocSetItems(),
             RestoreSelectionKind.None => [],
             _ => CreateAdHocSetItems([.. selection.SetIndexes]),
-        };
+        }, targetDirectory);
+    }
 
+    /// <summary>
+    /// Opens the RestoreWindow for the items <paramref name="buildItems"/> returns — after unlocking the locked ones
+    ///  (Design-Encryption §11.1.5): the window shows file counts and sizes, which need the keys. One dialog, checked in
+    ///  place and tried on every chain; sets still locked afterwards (declined, or another password) are left out and the
+    ///  window's warning pane says so. Nothing left: no window.
+    /// </summary>
+    /// <remarks>
+    /// Runs between operations, so the dialog may call the service (W3). The service's own pre-flight and
+    ///  <c>OnAskPassword</c> remain the safety net — e.g. for a volume whose TOC predates a password change.
+    /// </remarks>
+    private async Task OpenRestoreWindowUnlockingAsync(RestoreMode mode, Func<List<BackupSetListItem>> buildItems,
+        string? targetDirectory)
+    {
+        var setItems = buildItems();
+        List<int> locked = [.. setItems
+            .Where(i => i.IsCheckedForRestore != false && i.IsLocked && i.SetTOC.IsUnlockable)
+            .Select(i => i.SetIndex)];
+        if (locked.Count > 0)
+        {
+            await UnlockWithDialogAsync(locked, all: false);    // refreshes the views when anything opened
+            setItems = buildItems();                            // the opened sets now show their files
+        }
+
+        int leftOut = setItems.RemoveAll(i => i.IsLocked);
         if (setItems.Count == 0)
+        {
+            if (leftOut > 0)
+                StatusMessage = $"Nothing to {mode.ToString().ToLowerInvariant()}: " +
+                    (leftOut == 1 ? "the selected set is locked" : $"all {leftOut} selected sets are locked");
             return;
-
-        OpenRestoreWindow(mode, setItems, targetDirectory);
+        }
+        OpenRestoreWindow(mode, setItems, targetDirectory, leftOut);
     }
 
     /// <summary>
     /// Creates the <see cref="RestoreViewModel"/>, applies optional pre-fill, and shows
-    ///  the <see cref="RestoreWindow"/> dialog. Shared by <see cref="StartRestore"/> and
-    ///  <see cref="StartRestoreAllSets"/>.
+    ///  the <see cref="RestoreWindow"/> dialog. Reached through <see cref="OpenRestoreWindowUnlockingAsync"/>.
     /// </summary>
+    /// <param name="lockedLeftOut">Selected encrypted sets left out because they stayed locked.</param>
     private void OpenRestoreWindow(RestoreMode mode, List<BackupSetListItem> setItems,
-        string? targetDirectory)
+        string? targetDirectory, int lockedLeftOut = 0)
     {
         var viewModel = new RestoreViewModel(
             mode: mode,
@@ -327,7 +354,8 @@ public partial class MainViewModel
             {
                 Application.Current.Windows.OfType<RestoreWindow>().FirstOrDefault()?.Close();
             },
-            suggestNoMultivolume: _tapeService.IsInMemoryDrive);
+            suggestNoMultivolume: _tapeService.IsInMemoryDrive,
+            lockedLeftOut: lockedLeftOut);
 
         // Pre-fill target directory (e.g. from drag-to-Explorer)
         if (targetDirectory != null)
@@ -402,7 +430,7 @@ public partial class MainViewModel
             {
                 // Bring our window back to the foreground — Explorer still has focus after the drop
                 Application.Current.MainWindow?.Activate();
-                StartRestore(RestoreMode.Restore, targetFolder);
+                _ = StartRestoreAsync(RestoreMode.Restore, targetFolder);
             }
         }
         catch { }

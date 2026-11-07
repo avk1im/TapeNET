@@ -1,43 +1,56 @@
-﻿using System.Windows;
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 
 namespace TapeWinNET.Controls;
 
 /// <summary>
-/// The password a <see cref="PasswordInput"/> holds, for a view model: a <see cref="PasswordBox"/> does not bind, so the
-///  control hands itself to the view model through <see cref="PasswordInput.PasswordSource"/> (OneWayToSource).
+/// A password as a view model sees it — from a single field (<see cref="PasswordInput"/>) or a new password typed twice
+///  (<see cref="NewPasswordInput"/>). A <see cref="PasswordBox"/> does not bind, so the control hands itself to the view
+///  model through its <c>PasswordSource</c> property (OneWayToSource).
 /// </summary>
 public interface IPasswordSource
 {
     /// <summary>Something is typed.</summary>
     bool HasPassword { get; }
 
-    /// <summary>The typed password as a fresh array — the caller (or the service it is passed to) clears it — and clears the box.</summary>
+    /// <summary>
+    /// The password can be used now: typed — twice and equal for a new password — and not held back by the wrong-password
+    ///  delay (W8).
+    /// </summary>
+    bool IsValid { get; }
+
+    /// <summary>The password as a fresh array — the caller (or the service it is passed to) clears it — and clears the field(s).</summary>
     char[] TakePassword();
 
     /// <summary>
-    /// The typed password as a fresh array, the box KEPT — for an in-window check (W3) whose field must stay filled for a
+    /// The password as a fresh array, the field(s) KEPT — for an in-window check (W3) whose field must stay filled for a
     ///  later <see cref="TakePassword"/>. The caller (or the service) clears the array.
     /// </summary>
     char[] CopyPassword();
 
-    /// <summary>Raised whenever the typed password changes.</summary>
-    event EventHandler? PasswordChanged;
-
-    /// <summary>Empties the box.</summary>
+    /// <summary>Empties the field(s).</summary>
     void Clear();
+
+    /// <summary>Raised whenever the typed password changes (not on Caps Lock or delay changes — those are bindable).</summary>
+    event EventHandler? PasswordChanged;
 }
 
 /// <summary>
 /// One password field (Design-Encryption §11.1.3, W6): label, a box with a "verified" tick, the field's own error in red
-///  directly under it, and a grey hint. Reused by <see cref="PasswordDialog"/>, BackupWindow and RenameBackupSetWindow.
+///  directly under it — or, while the wrong-password delay runs, its countdown in that place — and a grey hint. Reused by
+///  <see cref="PasswordDialog"/>, BackupWindow, RenameBackupSetWindow and <see cref="NewPasswordInput"/>.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Not here:</b> advice, notes, Caps Lock and the retry countdown. They go to the hosting window's warning pane, which
-///  reads <see cref="IsCapsLockOn"/>. Typing clears <see cref="ErrorText"/> and <see cref="IsVerified"/> — the old
-///  verdict no longer applies.
+/// <b>The countdown (W8)</b> lives here, once for every window: give <see cref="RetryDelaySource"/> the service's
+///  lock-free <c>PasswordRetryDelay</c>. While it runs, <see cref="IsRetryBlocked"/> is set, <see cref="IsValid"/> is
+///  false and commands are re-queried at each change, so a window's Start/OK button follows without a timer of its own.
+/// </para>
+/// <para>
+/// <b>Not here:</b> advice and notes. They go to the hosting window's warning pane, which reads <see cref="IsCapsLockOn"/>.
+///  Typing clears <see cref="ErrorText"/> and <see cref="IsVerified"/> — the old verdict no longer applies.
 /// </para>
 /// <para>
 /// <b>Hygiene, not protection</b> (Design-Encryption §2.2): <see cref="PasswordBox.Password"/> is a string, which cannot be
@@ -46,15 +59,20 @@ public interface IPasswordSource
 /// </remarks>
 public partial class PasswordInput : UserControl, IPasswordSource
 {
+    private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(250) };
+
     public PasswordInput()
     {
         InitializeComponent();
+        _timer.Tick += (_, _) => Poll();
         Loaded += (_, _) =>
         {
             // SetCurrentValue keeps a OneWayToSource binding alive and pushes the value to the view model
             SetCurrentValue(PasswordSourceProperty, this);
-            UpdateCapsLock();
+            Poll();
+            _timer.Start();
         };
+        Unloaded += (_, _) => _timer.Stop();
     }
 
     #region Dependency properties
@@ -99,12 +117,25 @@ public partial class PasswordInput : UserControl, IPasswordSource
         set => SetValue(IsVerifiedProperty, value);
     }
 
+    public static readonly DependencyProperty RetryDelaySourceProperty = DependencyProperty.Register(
+        nameof(RetryDelaySource), typeof(Func<TimeSpan>), typeof(PasswordInput), new PropertyMetadata(null));
+
+    /// <summary>
+    /// The wrong-password delay to count down (W8), read lock-free — e.g. <c>() =&gt; service.PasswordRetryDelay</c>. Null:
+    ///  no countdown (a new password is never checked, so never delayed).
+    /// </summary>
+    public Func<TimeSpan>? RetryDelaySource
+    {
+        get => (Func<TimeSpan>?)GetValue(RetryDelaySourceProperty);
+        set => SetValue(RetryDelaySourceProperty, value);
+    }
+
     public static readonly DependencyProperty PasswordSourceProperty = DependencyProperty.Register(
         nameof(PasswordSource), typeof(IPasswordSource), typeof(PasswordInput), new PropertyMetadata(null));
 
     /// <summary>
     /// This control, as the view model's access to the password — bind with <c>Mode=OneWayToSource</c>:
-    ///  <c>PasswordSource="{Binding NewPasswordSource, Mode=OneWayToSource}"</c>.
+    ///  <c>PasswordSource="{Binding ExistingPasswordSource, Mode=OneWayToSource}"</c>.
     /// </summary>
     public IPasswordSource? PasswordSource
     {
@@ -123,12 +154,29 @@ public partial class PasswordInput : UserControl, IPasswordSource
         nameof(IsCapsLockOn), typeof(bool), typeof(PasswordInput), new PropertyMetadata(false));
     public static readonly DependencyProperty IsCapsLockOnProperty = IsCapsLockOnKey.DependencyProperty;
 
-    /// <summary>Caps Lock is on while the field has focus — for the host's warning pane.</summary>
+    /// <summary>Caps Lock is on — for the host's warning pane (bindable).</summary>
     public bool IsCapsLockOn => (bool)GetValue(IsCapsLockOnProperty);
+
+    private static readonly DependencyPropertyKey IsRetryBlockedKey = DependencyProperty.RegisterReadOnly(
+        nameof(IsRetryBlocked), typeof(bool), typeof(PasswordInput), new PropertyMetadata(false));
+    public static readonly DependencyProperty IsRetryBlockedProperty = IsRetryBlockedKey.DependencyProperty;
+
+    /// <summary>The wrong-password delay runs: the password may not be tried yet (bindable).</summary>
+    public bool IsRetryBlocked => (bool)GetValue(IsRetryBlockedProperty);
+
+    private static readonly DependencyPropertyKey RetryMessageKey = DependencyProperty.RegisterReadOnly(
+        nameof(RetryMessage), typeof(string), typeof(PasswordInput), new PropertyMetadata(null));
+    public static readonly DependencyProperty RetryMessageProperty = RetryMessageKey.DependencyProperty;
+
+    /// <summary>"✖ Too many wrong passwords — try again in 12 s" while the delay runs; null otherwise.</summary>
+    public string? RetryMessage => (string?)GetValue(RetryMessageProperty);
 
     #endregion
 
-    /// <summary>Raised whenever the typed password changes.</summary>
+    /// <inheritdoc/>
+    public bool IsValid => HasPassword && !IsRetryBlocked;
+
+    /// <inheritdoc/>
     public event EventHandler? PasswordChanged;
 
     /// <inheritdoc/>
@@ -148,8 +196,24 @@ public partial class PasswordInput : UserControl, IPasswordSource
     /// <summary>Moves the keyboard focus into the box.</summary>
     public void FocusBox() => Box.Focus();
 
-    /// <summary>Re-reads Caps Lock — also callable by a host's timer (the key can toggle while the focus is elsewhere).</summary>
+    /// <summary>Re-reads Caps Lock — the timer does so too (the key can toggle while the focus is elsewhere).</summary>
     public void UpdateCapsLock() => SetValue(IsCapsLockOnKey, Keyboard.IsKeyToggled(Key.CapsLock));
+
+    /// <summary>Caps Lock and the delay — polled; both are cheap and lock-free.</summary>
+    private void Poll()
+    {
+        UpdateCapsLock();
+        TimeSpan delay = RetryDelaySource?.Invoke() ?? TimeSpan.Zero;
+        bool blocked = delay > TimeSpan.Zero;
+        SetValue(RetryMessageKey, blocked
+            ? $"\u2716 Too many wrong passwords \u2014 try again in {Math.Ceiling(delay.TotalSeconds):0} s"
+            : null);
+        if (blocked != IsRetryBlocked)
+        {
+            SetValue(IsRetryBlockedKey, blocked);
+            CommandManager.InvalidateRequerySuggested();    // IsValid changed: Start / OK follow
+        }
+    }
 
     private void Box_PasswordChanged(object sender, RoutedEventArgs e)
     {

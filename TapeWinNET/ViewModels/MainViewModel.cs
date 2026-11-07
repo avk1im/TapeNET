@@ -1925,24 +1925,32 @@ public partial class MainViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Prompts for a new backup-set description (via the service host) and writes the updated TOC back to tape.
+    /// Opens the RenameBackupSetWindow (Design-Encryption §11.1.6) — name, and for an encrypted set the current password and
+    ///  an optional new one — then writes the updated TOC back to tape.
     /// </summary>
     private async Task RenameBackupSetAsync(int setIndex)
     {
-        IsBusy = true;
-        BusyMessage = "Renaming backup set...";
-        try
+        if (_tapeService.TOCIsFrom is TOCSource.Series)
         {
-            if (!await _tapeService.RenameBackupSetAsync(setIndex) && _tapeService.LastError is not null)
-                SimpleBox.Show($"Failed to rename backup set.\n\n{_tapeService.LastError}",
-                    "Rename Failed", MessageBoxButton.OK, SimpleBox.ImageFailed);
-            // Success: TocChanged → refreshed when IsBusy drops (MainViewModel.TocBarrier.cs)
+            SimpleBox.Show("The view shows the series' table of contents, not the loaded volume's own.\n\n" +
+                "Reread the media first (Media | Reread Media) to rename a backup set.",
+                "Rename Backup Set", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
         }
-        finally
-        {
-            IsBusy = false;
-            BusyMessage = string.Empty;
-        }
+        if (!IsTocQuiet || _tapeService.TOC is not { } toc || setIndex < 1 || setIndex > toc.Count)
+            return;
+
+        var viewModel = new RenameBackupSetViewModel(_tapeService, setIndex);
+        var window = new RenameBackupSetWindow(viewModel) { Owner = Application.Current.MainWindow };
+        if (window.ShowDialog() != true || viewModel.Result is not { } r)
+            return;
+
+        bool ok = await RunBusyAsync("Renaming backup set...",
+            () => _tapeService.RenameBackupSetAsync(setIndex, r.NewName, r.CurrentPassword, r.NewPassword));
+        if (!ok && _tapeService.LastError is not null)
+            SimpleBox.Show($"Failed to rename backup set.\n\n{_tapeService.LastError}",
+                "Rename Failed", MessageBoxButton.OK, SimpleBox.ImageFailed);
+        // Success: TocChanged → refreshed when IsBusy drops (MainViewModel.TocBarrier.cs)
     }
 
     #endregion

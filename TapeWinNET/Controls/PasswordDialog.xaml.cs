@@ -74,13 +74,12 @@ public readonly record struct PasswordVerdict(bool Accepted, string? Error = nul
 ///     verb (deadlock): OK simply returns <see cref="Password"/>, the service checks it and asks again after a wrong one.
 ///   </item>
 /// </list>
-/// In both modes the wrong-password delay (W8) is shown as a countdown with OK disabled — read lock-free through the
-///  supplied <c>retryDelay</c>.
+/// In both modes the wrong-password delay (W8) shows as the field's countdown (<see cref="Controls.PasswordInput"/>) with OK
+///  disabled — read lock-free through the supplied <c>retryDelay</c>.
 /// </summary>
 public partial class PasswordDialog : Window, INotifyPropertyChanged
 {
     private readonly PasswordDialogOptions _options;
-    private readonly Func<TimeSpan>? _retryDelay;
     private readonly Func<char[], Task<PasswordVerdict>>? _validator;
     private readonly DispatcherTimer _timer;
     private int _attempt;
@@ -100,7 +99,6 @@ public partial class PasswordDialog : Window, INotifyPropertyChanged
         InitializeComponent();
         DataContext = this;
         _options = options;
-        _retryDelay = retryDelay;
         _validator = validator;
         _attempt = Math.Max(1, options.Attempt);
 
@@ -108,14 +106,11 @@ public partial class PasswordDialog : Window, INotifyPropertyChanged
         SetText.Text = options.SetDisplay;
         PromptText.Text = options.Prompt;
         Input.ErrorText = options.Error is { Length: > 0 } error ? "\u2716 " + error : null;
+        Input.RetryDelaySource = retryDelay;        // the field counts the delay down itself
         Input.PasswordChanged += (_, _) => UpdateState();
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
-        _timer.Tick += (_, _) =>
-        {
-            Input.UpdateCapsLock();
-            UpdateState();
-        };
+        _timer.Tick += (_, _) => UpdateState();    // Caps Lock and the delay change without typing
         Loaded += (_, _) =>
         {
             Input.FocusBox();
@@ -146,12 +141,10 @@ public partial class PasswordDialog : Window, INotifyPropertyChanged
     /// <summary>Rebuilds the pane and OK's state from the current conditions.</summary>
     private void UpdateState()
     {
-        TimeSpan delay = _retryDelay?.Invoke() ?? TimeSpan.Zero;
         var warnings = new List<string>();
         var infos = new List<string>();
 
-        if (delay > TimeSpan.Zero)
-            warnings.Add($"Too many wrong passwords \u2014 try again in {Math.Ceiling(delay.TotalSeconds):0} s.");
+        // The delay's countdown is the field's own (PasswordInput); the pane keeps the advice
         if (Input.IsCapsLockOn)
             warnings.Add("Caps Lock is on.");
         if (_options.IsNewPassword)
@@ -165,7 +158,7 @@ public partial class PasswordDialog : Window, INotifyPropertyChanged
 
         WarningLevel = warnings.Count > 0 ? WarningLevel.Warning : infos.Count > 0 ? WarningLevel.Info : WarningLevel.None;
         WarningMessage = string.Join("\n", warnings.Concat(infos));
-        OkButton.IsEnabled = Input.HasPassword && delay <= TimeSpan.Zero && !_checking;
+        OkButton.IsEnabled = Input.IsValid && !_checking;
     }
 
     private async void OkButton_Click(object sender, RoutedEventArgs e)

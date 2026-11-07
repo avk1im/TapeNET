@@ -522,6 +522,7 @@
                                       ErrorText="{Binding ExistingPasswordError, Mode=OneWay}"
                                       IsVerified="{Binding ExistingPasswordVerified, Mode=OneWay}"
                                       PasswordSource="{Binding ExistingPasswordSource, Mode=OneWayToSource}"
+                                      RetryDelaySource="{Binding PasswordRetryDelaySource}"
                                       Visibility="{Binding ShowExistingPassword, Converter={StaticResource BoolToVis}}"
                                       LostKeyboardFocus="ExistingPasswordInput_LostKeyboardFocus"
                                       Margin="0,0,0,8"
