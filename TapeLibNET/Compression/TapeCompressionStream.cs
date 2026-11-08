@@ -182,6 +182,12 @@ internal sealed class ProbingCompressionStream : Stream
     {
         private ZstdCodec? _codec;
 
+        private ZstdCodec? _fastCodec;
+        /// <summary>The fastest codec — for the remainder of a file whose probe did not compress (§6.2).</summary>
+        internal ZstdCodec FastCodec => _fastCodec ??= new ZstdCodec(ZstdLevel.Min);
+
+
+
         /// <summary>
         /// Returns the session-scoped <see cref="ZstdCodec"/>, re-creating it only if
         ///  <paramref name="level"/> differs from the current level.
@@ -216,6 +222,10 @@ internal sealed class ProbingCompressionStream : Stream
         {
             _codec?.Dispose();
             _codec = null;
+
+            _fastCodec?.Dispose();
+            _fastCodec = null;
+
         }
     }
 
@@ -354,6 +364,7 @@ internal sealed class ProbingCompressionStream : Stream
             // Finalize the live ZSTD frame (writes the frame trailer to inner).
             _liveZstream?.Dispose();
             _liveZstream = null;
+
             _disposed = true;
         }
         base.Dispose(disposing);
@@ -362,10 +373,16 @@ internal sealed class ProbingCompressionStream : Stream
     // ── Probe commit ─────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Seals the probe compression stream, compares sizes, and flushes the winning
-    ///  content to inner. Opens the live path (compressed or raw) for the remainder.
-    ///  With EmitsCodecPrefix, the decision itself goes to inner first, as one byte.
+    /// Seals the probe, decides the codec and flushes the probe to inner; opens the live path for the remainder.
+    ///  With EmitsCodecPrefix, the decision goes to inner first, as one byte.
     /// </summary>
+    /// <remarks>
+    /// <b>The probe chooses the remainder's level, not whether it is compressed</b> (Design-Compression §6.2). A file
+    ///  larger than the probe window is always ZSTD: the probe only sees the head, and a file may start
+    ///  incompressible yet compress well after it. When the probe did not compress, the remainder runs at the fastest
+    ///  level — ZSTD stores incompressible blocks raw (about 3 bytes per 128 KiB), so the cost is a few bytes per file. A
+    ///  file entirely within the probe window was seen whole: it is stored when compression does not pay.
+    /// </remarks>
     private void Commit()
     {
         // Finalize the probe ZSTD frame so CompBuf.Length is accurate.
@@ -374,8 +391,10 @@ internal sealed class ProbingCompressionStream : Stream
 
         long rawLen = _session.RawBuf.Length;
         long compLen = _session.CompBuf.Length;
+        bool probeCompresses = compLen < rawLen;
+        bool moreToCome = rawLen >= ProbeLength;    // the probe window filled: the file continues
 
-        FinalCodec = compLen < rawLen ? TapeFileCodec.Zstd : TapeFileCodec.Stored;
+        FinalCodec = probeCompresses || moreToCome ? TapeFileCodec.Zstd : TapeFileCodec.Stored;
 
         // The codec prefix precedes every body byte: a restore reads it before choosing the decoder.
         if (EmitsCodecPrefix)
@@ -383,28 +402,25 @@ internal sealed class ProbingCompressionStream : Stream
 
         if (FinalCodec == TapeFileCodec.Zstd)
         {
-            // Compression wins: flush the compressed probe to inner.
+            // The probe frame — compressed, or (incompressible) ZSTD raw blocks barely larger than the raw bytes.
             _session.CompBuf.Position = 0;
             _session.CompBuf.CopyTo(_inner);
 
-            // Open a live ZSTD stream for the remainder ONLY when the probe window was
-            //  fully filled — meaning there are more bytes yet to be written via Write().
-            //  For sub-probe files (entire content already in CompBuf) no live stream is
-            //  needed; creating one would emit a spurious empty ZSTD frame that may
-            //  confuse the decompressor on restore.
-            if (_session.RawBuf.Length >= ProbeLength)
+            // The remainder, as a second frame — only when more bytes follow; a sub-probe file is complete
+            //  (an empty live frame would confuse the decompressor on restore).
+            if (moreToCome)
             {
-                _liveZstream = _codec.Options != null
-                    ? new ZstdNet.CompressionStream(_inner, _codec.Options)
+                var options = probeCompresses ? _codec.Options : _session.FastCodec.Options;
+                _liveZstream = options != null
+                    ? new ZstdNet.CompressionStream(_inner, options)
                     : new ZstdNet.CompressionStream(_inner);
             }
         }
         else
         {
-            // Store wins: flush raw probe bytes, live path is a direct pass-through.
+            // Store wins (the whole file was in the probe): flush the raw bytes; nothing follows.
             _session.RawBuf.Position = 0;
             _session.RawBuf.CopyTo(_inner);
-            // _liveZstream stays null; Write() will call _inner.Write() directly.
         }
 
         _committed = true;
