@@ -11,9 +11,8 @@ intents:
 
 # Welcome to TapeWin Help
 
-TapeWin is a tape backup manager for Windows.  Use the sections below to
-find what you need, or **type a question** in the chat box at the bottom of
-this pane.
+TapeWin is a tape backup manager for Windows. Use the sections below to find what you need, or **type a question** in
+the chat box at the bottom of this pane.
 
 ## Getting Started
 
@@ -27,8 +26,10 @@ this pane.
 - [Tape vs disk](help://topic/concepts.tape-vs-disk) — why tape behaves differently.
 - [Backup sets](help://topic/concepts.backup-sets) — how TapeWin organises data on tape ([backup set](help://glossary/backup-set)).
 - [Partitions and the TOC](help://topic/concepts.partitions-and-toc) — how TapeWin finds your data ([TOC](help://glossary/toc)).
+- [TOC space](help://topic/concepts.toc-space) — the room the catalog needs, and what its advice messages mean.
 - [Incremental backup](help://topic/concepts.incremental-backup) — back up only what changed ([incremental backup](help://glossary/incremental-backup)).
-- [Multi-volume backups](help://topic/concepts.multi-volume) — span backups across tapes ([multi-volume](help://glossary/multi-volume-backup)).
+- [Multi-volume backups](help://topic/concepts.multi-volume) — span backups across tapes ([multi-volume](help://glossary/multi-volume)).
+- [Encrypted backup sets](help://topic/concepts.encryption) — protect sets with a password ([locked set](help://glossary/locked-set)).
 - [Restore, Validate, Verify](help://topic/concepts.restore-validate-verify) — three ways to check your backups ([restore](help://glossary/restore), [validate](help://glossary/validate), [verify](help://glossary/verify)).
 - [FCL file filters](help://topic/concepts.fcl-filters) — powerful file-selection language ([FCL](help://glossary/fcl)).
 - [Virtual drives](help://topic/concepts.virtual-drives) — work without hardware ([virtual drive](help://glossary/virtual-drive)).
@@ -42,6 +43,8 @@ this pane.
 
 - [New Backup](help://topic/dialog.backup) — create and write a backup set.
 - [Restore / Validate / Verify](help://topic/dialog.restore) — recover or check files.
+- [Enter Password](help://topic/dialog.password) — unlock encrypted sets.
+- [Rename Backup Set](help://topic/dialog.rename-backup-set) — rename a set, change its password.
 - [Format Media](help://topic/dialog.format-media) — prepare or erase a tape.
 - [Scan Media](help://topic/dialog.scan-media) — map an unreadable tape and recover its TOC.
 - [Open Virtual Drive](help://topic/dialog.open-virtual-drive) — mount a file- or RAM-backed tape.
@@ -61,7 +64,5 @@ this pane.
 - [Keyboard shortcuts](help://topic/reference.keyboard-shortcuts)
 - [Troubleshooting](help://topic/reference.troubleshooting)
 - [Glossary](help://topic/reference.glossary)
-
----
 
 *Press **F1** at any time on a focused control to jump to its help topic.*

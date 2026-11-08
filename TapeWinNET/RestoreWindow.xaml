@@ -246,7 +246,7 @@
                                   Margin="0,12,0,4"/>
                         <CheckBox Content="Eject media when done"
                                   IsChecked="{Binding EjectWhenDone}"
-                                  ToolTip="Eject the media after the backup is complete"
+                                  ToolTip="Eject the media after the operation is complete"
                                   Margin="0,4,0,0"/>
                         
                             </StackPanel>
@@ -316,7 +316,7 @@
                         Command="{Binding LoadDefaultsCommand}"
                         Padding="8,1"
                         Margin="0,0,24,0"
-                        ToolTip="Reset backup options to their defaults"/>
+                        ToolTip="Reset restore options to their defaults"/>
                     <Button Content="Cancel"
                         Command="{Binding CancelCommand}"
                         IsCancel="True"

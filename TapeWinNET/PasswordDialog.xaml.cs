@@ -1,8 +1,10 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Threading;
 using TapeLibNET.Services;
+using TapeWinNET.Help;
 
 namespace TapeWinNET;
 
@@ -76,12 +78,21 @@ public readonly record struct PasswordVerdict(bool Accepted, string? Error = nul
 /// </list>
 /// In both modes the wrong-password delay (W8) shows as the field's countdown (<see cref="Controls.PasswordInput"/>) with OK
 ///  disabled — read lock-free through the supplied <c>retryDelay</c>.
+/// <para>
+/// Hosts the help pane (Adjacent mode, <c>dialog.password</c>). Safe in service mode too: the pane only reads embedded
+///  topics; its action links resolve to main-window commands, which are disabled while the operation runs.
+/// </para>
 /// </summary>
-public partial class PasswordDialog : Window, INotifyPropertyChanged
+public partial class PasswordDialog : Window, INotifyPropertyChanged, IHelpPaneHost
 {
     private readonly PasswordDialogOptions _options;
     private readonly Func<char[], Task<PasswordVerdict>>? _validator;
     private readonly DispatcherTimer _timer;
+
+    // All embedded help-pane boilerplate (window expansion, F1 resolution,
+    //  session lifecycle, and AppSettings persistence) lives in this controller.
+    private readonly DialogHelpPaneController _help;
+
     private int _attempt;
     private string? _info;
     private bool _checking;
@@ -108,6 +119,10 @@ public partial class PasswordDialog : Window, INotifyPropertyChanged
         Input.Message = options.Error;              // the previous attempt's failure (Error level, the default)
         Input.RetryDelaySource = retryDelay;        // the field counts the delay down itself
         Input.PasswordChanged += (_, _) => UpdateState();
+
+        _help = new DialogHelpPaneController(
+            this, this, HelpPaneColumn, HelpPaneSplitter, HelpPaneControl,
+            defaultTopicId: "dialog.password", helpButton: HelpButton);
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _timer.Tick += (_, _) => UpdateState();    // Caps Lock and the delay change without typing
@@ -204,6 +219,31 @@ public partial class PasswordDialog : Window, INotifyPropertyChanged
         UpdateState();
         Input.FocusBox();
     }
+
+    private void HelpButton_Click(object sender, RoutedEventArgs e)
+        => _help.ToggleHelpPane();
+
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+        => _help.HandleF1(e);
+
+    #region IHelpPaneHost
+
+    public string HostName => nameof(PasswordDialog);
+
+    // Adjacent: the window expands to the right; the HelpPane is a column inside
+    //  the same window, not a separate floating window.
+    public HelpPaneHostMode HostMode => HelpPaneHostMode.Adjacent;
+
+    public void OnPaneOpening(double desiredWidth) => _help.OnPaneOpening(desiredWidth);
+    public void OnPaneClosed() => _help.OnPaneClosed();
+
+    public FrameworkElement? ResolveControlByName(string name)
+        => FindName(name) as FrameworkElement;
+
+    public void OpenHelpPane(string? topicId = null) => _help.OpenHelpPane(topicId);
+    public string? GetDefaultTopicId() => _help.GetDefaultTopicId();
+
+    #endregion
 
     public event PropertyChangedEventHandler? PropertyChanged;
 

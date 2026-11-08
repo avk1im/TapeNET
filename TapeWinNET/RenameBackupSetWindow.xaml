@@ -6,67 +6,109 @@
         xmlns:vm="clr-namespace:TapeWinNET.ViewModels"
         xmlns:controls="clr-namespace:TapeWinNET.Controls"
         xmlns:converters="clr-namespace:TapeWinNET.Converters"
+        xmlns:help="clr-namespace:TapeWinNET.Help"
         d:DataContext="{d:DesignInstance Type=vm:RenameBackupSetViewModel}"
         mc:Ignorable="d"
         Title="Rename Backup Set"
         Width="460" SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
-        ResizeMode="NoResize"
-        ShowInTaskbar="False">
+        ResizeMode="CanResizeWithGrip"
+        ShowInTaskbar="False"
+        PreviewKeyDown="Window_PreviewKeyDown">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisLocal"/>
     </Window.Resources>
-    <Grid Margin="16">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>  <!-- set -->
-            <RowDefinition Height="Auto"/>  <!-- current password -->
-            <RowDefinition Height="Auto"/>  <!-- name -->
-            <RowDefinition Height="Auto"/>  <!-- change password -->
-            <RowDefinition Height="Auto"/>  <!-- warning pane -->
-            <RowDefinition Height="Auto"/>  <!-- buttons -->
-        </Grid.RowDefinitions>
+    <!-- Outer grid: dialog content | splitter | help pane (Adjacent mode, Design-TapeWinHelp §3.1) -->
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="Auto"/>                                       <!-- help splitter -->
+            <ColumnDefinition x:Name="HelpPaneColumn" Width="0" MinWidth="0"/>    <!-- help pane    -->
+        </Grid.ColumnDefinitions>
 
-        <TextBlock Grid.Row="0" Text="{Binding SetDisplay}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,10"/>
+        <!-- Dialog content fills column 0 -->
+        <Grid x:Name="HelpOverlayRoot" Grid.Column="0" Margin="16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>  <!-- set -->
+                <RowDefinition Height="Auto"/>  <!-- current password -->
+                <RowDefinition Height="Auto"/>  <!-- name -->
+                <RowDefinition Height="Auto"/>  <!-- change password -->
+                <RowDefinition Height="Auto"/>  <!-- warning pane -->
+                <RowDefinition Height="Auto"/>  <!-- buttons -->
+            </Grid.RowDefinitions>
 
-        <!-- The current password first: for a locked set it unlocks the name (Design-Encryption §11.1.6) -->
-        <controls:PasswordInput x:Name="CurrentPasswordInput" Grid.Row="1"
-                                Label="Current password:"
-                                Message="{Binding CurrentPasswordError, Mode=OneWay}"
-                                IsVerified="{Binding CurrentPasswordVerified, Mode=OneWay}"
-                                PasswordSource="{Binding CurrentPasswordSource, Mode=OneWayToSource}"
-                                RetryDelaySource="{Binding PasswordRetryDelaySource}"
-                                Visibility="{Binding IsEncrypted, Converter={StaticResource BoolToVisLocal}}"
-                                LostKeyboardFocus="CurrentPasswordInput_LostKeyboardFocus"
-                                Margin="0,0,0,10"/>
+            <TextBlock Grid.Row="0" Text="{Binding SetDisplay}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,10"/>
 
-        <StackPanel Grid.Row="2" Margin="0,0,0,10">
-            <TextBlock Text="Name:" Margin="0,0,0,4"/>
-            <TextBox x:Name="NameTextBox"
-                     Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
-                     IsEnabled="{Binding IsNameEnabled}"
-                     VerticalContentAlignment="Center"/>
-        </StackPanel>
+            <!-- The current password first: for a locked set it unlocks the name (Design-Encryption §11.1.6) -->
+            <controls:PasswordInput x:Name="CurrentPasswordInput" Grid.Row="1"
+                                    Label="Current password:"
+                                    Message="{Binding CurrentPasswordError, Mode=OneWay}"
+                                    IsVerified="{Binding CurrentPasswordVerified, Mode=OneWay}"
+                                    PasswordSource="{Binding CurrentPasswordSource, Mode=OneWayToSource}"
+                                    RetryDelaySource="{Binding PasswordRetryDelaySource}"
+                                    Visibility="{Binding IsEncrypted, Converter={StaticResource BoolToVisLocal}}"
+                                    LostKeyboardFocus="CurrentPasswordInput_LostKeyboardFocus"
+                                    Margin="0,0,0,10"
+                                    help:HelpControlNameAttachedProperty.ControlName="Current password"/>
 
-        <Expander Grid.Row="3" Header="Change password"
-                  IsExpanded="{Binding ChangePassword}"
-                  Visibility="{Binding IsEncrypted, Converter={StaticResource BoolToVisLocal}}">
-            <controls:NewPasswordInput Margin="0,8,0,0"
-                                       PasswordSource="{Binding NewPasswordSource, Mode=OneWayToSource}"/>
-        </Expander>
+            <StackPanel Grid.Row="2" Margin="0,0,0,10"
+                        help:HelpControlNameAttachedProperty.ControlName="Name">
+                <TextBlock Text="Name:" Margin="0,0,0,4"/>
+                <TextBox x:Name="NameTextBox"
+                         Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                         IsEnabled="{Binding IsNameEnabled}"
+                         VerticalContentAlignment="Center"/>
+            </StackPanel>
 
-        <!-- Warning pane (W6): the check to do, the advice, the multi-volume note — above the buttons -->
-        <Border Grid.Row="4" Style="{StaticResource WarningPanelStyle}" Margin="0,10,0,0">
-            <DockPanel>
-                <TextBlock DockPanel.Dock="Left"
-                           Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
-                           FontSize="13" Margin="0,0,6,0" VerticalAlignment="Top"/>
-                <TextBlock Text="{Binding WarningMessage}" TextWrapping="Wrap" VerticalAlignment="Center"/>
-            </DockPanel>
-        </Border>
+            <Expander Grid.Row="3" Header="Change password"
+                      IsExpanded="{Binding ChangePassword}"
+                      Visibility="{Binding IsEncrypted, Converter={StaticResource BoolToVisLocal}}"
+                      help:HelpControlNameAttachedProperty.ControlName="Change password">
+                <controls:NewPasswordInput Margin="0,8,0,0"
+                                           PasswordSource="{Binding NewPasswordSource, Mode=OneWayToSource}"/>
+            </Expander>
 
-        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
-            <Button Content="OK" Width="80" Margin="0,0,8,0" IsDefault="True" Command="{Binding OkCommand}"/>
-            <Button Content="Cancel" Width="80" IsCancel="True" Command="{Binding CancelCommand}"/>
-        </StackPanel>
+            <!-- Warning pane (W6): the check to do, the advice, the multi-volume note — above the buttons -->
+            <Border Grid.Row="4" Style="{StaticResource WarningPanelStyle}" Margin="0,10,0,0"
+                    help:HelpControlNameAttachedProperty.ControlName="Warning panel">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Left"
+                               Text="{Binding WarningLevel, Converter={x:Static converters:WarningLevelToIconConverter.Instance}}"
+                               FontSize="13" Margin="0,0,6,0" VerticalAlignment="Top"/>
+                    <TextBlock Text="{Binding WarningMessage}" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                </DockPanel>
+            </Border>
+
+            <!-- Buttons -->
+            <Grid Grid.Row="5" Margin="0,16,0,0">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                    <Button x:Name="HelpButton" Content="_Help ▶" Click="HelpButton_Click"
+                            MinWidth="60" Padding="10,1"
+                            ToolTip="Open help for this dialog (F1)"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="Cancel" Command="{Binding CancelCommand}"
+                            Width="80" Margin="0,0,8,0" IsCancel="True"/>
+                    <Button Content="OK" Command="{Binding OkCommand}"
+                            Width="80" IsDefault="True"
+                            help:HelpControlNameAttachedProperty.ControlName="OK button"/>
+                </StackPanel>
+            </Grid>
+        </Grid><!-- end dialog-content Grid (column 0) -->
+
+        <!-- Help splitter — visible only when the help pane is open -->
+        <GridSplitter x:Name="HelpPaneSplitter"
+                      Grid.Column="1"
+                      Width="4"
+                      HorizontalAlignment="Center"
+                      VerticalAlignment="Stretch"
+                      Background="LightGray"
+                      Visibility="Collapsed"/>
+
+        <!-- Help pane — width driven by HelpPaneColumn; starts at 0 (hidden) -->
+        <controls:HelpPane x:Name="HelpPaneControl"
+                           Grid.Column="2"
+                           DataContext="{x:Null}"
+                           Visibility="Collapsed"/>
     </Grid>
 </Window>

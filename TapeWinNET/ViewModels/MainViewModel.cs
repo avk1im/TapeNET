@@ -244,8 +244,9 @@ public partial class MainViewModel : ViewModelBase
     /// </summary>
     public string StatusBarText => SelectionStatus ?? StatusMessage;
 
-    /// <summary>The capacity field — hidden (null) while a selection is shown: the intent then is restoring.</summary>
-    public string? StatusBarRemaining => SelectionStatus is null ? RemainingAndEw : null;
+    /// <summary>The capacity field.</summary>
+    /// <remarks>Consider hiding (setting to null) while a selection is shown: the intent then is restoring</remarks>
+    public string? StatusBarRemaining => RemainingAndEw; // SelectionStatus is null ? RemainingAndEw : null;
 
     /// <summary>
     /// Status-bar and property-pane indication of the estimated remaining capacity plus the
