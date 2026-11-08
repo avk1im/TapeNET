@@ -48,3 +48,13 @@ Press **F1** on any focused control to jump straight to its help topic.
 **File filter pane** — Filters the file list as you type; supports [FCL expressions](help://topic/ui.file-filter-pane) for advanced filtering.
 
 **Log pane** — Running record of every operation with severity icons. Expand/collapse with the splitter above it.
+
+## Icons at a glance
+
+| Overlay | Meaning |
+|---|---|
+| 🔒 bottom-right | encrypted, locked |
+| 🔓 bottom-right | encrypted, unlocked |
+| ⊕ bottom-left | incremental set |
+| ← top-left | continued from the previous volume |
+| → top-right | continues on the next volume |
