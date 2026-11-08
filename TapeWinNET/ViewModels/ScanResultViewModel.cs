@@ -67,7 +67,10 @@ public sealed class ScanFragmentRow(TapeMediaFragment fragment, string? tocSetNa
     {
         FragmentKind.MediaHeader => Fragment.Description ?? string.Empty,
         FragmentKind.SetHeader =>
-            $"{Fragment.Description}{(Fragment.CreatedUtc is { } t ? $" · {t.ToLocalTime():g}" : "")}"
+            (Fragment.Encryption is { } enc
+                ? $"\U0001F512 encrypted ({TapeLibNET.Encryption.EncryptionPreset.DisplayName(enc)})"
+                : Fragment.Description ?? string.Empty)
+            + (Fragment.CreatedUtc is { } t ? $" · {t.ToLocalTime():g}" : "")
             + (Fragment.ClosedBySeparator ? string.Empty : " — never completed"),
         FragmentKind.SetContent => tocSetName is { } n
             ? $"{n} · first file: {Fragment.Description}"

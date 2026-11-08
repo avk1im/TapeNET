@@ -210,6 +210,8 @@ public partial class BackupViewModel
     }
 
     /// <summary>The existing-password field's own error ("✖ Wrong password", or the wait), red under the field.</summary>
+    /// <remarks>The password control adds an icon glyph corresponding to the error level,
+    ///  e.g. "✖" for error (default = error).</remarks>
     public string? ExistingPasswordError
     {
         get => _existingPasswordError;
@@ -251,9 +253,9 @@ public partial class BackupViewModel
 
             ExistingPasswordVerified = result.Success;
             ExistingPasswordError = result.Success ? null
-                : result.ErrorCode == ErrorInvalidPassword ? "✖ Wrong password"
+                : result.ErrorCode == ErrorInvalidPassword ? "Wrong password"
                 : result.ErrorCode == ErrorAccountLockedOut ? null     // the field's countdown says it
-                : $"✖ {result.ErrorMessage}";
+                : $"{result.ErrorMessage}";
             return result.Success;
         }
         finally

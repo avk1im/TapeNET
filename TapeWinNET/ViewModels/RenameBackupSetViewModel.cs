@@ -35,6 +35,7 @@ public class RenameBackupSetViewModel : ViewModelBase
     private const uint ErrorAccountLockedOut = 1909;    // ERROR_ACCOUNT_LOCKED_OUT — the wrong-password delay (W8)
 
     private readonly TapeService _tapeService;
+    private readonly TapeTOC _toc;                      // read only between operations (the window is modal)
     private readonly TapeSetTOC _set;                   // read only between operations (the window is modal)
     private readonly int _setIndex;
     private readonly bool _partOfSeries;
@@ -56,6 +57,7 @@ public class RenameBackupSetViewModel : ViewModelBase
         _tapeService = tapeService;
         _setIndex = setIndex;
         var toc = tapeService.TOC ?? throw new InvalidOperationException("No TOC loaded");
+        _toc = toc;
         _set = toc[setIndex];
         SetDisplay = $"Set #{setIndex} | {toc.SetIndexToAlt(setIndex)}: " +
                      (_set.IsLocked ? $"\U0001F512 {_set.DisplayName}" : _set.DisplayName);
@@ -186,6 +188,9 @@ public class RenameBackupSetViewModel : ViewModelBase
         if (_changePassword)
         {
             yield return (WarningLevel.Warning, "A lost password cannot be recovered. Keep an exported TOC.");
+            if (ChainSetCount is int n and > 1)
+                yield return (WarningLevel.Info, $"The new password applies to the whole chain of {n} sets — " +
+                    "the incremental sets and volume continuations this set belongs to.");
             yield return (WarningLevel.Info, "After the change the set locks; the new password opens it.");
             if (_partOfSeries)
                 yield return (WarningLevel.Info, "Other volumes of this series keep the old password in their own TOC " +
@@ -220,6 +225,26 @@ public class RenameBackupSetViewModel : ViewModelBase
 
     private void OnNewPasswordChanged(object? sender, EventArgs e) => NotifyState();
 
+    /// <summary>
+    /// Sets the password change rewraps: the key chain this set belongs to — back to its full set, forward through its
+    ///  incrementals and continuation parts (E13 unlocked them together). 1 while the set is locked (unknown yet).
+    /// </summary>
+    private int ChainSetCount
+    {
+        get
+        {
+            if (_set.IsLocked)
+                return 1;
+            static bool Continues(TapeSetTOC s) => !s.IsLocked && (s.ContinuedFromPrevVolume || s.Incremental);
+            int first = _setIndex, last = _setIndex;
+            while (first > 1 && Continues(_toc[first]))
+                first--;
+            while (last < _toc.Count && Continues(_toc[last + 1]))
+                last++;
+            return last - first + 1;
+        }
+    }
+
     #endregion
 
     #region Checking the current password (W3)
@@ -247,9 +272,9 @@ public class RenameBackupSetViewModel : ViewModelBase
 
             CurrentPasswordVerified = result.Success;
             CurrentPasswordError = result.Success ? null
-                : result.ErrorCode == ErrorInvalidPassword ? "\u2716 Wrong password"
+                : result.ErrorCode == ErrorInvalidPassword ? "Wrong password"
                 : result.ErrorCode == ErrorAccountLockedOut ? null     // the field's countdown says it
-                : $"\u2716 {result.ErrorMessage}";
+                : $"{result.ErrorMessage}";
 
             if (result.Success && wasLocked && !_set.IsLocked)
             {

@@ -51,7 +51,7 @@ public sealed record PasswordDialogOptions(
 
 /// <summary>A validator's answer to one typed password (<see cref="PasswordDialog"/>, validator mode).</summary>
 /// <param name="Accepted">Close the dialog.</param>
-/// <param name="Error">Shown under the field.</param>
+/// <param name="Error">Shown under the field — at Error level, or at Warning level with <paramref name="Progress"/>.</param>
 /// <param name="Info">Shown in the pane, e.g. "Unlocked 2 sets".</param>
 /// <param name="Progress">Not accepted, yet no failed attempt (the password opened something) — the attempt is not counted.</param>
 public readonly record struct PasswordVerdict(bool Accepted, string? Error = null, string? Info = null, bool Progress = false)
@@ -105,7 +105,7 @@ public partial class PasswordDialog : Window, INotifyPropertyChanged
         Title = options.Title;
         SetText.Text = options.SetDisplay;
         PromptText.Text = options.Prompt;
-        Input.ErrorText = options.Error is { Length: > 0 } error ? "\u2716 " + error : null;
+        Input.Message = options.Error;              // the previous attempt's failure (Error level, the default)
         Input.RetryDelaySource = retryDelay;        // the field counts the delay down itself
         Input.PasswordChanged += (_, _) => UpdateState();
 
@@ -197,7 +197,9 @@ public partial class PasswordDialog : Window, INotifyPropertyChanged
             DialogResult = false;
             return;
         }
-        Input.ErrorText = verdict.Error is { Length: > 0 } error ? "\u2716 " + error : null;
+        // A wrong password is an Error; progress (some sets opened, others need another password) only a Warning
+        Input.MessageLevel = verdict.Progress ? WarningLevel.Warning : WarningLevel.Error;
+        Input.Message = verdict.Error;
         _info = verdict.Info;
         UpdateState();
         Input.FocusBox();

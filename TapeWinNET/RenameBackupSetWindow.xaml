@@ -31,7 +31,7 @@
         <!-- The current password first: for a locked set it unlocks the name (Design-Encryption §11.1.6) -->
         <controls:PasswordInput x:Name="CurrentPasswordInput" Grid.Row="1"
                                 Label="Current password:"
-                                ErrorText="{Binding CurrentPasswordError, Mode=OneWay}"
+                                Message="{Binding CurrentPasswordError, Mode=OneWay}"
                                 IsVerified="{Binding CurrentPasswordVerified, Mode=OneWay}"
                                 PasswordSource="{Binding CurrentPasswordSource, Mode=OneWayToSource}"
                                 RetryDelaySource="{Binding PasswordRetryDelaySource}"

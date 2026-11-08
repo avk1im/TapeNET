@@ -1,7 +1,10 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Globalization;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
+using TapeWinNET.Converters;
 
 namespace TapeWinNET.Controls;
 
@@ -38,8 +41,9 @@ public interface IPasswordSource
 }
 
 /// <summary>
-/// One password field (Design-Encryption §11.1.3, W6): label, a box with a "verified" tick, the field's own error in red
-///  directly under it — or, while the wrong-password delay runs, its countdown in that place — and a grey hint. Reused by
+/// One password field (Design-Encryption §11.1.3, W6): label, a box with a "verified" tick, ONE message line directly under
+///  it — <see cref="Message"/> at <see cref="MessageLevel"/>, or while the wrong-password delay runs its countdown — and a
+///  grey hint. Reused by
 ///  <see cref="PasswordDialog"/>, BackupWindow, RenameBackupSetWindow and <see cref="NewPasswordInput"/>.
 /// </summary>
 /// <remarks>
@@ -50,7 +54,12 @@ public interface IPasswordSource
 /// </para>
 /// <para>
 /// <b>Not here:</b> advice and notes. They go to the hosting window's warning pane, which reads <see cref="IsCapsLockOn"/>.
-///  Typing clears <see cref="ErrorText"/> and <see cref="IsVerified"/> — the old verdict no longer applies.
+///  Typing clears the message and <see cref="IsVerified"/> — the old verdict no longer applies.
+/// </para>
+/// <para>
+/// <b>The message line</b> is one slot, not one per kind: glyph and colour follow <see cref="MessageLevel"/> (the warning
+///  panes' glyphs and <c>WarningFg.*</c> brushes); <see cref="MessageIcon"/> overrides the glyph. The countdown takes the slot
+///  while it runs (⏳, Warning) and gives it back when it ends — the caller's message is kept underneath.
 /// </para>
 /// <para>
 /// <b>Hygiene, not protection</b> (Design-Encryption §2.2): <see cref="PasswordBox.Password"/> is a string, which cannot be
@@ -97,14 +106,38 @@ public partial class PasswordInput : UserControl, IPasswordSource
         set => SetValue(HintProperty, value);
     }
 
-    public static readonly DependencyProperty ErrorTextProperty = DependencyProperty.Register(
-        nameof(ErrorText), typeof(string), typeof(PasswordInput), new PropertyMetadata(null));
+    public static readonly DependencyProperty MessageProperty = DependencyProperty.Register(
+        nameof(Message), typeof(string), typeof(PasswordInput), new PropertyMetadata(null, OnMessageChanged));
 
-    /// <summary>The field's own error ("✖ Wrong password"), red, directly under it; cleared by typing.</summary>
-    public string? ErrorText
+    /// <summary>
+    /// The field's message, under it — e.g. "Wrong password" (Error) or "1 set needs another password" (Warning). Plain text:
+    ///  the glyph comes from <see cref="MessageLevel"/> (or <see cref="MessageIcon"/>). Cleared by typing.
+    /// </summary>
+    public string? Message
     {
-        get => (string?)GetValue(ErrorTextProperty);
-        set => SetValue(ErrorTextProperty, value);
+        get => (string?)GetValue(MessageProperty);
+        set => SetValue(MessageProperty, value);
+    }
+
+    public static readonly DependencyProperty MessageLevelProperty = DependencyProperty.Register(
+        nameof(MessageLevel), typeof(WarningLevel), typeof(PasswordInput),
+        new PropertyMetadata(WarningLevel.Error, OnMessageChanged));
+
+    /// <summary>The message's level — its glyph and colour; Error by default (a field's message is mostly a failure).</summary>
+    public WarningLevel MessageLevel
+    {
+        get => (WarningLevel)GetValue(MessageLevelProperty);
+        set => SetValue(MessageLevelProperty, value);
+    }
+
+    public static readonly DependencyProperty MessageIconProperty = DependencyProperty.Register(
+        nameof(MessageIcon), typeof(string), typeof(PasswordInput), new PropertyMetadata(null, OnMessageChanged));
+
+    /// <summary>A glyph overriding the level's — rarely needed; null: the level's glyph.</summary>
+    public string? MessageIcon
+    {
+        get => (string?)GetValue(MessageIconProperty);
+        set => SetValue(MessageIconProperty, value);
     }
 
     public static readonly DependencyProperty IsVerifiedProperty = DependencyProperty.Register(
@@ -164,12 +197,19 @@ public partial class PasswordInput : UserControl, IPasswordSource
     /// <summary>The wrong-password delay runs: the password may not be tried yet (bindable).</summary>
     public bool IsRetryBlocked => (bool)GetValue(IsRetryBlockedProperty);
 
-    private static readonly DependencyPropertyKey RetryMessageKey = DependencyProperty.RegisterReadOnly(
-        nameof(RetryMessage), typeof(string), typeof(PasswordInput), new PropertyMetadata(null));
-    public static readonly DependencyProperty RetryMessageProperty = RetryMessageKey.DependencyProperty;
+    private static readonly DependencyPropertyKey MessageDisplayKey = DependencyProperty.RegisterReadOnly(
+        nameof(MessageDisplay), typeof(string), typeof(PasswordInput), new PropertyMetadata(null));
+    public static readonly DependencyProperty MessageDisplayProperty = MessageDisplayKey.DependencyProperty;
 
-    /// <summary>"✖ Too many wrong passwords — try again in 12 s" while the delay runs; null otherwise.</summary>
-    public string? RetryMessage => (string?)GetValue(RetryMessageProperty);
+    /// <summary>What the message line shows: glyph and text — the countdown while it runs, else <see cref="Message"/>.</summary>
+    public string? MessageDisplay => (string?)GetValue(MessageDisplayProperty);
+
+    private static readonly DependencyPropertyKey MessageBrushKey = DependencyProperty.RegisterReadOnly(
+        nameof(MessageBrush), typeof(Brush), typeof(PasswordInput), new PropertyMetadata(null));
+    public static readonly DependencyProperty MessageBrushProperty = MessageBrushKey.DependencyProperty;
+
+    /// <summary>The message line's colour, by the shown level.</summary>
+    public Brush? MessageBrush => (Brush?)GetValue(MessageBrushProperty);
 
     #endregion
 
@@ -205,22 +245,46 @@ public partial class PasswordInput : UserControl, IPasswordSource
         UpdateCapsLock();
         TimeSpan delay = RetryDelaySource?.Invoke() ?? TimeSpan.Zero;
         bool blocked = delay > TimeSpan.Zero;
-        SetValue(RetryMessageKey, blocked
-            ? $"\u2716 Too many wrong passwords \u2014 try again in {Math.Ceiling(delay.TotalSeconds):0} s"
-            : null);
+        _countdown = blocked
+            ? $"Too many wrong passwords \u2014 try again in {Math.Ceiling(delay.TotalSeconds):0} s"
+            : null;
         if (blocked != IsRetryBlocked)
         {
             SetValue(IsRetryBlockedKey, blocked);
             CommandManager.InvalidateRequerySuggested();    // IsValid changed: Start / OK follow
         }
+        UpdateMessageLine();
+    }
+
+    private const string CountdownGlyph = "\u23F3";       // ⏳ — waiting, not failing
+    private string? _countdown;                             // the delay's text while it runs
+
+    private static void OnMessageChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        => ((PasswordInput)d).UpdateMessageLine();
+
+    /// <summary>Composes the message line: the countdown wins while it runs; else the caller's message at its level.</summary>
+    private void UpdateMessageLine()
+    {
+        var (text, level, icon) = _countdown is { } c
+            ? (c, WarningLevel.Warning, CountdownGlyph)
+            : (Message, MessageLevel, MessageIcon);
+        if (string.IsNullOrEmpty(text))
+        {
+            SetValue(MessageDisplayKey, null);
+            return;
+        }
+        icon ??= WarningLevelToIconConverter.Instance.Convert(level, typeof(string), parameter: 0, CultureInfo.CurrentUICulture) as string;
+        SetValue(MessageDisplayKey, string.IsNullOrEmpty(icon) ? text : $"{icon} {text}");
+        SetValue(MessageBrushKey, TryFindResource($"WarningFg.{level}") as Brush ?? Foreground);
     }
 
     private void Box_PasswordChanged(object sender, RoutedEventArgs e)
     {
         SetValue(HasPasswordKey, Box.Password.Length > 0);
-        // A new attempt: the old verdict no longer applies. SetCurrentValue, not SetValue: a host may BIND ErrorText and
-        //  IsVerified (BackupWindow) — a local value would replace its binding for good.
-        SetCurrentValue(ErrorTextProperty, null);
+        // A new attempt: the old verdict no longer applies. SetCurrentValue, not SetValue: a host may BIND Message and
+        //  IsVerified (BackupWindow) — a local value would replace its binding for good. The level stays: it is the host's.
+        SetCurrentValue(MessageProperty, null);
+        SetCurrentValue(MessageIconProperty, null);
         SetCurrentValue(IsVerifiedProperty, false);
         PasswordChanged?.Invoke(this, EventArgs.Empty);
     }

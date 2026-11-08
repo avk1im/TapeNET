@@ -95,7 +95,7 @@ public partial class NewPasswordInput : UserControl, IPasswordSource
             bool same = a.Length > 0 && a.AsSpan().SequenceEqual(b);
             IsValid = same;
             // Confirm speaks only once something is typed there
-            Confirm.ErrorText = b.Length > 0 && !same ? "\u2716 The passwords don't match" : null;
+            Confirm.Message = b.Length > 0 && !same ? "The passwords don't match" : null;
             Confirm.IsVerified = same;
         }
         finally

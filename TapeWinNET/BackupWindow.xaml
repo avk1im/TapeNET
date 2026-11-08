@@ -519,7 +519,7 @@
                                       help:HelpControlNameAttachedProperty.ControlName="New password"/>
                             <controls:PasswordInput x:Name="ExistingPasswordInput"
                                       Label="{Binding ExistingPasswordLabel}"
-                                      ErrorText="{Binding ExistingPasswordError, Mode=OneWay}"
+                                      Message="{Binding ExistingPasswordError, Mode=OneWay}"
                                       IsVerified="{Binding ExistingPasswordVerified, Mode=OneWay}"
                                       PasswordSource="{Binding ExistingPasswordSource, Mode=OneWayToSource}"
                                       RetryDelaySource="{Binding PasswordRetryDelaySource}"
