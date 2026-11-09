@@ -474,9 +474,7 @@ public partial class MainViewModel
 
     private void UpdateTreeForRemoteDriveOnly(int driveNumber, RemoteHostSettings settings)
     {
-        TreeItems.Clear();
-        _tocView = null;
-        _currentSetView = null;
+        ResetTree(keepTocView: false); // no TOC given nor needed for drive-only view
 
         var driveItem = TapeTreeItemViewModel.CreateDriveItem(
             driveNumber, _tapeService.DeviceName, settings.DisplayLabel);
@@ -489,8 +487,7 @@ public partial class MainViewModel
 
     private void UpdateTreeFromTOCRemote(int driveNumber, RemoteHostSettings settings)
     {
-        TreeItems.Clear();
-        _currentSetView = null;
+        ResetTree(keepTocView: true); // we'll continue using our TOCView
 
         var toc = _tapeService.TOC;
         if (toc == null)
@@ -515,7 +512,8 @@ public partial class MainViewModel
             : null;
         var tapeItem = TapeTreeItemViewModel.CreateTapeItem(
             toc, driveItem, tocFileName, isInMemory: _tapeService.IsInMemoryDrive,
-                        tocRecovered: _tapeService.TOCIsFrom is TOCSource.Recovered);
+                        tocRecovered: _tapeService.TOCIsFrom is TOCSource.Recovered,
+                        tocSeries: _tapeService.TOCIsFrom is TOCSource.Series);
         driveItem.Children.Add(tapeItem);
 
         // Backup sets (newest-first)
@@ -592,9 +590,8 @@ public partial class MainViewModel
         RemoteDriveMenuItems.Clear();
         ToolbarRemoteDriveItems.Clear(); // keep toolbar in sync
 
-        TreeItems.Clear();
-        _tocView = null;
-        _currentSetView = null;
+        ResetTree(keepTocView: false); // a completely new game
+
         WindowTitle = "TapeWin";
         OnPropertyChanged(nameof(HasMultipleSets));
 

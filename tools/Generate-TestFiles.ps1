@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param (
-    [Parameter(Mandatory = $false)]
+    [Parameter(Mandatory = $true)]
     [string]$TargetFolder,
 
     [Parameter(Mandatory = $false)]
@@ -213,10 +213,12 @@ function Write-TestFile {
     $BytesWritten = [int64]0
     
     while ($BytesWritten -lt $Length) {
+        if ($BytesWritten -gt 0) { Refresh-RandomContent }     # fresh noise per chunk: no repeating 1 MiB pattern
         $BytesToWrite = [Math]::Min($SourceBuffer.Length, ($Length - $BytesWritten))
         $Stream.Write($SourceBuffer, 0, $BytesToWrite)
         $BytesWritten += $BytesToWrite
     }
+
     $Stream.Close()
     $Stream.Dispose()
 }
@@ -350,17 +352,28 @@ else {
 
 $FolderList = New-DirTree -Root $TargetFolder -Count $TotalFolders -MaxDepth $MaxFolderDepth -InjectLong $ForceLongPaths
 
-# Build chunk buffer
+# Build chunk buffer: every 4 KiB page carries RandomizationPercent random bytes, then zeros — so a file's
+#  compressibility is the same at its head as anywhere else (a random PREFIX fooled per-file probes).
 $ChunkSize = if ($MaxFileBytes -lt 1MB) { $MaxFileBytes } else { 1MB }
 $Buffer = New-Object byte[] $ChunkSize
+$PageSize = 4KB
 
-if ($RandomizationPercent -gt 0) {
-    $Rand = New-Object System.Random
-    $RandomBytesCount = [int]($ChunkSize * ($RandomizationPercent / 100))
-    $RandomBytes = New-Object byte[] $RandomBytesCount
-    $Rand.NextBytes($RandomBytes)
-    [System.Buffer]::BlockCopy($RandomBytes, 0, $Buffer, 0, $RandomBytesCount)
+# Cast to [int] to ensure it's an integer number of bytes
+$RandomPerPage = [int]($PageSize * ($RandomizationPercent / 100))
+
+$RandomPage = New-Object byte[] $PageSize
+$Rand = New-Object System.Random
+
+function Refresh-RandomContent {
+    if ($RandomPerPage -le 0) { return }
+    for ($p = 0; $p -lt $Buffer.Length; $p += $PageSize) {
+        # Use [Math]::Min with matching integer types
+        $n = [Math]::Min($RandomPerPage, ($Buffer.Length - $p))
+        $Rand.NextBytes($RandomPage)
+        [System.Buffer]::BlockCopy($RandomPage, 0, $Buffer, $p, $n)
+    }
 }
+Refresh-RandomContent
 
 SetUp-Quantiles -MinFileBytes $MinFileBytes -MaxFileBytes $MaxFileBytes
 

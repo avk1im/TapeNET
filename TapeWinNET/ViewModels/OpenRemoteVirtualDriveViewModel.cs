@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Windows.Input;
 using TapeLibNET.Remote;
-using TapeLibNET.Services;
 using TapeLibNET.Virtual;
 
 namespace TapeWinNET.ViewModels;
@@ -102,6 +101,9 @@ public class OpenRemoteVirtualDriveViewModel : VirtualDriveConfigViewModelBase
     /// False when capabilities are locked to the current drive's settings during a volume-swap.
     /// </summary>
     public bool AreCapabilityFieldsEnabled => _isCreateNewMode && !_isCapabilitiesLocked;
+
+    /// <inheritdoc/>
+    protected override bool CanApplyPreset => AreCapabilityFieldsEnabled;
 
     /// <summary>Whether the volume picker ComboBox is visible (Open existing mode only).</summary>
     public bool IsVolumePickerVisible => !_isCreateNewMode;
@@ -283,6 +285,12 @@ public class OpenRemoteVirtualDriveViewModel : VirtualDriveConfigViewModelBase
         // Capacity
         SetCapacityFromBytes(_selectedVolume.Media.ContentCapacity,
             v => ContentCapacityValue = v, u => ContentCapacityUnit = u);
+
+        // Features — the volume's drive profile (read-only in this mode)
+        var caps = _selectedVolume.Capabilities;
+        SupportsSetmarks = caps.SupportsSetmarks;
+        SupportsSeqFilemarks = caps.SupportsSeqFilemarks;
+        EnableInitiatorPartition = caps.SupportsInitiatorPartition;
     }
 
     private void ExecuteConfirm()
@@ -298,13 +306,13 @@ public class OpenRemoteVirtualDriveViewModel : VirtualDriveConfigViewModelBase
     private void ExecuteCreate()
     {
         string? initiatorPath = EnableInitiatorPartition
-            ? (_isNamed ? $"{ContentFilePath.Trim()}_init" : "(in-memory)")
+            ? (_isNamed ? $"{ContentFilePath.Trim()}_init" : VirtualMediaPaths.InMemoryPlaceholder)
             : null;
 
         Result = new VirtualDriveOpenRequest(
             Capabilities: BuildCapabilities(),
             Media: new VirtualMediaDescriptor(
-                ContentPath:                  _isNamed ? ContentFilePath.Trim() : "(in-memory)",
+                ContentPath:                  _isNamed ? ContentFilePath.Trim() : VirtualMediaPaths.InMemoryPlaceholder,
                 ContentCapacity:              ContentCapacityBytes,
                 InitiatorPath:                initiatorPath,
                 InitiatorPartitionCapacity:   EnableInitiatorPartition ? InitiatorCapacityBytes : 0,

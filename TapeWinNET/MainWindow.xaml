@@ -63,6 +63,11 @@
             <Separator/>
             <MenuItem Header="Re_name..." Command="{Binding RenameSelectedCommand}"/>
             <MenuItem Header="_Reread Media" Command="{Binding RereadMediaCommand}"/>
+            <Separator Visibility="{Binding HasEncryptionActions, Converter={StaticResource BoolToVis}}"/>
+            <MenuItem Header="{Binding UnlockCommandText}" Command="{Binding UnlockCommand}"
+                      Visibility="{Binding HasUnlockTargets, Converter={StaticResource BoolToVis}}"/>
+            <MenuItem Header="_Forget Passwords" Command="{Binding ForgetPasswordsCommand}"
+                      Visibility="{Binding HasHeldPasswords, Converter={StaticResource BoolToVis}}"/>
             <Separator/>
             <MenuItem Header="E_xport TOC to File..." Command="{Binding ExportTOCCommand}"/>
             <MenuItem Header="_Import TOC from File..." Command="{Binding ImportTOCCommand}"/>
@@ -73,14 +78,30 @@
             <MenuItem Header="_Format..." Command="{Binding FormatMediaCommand}"/>
         </ContextMenu>
 
-        <!-- Context menu: Backup set / Restore actions (shared by TreeView and ListViews) -->
+        <!-- Context menu: Backup set / Restore actions (shared by TreeView and ListViews (except backup set list - s. BackupSetsContextMenu below)) -->
         <ContextMenu x:Key="RestoreContextMenu" x:Shared="False"
                      DataContext="{Binding PlacementTarget.Tag, RelativeSource={RelativeSource Self}}">
             <MenuItem Header="{Binding RestoreCommandText}" Command="{Binding RestoreCommand}"/>
             <MenuItem Header="{Binding ValidateCommandText}" Command="{Binding ValidateCommand}"/>
             <MenuItem Header="{Binding VerifyCommandText}" Command="{Binding VerifyCommand}"/>
+            <Separator Visibility="{Binding HasUnlockTargets, Converter={StaticResource BoolToVis}}"/>
+            <MenuItem Header="{Binding UnlockCommandText}" Command="{Binding UnlockCommand}"
+                      Visibility="{Binding HasUnlockTargets, Converter={StaticResource BoolToVis}}"/>
             <Separator/>
             <MenuItem Header="Re_name..." Command="{Binding RenameSelectedCommand}"/>
+        </ContextMenu>
+
+        <!-- Context menu: Backup sets list — Rename acts on the highlighted ROW, not on the tree selection (the media) -->
+        <ContextMenu x:Key="BackupSetsContextMenu" x:Shared="False"
+                     DataContext="{Binding PlacementTarget.Tag, RelativeSource={RelativeSource Self}}">
+            <MenuItem Header="{Binding RestoreCommandText}" Command="{Binding RestoreCommand}"/>
+            <MenuItem Header="{Binding ValidateCommandText}" Command="{Binding ValidateCommand}"/>
+            <MenuItem Header="{Binding VerifyCommandText}" Command="{Binding VerifyCommand}"/>
+            <Separator Visibility="{Binding HasUnlockTargets, Converter={StaticResource BoolToVis}}"/>
+            <MenuItem Header="{Binding UnlockCommandText}" Command="{Binding UnlockCommand}"
+                      Visibility="{Binding HasUnlockTargets, Converter={StaticResource BoolToVis}}"/>
+            <Separator/>
+            <MenuItem Header="Re_name Set..." Command="{Binding RenameBackupSetCommand}" InputGestureText="F2"/>
         </ContextMenu>
 
         <!-- TreeView item style -->
@@ -117,6 +138,10 @@
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
                             <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsLocked}" Value="True">
+                                    <Setter Property="FontStyle" Value="Italic" />
+                                    <Setter Property="Foreground" Value="{StaticResource LockedFg}" />
+                                </DataTrigger>
                                 <DataTrigger Binding="{Binding ItemType}" Value="Drive">
                                     <Setter Property="FontWeight" Value="Bold" />
                                 </DataTrigger>
@@ -285,6 +310,11 @@
                 <MenuItem Header="Re_name..." Command="{Binding RenameMediaCommand}"/>
                 <MenuItem Header="_Reread Media" Command="{Binding RereadMediaCommand}"/>
                 <MenuItem Header="_Scan Media..." Command="{Binding ScanMediaCommand}"/>
+                <Separator Visibility="{Binding ShowEncryptionMenu, Converter={StaticResource BoolToVis}}"/>
+                <MenuItem Header="{Binding UnlockCommandText}" Command="{Binding UnlockCommand}"
+                          Visibility="{Binding ShowEncryptionMenu, Converter={StaticResource BoolToVis}}"/>
+                <MenuItem Header="_Forget Passwords" Command="{Binding ForgetPasswordsCommand}"
+                          Visibility="{Binding ShowEncryptionMenu, Converter={StaticResource BoolToVis}}"/>
                 <Separator/>
                 <MenuItem Header="E_xport TOC to File..." Command="{Binding ExportTOCCommand}"/>
                 <MenuItem Header="_Import TOC from File..." Command="{Binding ImportTOCCommand}"/>
@@ -719,6 +749,20 @@
                                 </ListView.ContextMenu>
                             </ListView>
 
+                            <!-- Locked set: no file list, an Unlock button (Design-Encryption §11.1.1) -->
+                            <Border Grid.Row="0" Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}"
+                                    Visibility="{Binding IsLockedSetShown, Converter={StaticResource BoolToVis}}">
+                                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <TextBlock Text="&#xE72E;" FontFamily="Segoe MDL2 Assets" FontSize="28"
+                                               Foreground="{StaticResource LockedFg}" HorizontalAlignment="Center"
+                                               Margin="0,0,0,8"/>
+                                    <TextBlock Text="This set is encrypted. Unlock it to see its files."
+                                               Foreground="{StaticResource LockedFg}" HorizontalAlignment="Center"/>
+                                    <Button Content="_Unlock..." Command="{Binding UnlockShownSetCommand}"
+                                            HorizontalAlignment="Center" Margin="0,12,0,0" Padding="16,3"/>
+                                </StackPanel>
+                            </Border>
+
                             <!-- Splitter between file list and filter pane (snaps to full / compact / hidden) -->
                             <controls:SnappingGridSplitter Grid.Row="1" Height="4"
                                           HorizontalAlignment="Stretch"
@@ -752,6 +796,8 @@
                                   help:HelpControlNameAttachedProperty.ControlName="Backup sets list"
                                   ItemsSource="{Binding BackupSetList}"
                                   IsEnabled="{Binding IsMediaBrowsingEnabled}"
+                                  SelectionMode="Extended"
+                                  SelectionChanged="BackupSetsListView_SelectionChanged"
                                   SelectedItem="{Binding SelectedBackupSet}"
                                   GridViewColumnHeader.Click="GridViewColumnHeader_Click"
                                   CheckBox.Checked="BackupSetCheckBox_Changed"
@@ -765,6 +811,7 @@
                                   MouseDoubleClick="BackupSetList_MouseDoubleClick">
                             <ListView.InputBindings>
                                 <KeyBinding Key="Enter" Command="{Binding NavigateToBackupSetCommand}" />
+                                <KeyBinding Key="F2" Command="{Binding RenameBackupSetCommand}" />  <!-- Takes precedence over the window's F2 -->
                             </ListView.InputBindings>
                             <ListView.View>
                                 <GridView>
@@ -807,7 +854,18 @@
                                         <GridViewColumn.CellTemplate>
                                             <DataTemplate>
                                                 <TextBlock Text="{Binding Description}" ToolTip="{Binding Description}"
-                                                           Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}"/>
+                                                           Opacity="{Binding IsOnCurrentVolume, Converter={StaticResource BoolToOpacityText}}">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsLocked}" Value="True">
+                                                                    <Setter Property="FontStyle" Value="Italic"/>
+                                                                    <Setter Property="Foreground" Value="{StaticResource LockedFg}"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
                                             </DataTemplate>
                                         </GridViewColumn.CellTemplate>
                                     </GridViewColumn>
@@ -894,7 +952,7 @@
                                 </GridView>
                             </ListView.View>
                             <ListView.ContextMenu>
-                                <StaticResource ResourceKey="RestoreContextMenu"/>
+                                <StaticResource ResourceKey="BackupSetsContextMenu"/>
                                     </ListView.ContextMenu>
                                         </ListView>
 
@@ -1221,11 +1279,11 @@
         <!-- Status Bar -->
         <StatusBar Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="3">
             <StatusBarItem>
-                <TextBlock Text="{Binding StatusMessage}" />
+                <TextBlock Text="{Binding StatusBarText}" />
             </StatusBarItem>
             <Separator />
-            <StatusBarItem Visibility="{Binding RemainingAndEw, Converter={StaticResource NullToVis}}">
-                <TextBlock Text="{Binding RemainingAndEw}" />
+            <StatusBarItem Visibility="{Binding StatusBarRemaining, Converter={StaticResource NullToVis}}">
+                <TextBlock Text="{Binding StatusBarRemaining}" />
             </StatusBarItem>
             <Separator />
             <StatusBarItem Visibility="{Binding IsIoSpeedVisible, Converter={StaticResource BoolToVis}}">

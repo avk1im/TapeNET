@@ -1,9 +1,10 @@
-using System.Windows;
 using System.Windows.Media;
-using TapeLibNET.Toc;
-using TapeWinNET.Models;
-using TapeWinNET.Services;
+
 using Windows.Win32.System.SystemServices; // for Helpers
+
+using TapeLibNET.Services;
+using TapeWinNET.Services;
+using TapeWinNET.Controls;
 
 namespace TapeWinNET.ViewModels;
 
@@ -11,22 +12,19 @@ namespace TapeWinNET.ViewModels;
 /// <summary>
 /// Specialized <see cref="MediaUsageBarPresenter"/> for BackupWindow.
 /// <para>
-/// Adds a <see cref="UsageSegmentKind.PendingBackupSet"/> segment representing
-///  the backup the user is composing, dropping any existing set segments after
-///  the chosen "Append after set" target. Color encodes whether the new set
-///  fits the available room: green (Completed) when it fits, red (ErrorException) when
-///  it overflows the volume, amber (Warning) when the user has selected
-///  Incremental — in which case the size estimate is an upper bound only.
+/// Drops the sets after the chosen "Append after set" target (all of them on Overwrite) and adds a
+///  <see cref="UsageSegmentKind.PendingBackupSet"/> segment for the backup being composed. The room it may take is the
+///  service's writable space plus the sets the overwrite drops — the base then shows what stays writable. Color: green
+///  when it fits, red when it overflows the volume (multi-volume continues), amber for an incremental (an upper bound).
 /// </para>
 /// <para>
-/// <b>Click semantics:</b>
+/// On media without a TOC, the base's TOC segment is the TOC still to be written: labelled "TOC (pending)".
 /// </para>
+/// <para><b>Click semantics:</b></para>
 /// <list type="bullet">
-///   <item>Existing-set segment → that set becomes the first to be replaced
-///         (AppendAfter shifts to its index − 1, switching to Overwrite if
-///         the user clicked the oldest set).</item>
-///   <item>Pending-set or Free segment → the new set shifts one step to the
-///         right (AppendAfter += 1), preserving one more existing set.</item>
+///   <item>Existing-set segment → that set becomes the "Append after" target (Overwrite when the oldest set is clicked
+///         while already the target).</item>
+///   <item>Pending-set or Writable segment → the new set shifts one step to the right (preserves one more set).</item>
 /// </list>
 /// </summary>
 public class BackupMediaUsageBarPresenter(TapeService tapeService, BackupViewModel vm)
@@ -36,99 +34,62 @@ public class BackupMediaUsageBarPresenter(TapeService tapeService, BackupViewMod
 
     // ───────────────────────────────────────────────── Content with pending set ────────
 
-    /// <summary>
-    /// Adds existing set segments via the base, then drops sets after the
-    ///  selected AppendAfter target and appends the pending new-set segment
-    ///  capped to the available room.
-    /// </summary>
-    protected override void AddContentSegments(List<UsageSegment> segments, TapeTOC? toc)
+    /// <inheritdoc/>
+    protected override UsageSegment TocSegment(MediaUsage usage)
     {
-        // 1. Base populates all existing set segments (oldest → newest).
-        base.AddContentSegments(segments, toc);
+        var toc = base.TocSegment(usage);
+        if (!_vm.IsNoToc)
+            return toc;
+        return new UsageSegment(
+            label:   "TOC (pending)",
+            size:    toc.Size,
+            color:   default,
+            tooltip: $"Pending {toc.Tooltip}",
+            kind:    UsageSegmentKind.PendingTOC);
+    }
 
-        // 2. No pending segment until the user has checked something.
+    /// <summary>
+    /// The existing sets up to the "Append after" target, then the pending set — sized to the room it can take.
+    /// </summary>
+    protected override void AddContentSegments(List<UsageSegment> segments, MediaUsage usage)
+    {
+        // 1. Existing sets, without those the new set replaces.
+        int appendAfter = _vm.OverwriteMedia ? -1 : (_vm.SelectedAppendOption?.SetIndex ?? -1);
+        var kept = new List<UsageSegment>();
+        base.AddContentSegments(kept, usage);
+        kept.RemoveAll(s => s.SetIndex is int idx && idx > appendAfter);
+        segments.AddRange(kept);
+
+        // 2. Nothing pending until the user has checked something.
         long pendingSize = _vm.CheckedFileSizeBytes;
-        int  pendingCount = _vm.CheckedFileCount;
+        int pendingCount = _vm.CheckedFileCount;
         if (pendingSize <= 0 || pendingCount <= 0)
             return;
 
-        // special case toc is null: show the to-be-created toc
-        if (toc is null && _tapeService.HasInitiatorPartition) // TOC-in-partition: leftmost segment
-        {
-            long tocSize = _tapeService.DefaultTOCCapacity;
-            segments.Add(new UsageSegment(
-                label: "TOC (pending)",
-                size: tocSize,
-                color: default, // Kind-based color applied by the control
-                tooltip: $"Pending TOC in partition: {Helpers.BytesToString(tocSize)}",
-                kind: UsageSegmentKind.PendingTOC));
-        }
-
-        // 3. Determine the AppendAfter target. Overwrite ⇒ −1 (drop everything).
-        bool overwrite = _vm.OverwriteMedia; // also if toc is null
-        int appendAfter = overwrite ? -1 : (_vm.SelectedAppendOption?.SetIndex ?? -1);
-
-        // 4. Drop set segments with SetIndex > appendAfter.
-        for (int i = segments.Count - 1; i >= 0; i--)
-        {
-            var s = segments[i];
-            if (s.Kind == UsageSegmentKind.BackupSet && s.SetIndex is int idx && idx > appendAfter)
-                segments.RemoveAt(i);
-        }
-
-        // 5. Compute the room actually available for the pending segment.
-        //  Work on the ESTIMATED capacity axis (the true medium size, phantom free space removed), then
-        //  let ComputeWritableRemaining reserve the trailing TOC (added later by base.BuildSegments).
-        //  One further byte is held back for the visible Free remnant.
-        long capacity = _tapeService.EstimatedCapacity;
-        long usedAfterDrop = segments.Sum(s => s.Size);
-        long available = _tapeService.ComputeWritableRemaining(capacity - usedAfterDrop) - 1;
-        if (available < 1) available = 1;
-
+        // 3. Room: writable now plus what the overwrite frees (the TOC reserve's own change is ignored — small).
+        long dropped = usage.Sets.Where(s => s.SetIndex > appendAfter).Sum(s => Visible(s.SizeOnTape));
+        long available = Math.Max(1L, usage.Writable + dropped);
         bool fits = pendingSize <= available;
         long visualSize = Math.Min(pendingSize, available);
 
-        // 6. Compute the new set's index/alt and color.
-        int newSetIndex = appendAfter + 1; // 1-based; first set on a fresh tape is #1
-        if (newSetIndex < 1) newSetIndex = 1;
-        int newAlt = 0; // newest after append
-
+        // 4. Index, color, texts.
+        int newSetIndex = Math.Max(1, appendAfter + 1);
+        const int newAlt = 0;
         bool incremental = _vm.IncrementalBackup;
-        Color color = incremental && !fits
-            ? GetWarningBgColor("Warning")
-            : fits
-                ? GetWarningBgColor("Completed")
-                : GetWarningBgColor("Error");
+        Color color = incremental && !fits ? GetWarningBgColor("Warning")
+            : fits ? GetWarningBgColor("Completed")
+            : GetWarningBgColor("Error");
 
-        string description = string.IsNullOrWhiteSpace(_vm.Description)
-            ? "(unnamed)"
-            : _vm.Description;
+        string description = string.IsNullOrWhiteSpace(_vm.Description) ? "(unnamed)" : _vm.Description;
         string sizeStr = Helpers.BytesToString(pendingSize);
-        string label   = $"#{newSetIndex}|{newAlt}: {description}\n{sizeStr}, {pendingCount:N0} file(s)";
-
-        string tooltip = BuildTooltip(
-            newSetIndex, newAlt, description, sizeStr, pendingCount,
-            incremental, fits, available);
 
         segments.Add(new UsageSegment(
-            label:    label,
+            label:    $"#{newSetIndex}|{newAlt}: {description}\n{sizeStr}, {pendingCount:N0} file(s)",
             size:     visualSize,
             color:    color,
-            tooltip:  tooltip,
+            tooltip:  BuildTooltip(newSetIndex, newAlt, description, sizeStr, pendingCount, incremental, fits, available),
             kind:     UsageSegmentKind.PendingBackupSet,
             setIndex: newSetIndex));
- 
-        // special case toc is null: show the to-be-created toc
-        if (toc is null && !_tapeService.HasInitiatorPartition) // TOC-in-set: rightmost segment
-        {
-            long tocSize = _tapeService.DefaultTOCCapacity;
-            segments.Add(new UsageSegment(
-                label: "TOC (pending)",
-                size: tocSize,
-                color: default, // Kind-based color applied by the control
-                tooltip: $"Pending TOC (in set): {Helpers.BytesToString(tocSize)}",
-                kind: UsageSegmentKind.PendingTOC));
-        }
     }
 
     private static string BuildTooltip(
@@ -144,46 +105,30 @@ public class BackupMediaUsageBarPresenter(TapeService tapeService, BackupViewMod
             return $"{head}\n{sizeStr}, {fileCount:N0} file(s).";
         // Doesn't fit — multi-volume continuation, neutrally phrased.
         return $"{head}\n"
-             + $"{sizeStr}, {fileCount:N0} file(s) —\nexceeds the {Helpers.BytesToString(Math.Max(available, 0))} "
-             + $"available on this volume;\ncan continue backup on the next volume.";
+             + $"{sizeStr}, {fileCount:N0} file(s) —\nexceeds the {Helpers.BytesToString(available)} "
+             + $"writable on this volume;\ncan continue backup on the next volume.";
     }
 
     // ─────────────────────────────────────────────────────────────── Click handling ────────
 
-    /// <summary>
-    /// Maps user clicks on the bar to changes in <see cref="BackupViewModel.SelectedAppendOption"/>
-    ///  / <see cref="BackupViewModel.OverwriteMedia"/>.
-    /// </summary>
+    /// <inheritdoc/>
     protected override void OnSegmentClicked(UsageSegment seg)
     {
         switch (seg.Kind)
         {
             case UsageSegmentKind.BackupSet when seg.SetIndex is int idx:
-                // Clicked existing set ⇒ select IT as the "Append after" set so that
-                //  it (and all older sets) are preserved and the new set follows.
-                //  Exception: clicking the first (oldest) set when it is already
-                //  selected as AppendAfter → the user wants to drop everything,
-                //  so we switch to Overwrite.
                 SelectAsAppendAfter(idx);
                 break;
-
             case UsageSegmentKind.PendingBackupSet:
             case UsageSegmentKind.Free:
-                // Clicked pending or free ⇒ shift AppendAfter one step to the right
-                //  (preserve one more existing set, i.e. AppendAfter index + 1).
                 ShiftRightPreserveOneMore();
                 break;
         }
     }
 
     /// <summary>
-    /// Selects the set with index <paramref name="setIndex"/> as the "Append after"
-    ///  target, making the new set land immediately after it.
-    /// <para>
-    /// Special case: clicking the oldest set on the volume when it is <em>already</em>
-    ///  selected as AppendAfter means the user wants to drop all existing sets ⇒
-    ///  switch to Overwrite.
-    /// </para>
+    /// Makes set <paramref name="setIndex"/> the "Append after" target. Clicking the oldest set while it already is the
+    ///  target switches to Overwrite.
     /// </summary>
     private void SelectAsAppendAfter(int setIndex)
     {
@@ -192,27 +137,20 @@ public class BackupMediaUsageBarPresenter(TapeService tapeService, BackupViewMod
             return;
 
         int oldestIdx = options[^1].SetIndex; // AppendOptions: newest → oldest
-
-        // Toggle to Overwrite when clicking the oldest set while it's already selected.
-        if (setIndex == oldestIdx
-            && !_vm.OverwriteMedia
-            && _vm.SelectedAppendOption?.SetIndex == oldestIdx)
+        if (setIndex == oldestIdx && !_vm.OverwriteMedia && _vm.SelectedAppendOption?.SetIndex == oldestIdx)
         {
             _vm.OverwriteMedia = true;
             return;
         }
 
         var pick = options.FirstOrDefault(o => o.SetIndex == setIndex);
-        if (pick is null) return;
+        if (pick is null)
+            return;
         _vm.OverwriteMedia = false;
         _vm.SelectedAppendOption = pick;
     }
 
-    /// <summary>
-    /// One-step right-shift: preserve one additional existing set. From
-    ///  Overwrite this lands on the oldest set; otherwise it advances the
-    ///  AppendAfter selection by one (clamped at the newest set).
-    /// </summary>
+    /// <summary>Preserves one more existing set: from Overwrite to the oldest set, else the next newer one.</summary>
     private void ShiftRightPreserveOneMore()
     {
         var options = _vm.AppendOptions;
@@ -221,37 +159,13 @@ public class BackupMediaUsageBarPresenter(TapeService tapeService, BackupViewMod
 
         int oldestIdx = options[^1].SetIndex;
         int newestIdx = options[0].SetIndex;
-
-        // In Overwrite mode, conceptual current is "below oldest"; +1 lands on oldest.
-        int current = _vm.OverwriteMedia
-            ? oldestIdx - 1
-            : (_vm.SelectedAppendOption?.SetIndex ?? oldestIdx - 1);
+        int current = _vm.OverwriteMedia ? oldestIdx - 1 : (_vm.SelectedAppendOption?.SetIndex ?? oldestIdx - 1);
         int target = Math.Min(current + 1, newestIdx);
 
         var pick = options.FirstOrDefault(o => o.SetIndex == target);
-        if (pick is null) return;
+        if (pick is null)
+            return;
         _vm.OverwriteMedia = false;
         _vm.SelectedAppendOption = pick;
-    }
-
-    // ──────────────────────────────────────────────────── App.xaml warning brushes ────────
-
-    /// <summary>
-    /// Resolves a <c>WarningBg.&lt;name&gt;</c> brush from the application
-    ///  resources and returns its <see cref="Color"/>. Falls back to a sensible
-    ///  default if the resource is unavailable (e.g. designer mode).
-    /// </summary>
-    private static Color GetWarningBgColor(string name)
-    {
-        if (Application.Current?.TryFindResource("WarningBg." + name) is SolidColorBrush b)
-            return b.Color;
-        // Fallbacks roughly matching App.xaml diluted palette
-        return name switch
-        {
-            "Completed" => Color.FromRgb(0xCC, 0xFF, 0xCC),
-            "Warning"   => Color.FromRgb(0xFF, 0xF0, 0xCC),
-            "Error"     => Color.FromRgb(0xFF, 0xCC, 0xCC),
-            _           => Colors.LightGray,
-        };
     }
 }

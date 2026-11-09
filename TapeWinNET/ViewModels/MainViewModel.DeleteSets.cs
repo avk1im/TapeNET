@@ -51,7 +51,9 @@ public partial class MainViewModel
             }
 
             // Every other branch may have altered the TOC, even partially — refresh regardless of outcome.
-            try { await ReloadMediaAsync(); } catch { /* ignore */ }
+            //  Try to keep the previously selected set -- unless it's been deleted
+            //  (ReloadMediaAsync() -> RebuildTreeKeepingSelection() will find out)
+            try { await ReloadMediaAsync(keepSelection: true); } catch { /* ignore */ }
 
             if (operationResult is { WasAborted: true })
             {

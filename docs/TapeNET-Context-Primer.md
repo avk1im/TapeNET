@@ -795,11 +795,60 @@ TapeTOC → TOCView.GetOrCreate(setIndex) → BackupSetView
   BackupSetView.SavedFilterState = FileFilterPane restore delegate
 ```
 
+**Updates since encryption (Phase 7):**
+- `SourceFiles` is a **copy** of the set's file references, taken when the view is created — locking a set empties the
+  live list, never one on screen.
+- A set without a view (locked, or unlocked since) can be **checked as a whole**; the record is keyed by the set object,
+  so a delete or a new backup never hands the check to another set. A whole-set check of a set unlocked since becomes
+  "all files checked" when its view is first created.
+- `TOCView.Refresh()` carries every view of an unchanged set over (checks, filter, saved filter state); a replaced or
+  deleted set's view goes. `ResetTree(keepTocView: true)` is the only way a tree rebuild keeps the view.
+- File lists come from `TapeTOC.GetSetFiles(i, resolveIncremental)` — the TOC's cursor is never moved by the UI.
+
+
 **`TapeTreeItemViewModel`** is now purely UI/navigation — it carries display name, icon, set index, and children, but no data-model fields. The `Tag` property can store an opaque reference, but `FilteredFiles` and `SavedFilterState` have moved to `BackupSetView`.
+
+#### The TOC barrier (MainViewModel.TocBarrier.cs)
+
+`TapeWin` never reads the TOC while a service operation holds it — "don't open the mixer while it runs":
+- `ServiceStateChange.TocChanged` only **marks the views stale**; it never reads the TOC.
+- The refresh runs when IsBusy turns false (the awaited service call has released the TOC), or — for TOC changes
+  outside a busy scope, e.g. adopting a recovered TOC — when OperationEnded arrives.
+- `RefreshAfterTocChange` rebuilds tree and panes and puts the selection back: the same set by object, else the media
+  node; a volume change always shows the media node. Backup asks for the media view on purpose.
+- `AssertTocQuiet()` (debug) in every TOC-reading method, backed by `TapeServiceBase.IsOperationRunning`.
+
+#### Selection model (MainViewModel.Restore.cs, SelectionText.cs)
+
+One selection, computed once per change by `ComputeRestoreSelection`, feeds the Restore / Validate / Verify texts, their
+enabled state, `StartRestore` and the status bar:
+
+| Type | Source | Used when |
+|---|---|---|
+| 1 Checked | file and set checkboxes (`TOCView`), incl. locked sets checked as a whole | anything is checked |
+| 2a Tree set | the set selected in the tree | nothing checked, set view |
+| 2b Highlighted | the rows highlighted in the sets list (Ctrl/Shift) | nothing checked, media view |
+| 3 All sets | — | nothing else |
+
+Texts: "Restore 195 files selected from 2 sets…", "…; 1 set locked", "Restore 3 locked sets…". While a selection
+exists the status bar shows it with its size in place of the media line. Locked sets stay selectable — restoring them is
+how an encrypted set is restored (the service, later the unlock dialog, asks for the password).
+
+#### Media usage bar (`MediaUsageBarPresenter`, `MediaUsageBarControl`)
+
+- **Fed by the service**: `TapeServiceBase.DescribeUsage()` — the same figures the media sheet formats (sets on tape, TOC
+  reserve or partition with the TOC's size, writable space). The bar never reads the TOC.
+- **What-if layers** stay in the windows: `BackupWindow` drops replaced sets and adds the pending one (and the pending
+  TOC); `DeleteBackupSetsWindow` marks the sets to be deleted. "Writable afterwards" is computed in the base presenter.
+- **Scale**: sets are drawn to scale, each at least 4 px. Writable space is capped at 1 × the content width, the TOC
+  at 0.25 ×; a capped segment gets a zigzag on its outer edge and "(not drawn to scale)" in its tooltip.
+- Several highlighted sets are framed at once.
 
 ---
 
 ## TapeWinNET — WPF App Architecture
+
+_The TOC barrier, selection model and usage bar sections move to TapeWinNET-2.0-Architecture when that is written._
 
 ### MVVM pattern
 
@@ -877,6 +926,14 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
 - **Progress**: Backup/Restore each have their own progress panel with percent bar, text, current-file display, abort button.
 - **Set indexes**: Dual display format `#{standard} | {alt}` where standard counts up from oldest (1-based) and alt counts down from newest (0, -1, -2...).
 - **File filtering**: `FileFilterPane` user control with dynamic stats in the GroupBox header (e.g. `"Files (1,234 \u2192 567 filtered \u2192 42 selected)"`), filter state persistence across tree navigation, tri-state select-all checkboxes for both files and backup sets.
+- **After an operation** the view stays where it was (the same set, by object); backup and any volume change show the
+  media node.
+- **Series TOC** (after a multi-volume restore that ended on another volume): the tape node reads
+  "⚠ [series TOC — reread to edit]", the status bar says so, and `TapeWin` offers to read the loaded cartridge's TOC.
+- **Context menus**: the sets list has its own (Restore / Validate / Verify, Rename Set — F2 there); Rename acts on the
+  highlighted row, enabled for exactly one.
+- **RestoreWindow**: "Include incremental chain" enabled only for an incremental (or locked) set; Start disabled for an
+  empty target folder.
 
 ---
 
@@ -933,6 +990,12 @@ public record LogEntry(WarningLevel Level, string Message, bool IsSub, DateTime 
   statistics and an actionable closing recommendation. `DeleteBackupSetsExAsync` distinguishes
   a refusal from a partial failure. ~1,000 new tests (3,500 total). Full designs:
   `docs/Design-SetHeader.md`, `docs/Design-SetHeader-VerifiedWrite.md`.
+- ✅ `TapeWin` selection model: four selection types, one computation, set counts and locked sets in the texts, the
+  selection in the status bar; Restore processes exactly the sets checked in its own window.
+- ✅ TOC barrier: no TOC access during a service operation; refresh at the end, selection and view kept.
+- ✅ Media usage bar fed by the service's usage figures; compressed background segments; multi-set highlight.
+- ✅ Series TOC after multi-volume restore: flagged, writes refused, reread offered (`Design-MultiVolume` §5.5).
+- ✅ TOC volume queries without the cursor (`Design-MultiVolume` §1.1).
 
 ## What's Next (Planned)
 

@@ -224,13 +224,14 @@ public class CompressionRoundTripTests
 
     /// <summary>
     /// When file content is high-entropy (random bytes), ZSTD cannot compress it.
-    /// <see cref="ProbingCompressionStream"/> must detect this during the probe and
-    /// fall back to <see cref="TapeFileCodec.Stored"/>.  The restore path must still
-    /// produce a byte-for-byte match regardless of the per-file codec decision.
+    ///  <see cref="ProbingCompressionStream"/> must detect this during the probe and
+    ///  fall back to <see cref="TapeFileCodec.Zstd"/> with minimal compression level.
+    ///  The restore path must still produce a byte-for-byte match regardless of the
+    ///  per-file codec decision.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
-    public void Compression_StoreFallback_IncompressibleData(DriveProfile profile)
+    public void Compression_MinCompressionFallback_IncompressibleData(DriveProfile profile)
     {
         using var tree = new TempFileTree();
         // Random (high-entropy) content — effectively incompressible.
@@ -243,7 +244,9 @@ public class CompressionRoundTripTests
         // Every file must have been auto-stored (probe detected no space saving).
         var setTOC = fixture.TOC[1];
         for (int i = 0; i < setTOC.Count; i++)
-            Assert.Equal(TapeFileCodec.Stored, setTOC[i].Codec);
+        {
+            Assert.Equal(TapeFileCodec.Zstd, setTOC[i].Codec);
+        }
 
         string restoreDir = MakeRestoreDir();
         try

@@ -3,6 +3,7 @@
 //  the parsed command, and translates any TapeConException into the
 //  appropriate TapeConExitCode for the OS.
 
+using System.CommandLine;
 using TapeConNET.Cli;
 using TapeConNET.Infrastructure;
 using TapeConNET.Ux;
@@ -14,7 +15,6 @@ try
     System.Console.OutputEncoding = System.Text.Encoding.UTF8;
 
     using var cancellation = new CancellationHooks();
-
     var ux = new SpectreConsoleUx();
 
     // Pre-scan args for --quiet / --no-color so the banner and any startup
@@ -28,10 +28,16 @@ try
 
     var root = RootCommandFactory.Create(ux);
 
+    // System.CommandLine's DEFAULT exception handler must stay off: it catches every exception a verb action throws —
+    //  TapeConException included — prints it as "Unhandled exception" with a stack trace and returns 1, so the catch
+    //  blocks below never ran and the exit codes were lost. TapeConHost (tests) has always switched it off, which is
+    //  why no test saw the crash.
+    var invocation = new InvocationConfiguration { EnableDefaultExceptionHandler = false };
+
     // System.CommandLine 2.0: ParseResult.InvokeAsync returns the int exit code
     //  produced by the matched command's SetAction handler.
     var parseResult = root.Parse(args);
-    return await parseResult.InvokeAsync(configuration: null, cancellationToken: cancellation.Token);
+    return await parseResult.InvokeAsync(invocation, cancellation.Token);
 }
 catch (TapeConException tcex)
 {

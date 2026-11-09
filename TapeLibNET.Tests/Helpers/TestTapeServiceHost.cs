@@ -278,6 +278,27 @@ public class TestTapeServiceHost(ILogger? logger = null) : ITapeServiceHost
 
     #endregion
 
+    // ── Password prompts (Design-Encryption §10.4) ───────────────────────────
+    #region Password prompts
+
+    /// <summary>
+    /// Queued answers for <see cref="OnAskPassword"/>, consumed in order. Empty: null — skip, the unattended default.
+    ///  Each answer is handed out as a COPY: the service clears what it receives.
+    /// </summary>
+    public Queue<char[]?> PasswordAnswers { get; } = new();
+
+    /// <summary>Every password prompt, in order. A run that expects none must leave this empty.</summary>
+    public List<PasswordRequest> PasswordPrompts { get; } = [];
+
+    /// <inheritdoc/>
+    public char[]? OnAskPassword(in PasswordRequest request)
+    {
+        PasswordPrompts.Add(request);
+        return PasswordAnswers.Count > 0 && PasswordAnswers.Dequeue() is { } answer ? (char[])answer.Clone() : null;
+    }
+
+    #endregion
+
     /// <inheritdoc/>
     /// <remarks>
     /// Dequeues from <see cref="FileErrorAnswers"/>; returns
@@ -382,6 +403,9 @@ public class TestTapeServiceHost(ILogger? logger = null) : ITapeServiceHost
         while (MediaMismatchPrompts.TryDequeue(out _))
             { }
         MediaMismatchAnswers.Clear();
+
+        PasswordAnswers.Clear();
+        PasswordPrompts.Clear();
 
         SetAnomalyPrompts.Clear();
 

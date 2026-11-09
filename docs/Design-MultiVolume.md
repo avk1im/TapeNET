@@ -28,8 +28,11 @@ Design-Encryption (§8.3 continuation sets, §9.5 locked sets across volumes).
 The TOC on volume *n* describes **all sets of the series up to and including volume *n***. The last volume's TOC is
 therefore complete, and a restore always starts from it. Earlier volumes are loaded only for their content.
 
-`TapeSetTOC.Volume` records which cartridge a set part lives on. `TapeTOC.FirstSetOnVolume` / `LastSetOnVolume` /
-`IsCurrentSetOnVolume` answer the "is this set on the loaded cartridge?" question used throughout.
+`TapeSetTOC.Volume` records which cartridge a set part lives on. The volume queries — `TapeTOC.FirstSetOnVolume` /
+`LastSetOnVolume`, `IsSetContFromPrevVolume(i)`, `IsSetContFromPrevVolumeInc(i)`, `IsSetContOnNextVolume(i)`,
+`GetSetFiles(i, …)` — answer **by each set's volume and by set index, never by where TapeTOC.CurrentSetIndex points**.
+A volume without sets is an empty range (`LastSetOnVolume` < ``FirstSetOnVolume). The cursor stays the agents' own: their
+`IsCurrentSet…` forms delegate to the index forms for the current set (§9, D17).
 
 ### 1.2 Invariants
 
@@ -215,6 +218,30 @@ set.
 The skip happens mid-operation, so it lives in the agent, which alone knows its position in the package. The service's
 up-front `NoMultivolume` confinement is a different thing: it trims the package before the agent starts.
 
+#### 5.5 After the restore: the series TOC
+
+A restore that swapped cartridges keeps the **series TOC** it started with — the walk sets TOC.Volume to each volume it
+resumes on, but the set list stays the series'. When the drive ends on a volume other than the one whose TOC the
+service held at the start — the user declined the volume the walk came back for, skipped, or ended after a rejection —
+that TOC no longer describes the cartridge in the drive:
+
+| | |
+|---|---|
+| **State** | `TapeServiceBase.TOCIsFrom` = **`TOCSource.Series`** |
+| **Result** | `RestoreResult.MediaSwapped`, `VolumeInDrive` (by the loaded media header; null when unidentified or empty), `TocDescribesDrive = false` |
+| **Log** | "Volume #v remains in the drive; the table of contents held is the series' (volume #s)" — also for the CLI |
+| **Media sheet** | the TOC Placement row reads "(series TOC)" at Warning |
+| **Writes** | refused before anything is written (`RefuseOnSeriesToc`): rename media, rename set, delete sets, append. An overwrite stays allowed — it discards the TOC and checks the header first |
+| **Ends** | at the next TOC load (`RestoreTOCAsync` / `IdentifyMediaAsync` / reread) |
+
+A swap that comes **back** to the start volume leaves `TocDescribesDrive = true`: nothing is flagged.
+
+**Why refused.** Saving the series TOC onto another volume would put a foreign set list and foreign continuation flags on
+it; an append would write after a set that continues on the next volume; a delete would remove that set (§9, D16).
+
+**Hosts.** An interactive host may offer to read the loaded cartridge's TOC right away (`TapeWin` does); the CLI needs
+nothing — every command reads the cartridge afresh.
+
 ---
 
 ## 6. Diagnosis across volume changes
@@ -357,6 +384,8 @@ result is **failed**, naming the files left out ("Backup ended after volume #n �
 | D13 | A set header refused by the TOC reserve failed the backup | "the operation completed successfully" on a full volume | the set continues on the next volume, §4.1 |
 | D14 | Continuation names chained suffixes | "First (2) (3)" | original description + `(n)`, §1 |
 | D15 | A reload kept the previous cartridge's cached content capacity | stale capacity with mixed cartridge sizes | `ReloadMedia` clears it |
+| D16 | After a swap the service held the series TOC with TOC.Volume moved to the loaded volume | rename, delete, append on the loaded volume would write the series' set list onto it — the header check passed | TOCSource.Series, writes refused, §5.5 |
+| D17 | `FirstSetOnVolume` / `LastSetOnVolume` scanned from the cursor; `CurrentSetIndexOnVolume` measured against the mounted volume; `DescribeSet` moved the cursor | wrong ranges with the cursor on another volume; an empty TOC answered 1..1 (and reading it created a set); "continued incrementally" judged against the wrong volume | queries by set and volume, §1.1 |
 
 ### 9.1 Regression coverage
 
@@ -370,6 +399,9 @@ result is **failed**, naming the files left out ("Backup ended after volume #n �
 | ServiceMultiVolumeTests | service | the normal flows |
 | MultiVolumeEncryptionTests | agent | encrypted continuation (shared envelope and key, fresh FileIds, locked TOCs across volumes); D13 on encrypted incrementals |
 | TocReserveAgentTests | agent | D15 (mixed 2×/1× volume sizes, both orders); TR-7 no loop |
+| ServiceSeriesTocTests | service | D16: the user declines the volume the restore came back for → TOCSource.Series, result fields, log, media sheet; writes refused, the loaded cartridge untouched; reread clears it; a swap that returns, and no swap, flag nothing |
+| TapeTOCCursorTests | TOC | D17: volume range wherever the cursor, empty TOC and empty volume, continuation queries by index (both index forms), the cursor forms agree, GetSetFiles leaves the cursor |
+| ServiceDescribeSetTests | service | D17: DescribeSet describes any set, the cursor untouched |
 
 ---
 
@@ -403,3 +435,5 @@ result is **failed**, naming the files left out ("Backup ended after volume #n �
 | Full volume before / at the end of a set | `TapeFileBackupAgent`: `ContinueOnNextVolumeBeforeSet`, the final-flush handler in `BackupFilesToCurrentSet` |
 | Volume identification | `TapeFileRestoreBaseAgent` (`TapeFileRestoreAgent.cs`): `CheckVolumeToResumeFrom`, `TapeAgentBase.TocLocation` (ladder, S4) |
 | Test invariants | `TocInvariants`, `MultiVolumeVirtualTapeFixture.VolumeCapacity` |
+| The series TOC after a restore | `TapeServiceBase.Restore` (`ExecuteRestoreCore`: `mediaSwapped`, `volumeInDrive`), `TapeServiceBase` (`TOCSource.Series`, `RefuseOnSeriesToc`), `RestoreResult` |
+| Volume queries by set | `TapeTOC`: `FirstSetOnVolume`, `LastSetOnVolume`, `IsSetCont…(i)`, `ChainStartInternal`, `CurrentSetIndexOnVolume`, `GetSetFiles` |

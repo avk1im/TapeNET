@@ -1055,6 +1055,34 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     }
 
     /// <summary>
+    /// Records a file an incremental found up to date — counted apart from skips (<see cref="TapeFileStatistics.FilesUpToDate"/>).
+    ///  Same abort semantics as <see cref="NotifyFileSkipped"/>.
+    /// </summary>
+    protected void NotifyFileUpToDate(ITapeFileNotifiable? fileNotify, TapeFileInfo fileInfo)
+    {
+        _stats.FilesProcessed++;
+        _stats.FilesUpToDate++;
+        RefreshBytesTotalEstimate();
+        if (fileNotify != null)
+        {
+            try
+            {
+                fileNotify.OnFileUpToDate(fileInfo, in _stats);
+            }
+            catch (TapeAbortRequestedException ex1)
+            {
+                m_logger.LogInformation("Abort requested while notifying an up-to-date file: {Exception}", ex1);
+                IsAbortRequested = true;
+                throw; // rethrow to abort the entire operation
+            }
+            catch (Exception ex2)
+            {
+                m_logger.LogWarning("Exception {Exception} while notifying an up-to-date file", ex2);
+            }
+        }
+    }
+
+    /// <summary>
     /// Records a file lost to a media write fault — counted as failed, reported without asking (see
     ///  <see cref="ITapeFileNotifiable.OnFileLost"/>). Mirrors <see cref="NotifyFileFailed"/>, minus the decision.
     /// </summary>
@@ -1103,6 +1131,13 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     {
         _stats.FilesProcessed -= count;
         _stats.FilesSkipped -= count;
+    }
+
+    /// <summary>Undoes <paramref name="count"/> up-to-date entries — the EOM rollback's counterpart of <see cref="StatsUndoSkips"/>.</summary>
+    protected void StatsUndoUpToDate(int count)
+    {
+        _stats.FilesProcessed -= count;
+        _stats.FilesUpToDate -= count;
     }
 
     /// <summary>

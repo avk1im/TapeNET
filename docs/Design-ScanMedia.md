@@ -298,6 +298,16 @@ When the drive's maximum block is under 16 KiB, `ReadIdentificationBlock` reads 
 A fragment's contents are opaque. `BlockSpan` is an upper bound including marks, never a payload size. Only the first
 block after a mark is read, so packed files after a set's first are content, not fragments (SM-11).
 
+### 4.8 Encrypted sets
+A scan needs no password and reveals nothing an encrypted set hides (Design-Encryption §12, E4):
+- **With set headers:** a `SetHeader` fragment as usual — positional fields and SetId, no description; `Encryption`
+  names the scheme, and `DisplayName` reads "Set #n (encrypted)".
+- **Without set headers:** the set's first block is ciphertext — `Foreign` → `Unknown`, with a fingerprint and **no**
+  diagnosis: unidentified data, not damage. Closed by the nearest mark (§3.2).
+- **Harvested TOCs** load their sealed sets locked.
+- The service counts encrypted sets only where a set header or a recovered TOC proves them (`ScanMediaResult.EncryptedSets`)
+  and says so in one detail line.
+
 ---
 
 ## 5. The records
@@ -324,6 +334,8 @@ public sealed record TapeMediaFragment
     public string?   Description    { get; init; }   // label / set name / profile key / first file (SetContent)
     public DateTime? CreatedUtc     { get; init; }
     public uint?     BlockSize      { get; init; }
+
+    public TapeEncryption? Encryption { get; init; } // encrypted set header only (§4.8)
 
     public ushort?  TocVersion   { get; init; }
     [JsonIgnore] public TapeTOC? HarvestedToc { get; init; }  // recovery ran and succeeded (§8)
@@ -650,6 +662,7 @@ TapeLibNET/
 | 5 — TapeWinNET | setup dialog, overlay, result window (§14) | manual acceptance |
 | 6 — TapeConNET | `scan-media`, `recover-toc` | CLI tests |
 | **7 — partitions, nearest mark, format 2.1** | every partition walked (SM-14); `ScannedPartition`, `OutOfPlaceFragments`; nearest-mark rule; `SetContent`; TOC recovery by partition; initiator fault injectors; partition column in WPF | `TapeScannerPartitionTests`; exemptions removed from the earlier suites; `ServiceLegacyMediaTests` (legacy and mixed cartridges) |
+| Encryption Phase 5 | s. §4.8 | `TapeScannerEncryptionTests`, `ServiceScanEncryptionTests`
 
 ### 10.2 Phase 7 — why the earlier suites missed it
 
@@ -721,6 +734,7 @@ offers `PartitionBlank` / `PartitionNotScanned`, `TocCopiesWhereTheLayoutPutsThe
 - **Real hardware:** confirmed only on the virtual backend — a read that meets a mark leaves the head past it (setmarks
   need `ReportSetmarks`), EOD is reported through `eof` without `tapemark`, and the nearest-mark measurement's cost on a
   long damaged partition (§15). Worth confirming on the DLT and LTO families.
+- **A header-less encrypted set** is not counted; a recovered TOC lists it (§4.8).
 
 ---
 

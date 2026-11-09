@@ -67,12 +67,18 @@ public sealed class ScanFragmentRow(TapeMediaFragment fragment, string? tocSetNa
     {
         FragmentKind.MediaHeader => Fragment.Description ?? string.Empty,
         FragmentKind.SetHeader =>
-            $"{Fragment.Description}{(Fragment.CreatedUtc is { } t ? $" · {t.ToLocalTime():g}" : "")}"
+            (Fragment.Encryption is { } enc
+                ? $"\U0001F512 encrypted ({TapeLibNET.Encryption.EncryptionPreset.DisplayName(enc)})"
+                : Fragment.Description ?? string.Empty)
+            + (Fragment.CreatedUtc is { } t ? $" · {t.ToLocalTime():g}" : "")
             + (Fragment.ClosedBySeparator ? string.Empty : " — never completed"),
         FragmentKind.SetContent => tocSetName is { } n
             ? $"{n} · first file: {Fragment.Description}"
             : $"first file: {Fragment.Description}",
-        FragmentKind.TOC => Fragment.HarvestedToc is { } toc ? $"recovered — {toc.Count} set(s)"
+        FragmentKind.TOC => Fragment.HarvestedToc is { } toc
+            ? toc.Count(s => s.IsEncrypted) is int enc and > 0
+                ? $"recovered — {toc.Count} set(s), {enc} encrypted"
+                : $"recovered — {toc.Count} set(s)"
             : !Fragment.Diagnosis.Success ? $"not recovered: {Fragment.Diagnosis.ErrorMessage}"
             : "found",
         FragmentKind.TocMark => "gap + filemarks",
@@ -115,7 +121,7 @@ public sealed class ScanResultViewModel : ViewModelBase
             .SelectMany(f => f.HarvestedToc!)
             .Where(s => s.SetId != Guid.Empty)
             .GroupBy(s => s.SetId)
-            .ToDictionary(g => g.Key, g => g.First().Description);
+            .ToDictionary(g => g.Key, g => g.First().DisplayName);
 
         HashSet<int> outOfPlace = [.. _map.OutOfPlaceFragments.Select(f => f.Ordinal)];
         Rows = new ObservableCollection<ScanFragmentRow>(_map.Fragments.Select(f => new ScanFragmentRow(f,

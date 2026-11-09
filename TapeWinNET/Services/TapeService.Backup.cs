@@ -1,16 +1,15 @@
-using TapeLibNET.Agents;
+﻿using TapeLibNET.Agents;
 using TapeLibNET.Services;
 
 namespace TapeWinNET.Services;
 
-
 /// <summary>
-/// Partial class � backup factory override and WPF-specific progress handler.
+/// Partial class — backup factory override and WPF-specific progress handler.
 /// The state machine lives in <see cref="TapeServiceBase"/>.
 /// </summary>
 public partial class TapeService
 {
-    // ?? Backup progress handler factory override ??????????????????????????????
+    // ── Backup progress handler factory override ──────────────────────────────
 
     /// <inheritdoc/>
     /// <remarks>
@@ -26,7 +25,7 @@ public partial class TapeService
         return new GuiBackupProgressHandler(host, agent, skipAllErrors, filter);
     }
 
-    #region Helper Class � Backup progress handler
+    #region Helper Class — Backup progress handler
 
     /// <summary>
     /// <see cref="ServiceBackupProgressHandler"/> subclass that drives the WPF

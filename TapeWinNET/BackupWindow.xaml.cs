@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 
 using TapeWinNET.Help;
@@ -171,6 +171,23 @@ public partial class BackupWindow : Window, IHelpPaneHost
             if (setView is not null)
                 UpdateFilterPaneCounts(setView);
         }
+    }
+
+    // ─────────────────────────────────────────────────
+    //  Encryption — an existing set's password is checked in the window (W3)
+    // ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Checks the existing set's password when its field loses focus — a typo shows under the field while every selection
+    ///  stays; Start checks again if needed.
+    /// </summary>
+    private async void ExistingPasswordInput_LostKeyboardFocus(object sender,
+        System.Windows.Input.KeyboardFocusChangedEventArgs e)
+    {
+        // Focus moving WITHIN the control (box → nothing else focusable) is no leaving
+        if (ExistingPasswordInput.IsKeyboardFocusWithin)
+            return;
+        await ViewModel.VerifyExistingPasswordAsync();
     }
 
     // ─────────────────────────────────────────────────

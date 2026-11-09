@@ -158,6 +158,7 @@ public partial class TapeServiceBase
                 TocCopiesFound = map.TocCopyCount,
                 TocsRecovered = CountRecoveredTocs(map),
                 UnknownFragments = map.UnknownCount,
+                EncryptedSets = CountEncryptedSets(map).Count,
                 LastSetUnclosed = map.LastSetUnclosed && !UnclosedLastSetEndsAtEom(map),
                 Advice = advice,
                 MapExportPath = exportPath,
@@ -433,7 +434,11 @@ public partial class TapeServiceBase
 
         _agent?.Dispose();
         _agent = null;
+
+        ClearKeys();
         _toc = toc;
+        ReapplyKeys();      // retained keys reopen their chains (Design-Encryption §11.1.7)
+
         TOCIsFrom = TOCSource.Recovered;
         TOCFilePath = savedPath;
 
@@ -473,6 +478,21 @@ public partial class TapeServiceBase
     }
 
     /// <summary>
+    /// How many encrypted sets the scan PROVES — by an encrypted set header, or listed by a recovered TOC
+    ///  (Design-Encryption §12). Never guessed from unidentified data: ciphertext and foreign data look the same.
+    /// </summary>
+    /// <returns>The count, and whether only a recovered TOC proves (some of) them — sets without set headers.</returns>
+    internal static (int Count, bool ByTocOnly) CountEncryptedSets(MediaScanMap map)
+    {
+        int byHeader = map.Fragments.Count(f => f.Kind == FragmentKind.SetHeader && f.Encryption is not null);
+        int byToc = map.Fragments
+            .Where(f => f.HarvestedToc is not null)
+            .Select(f => f.HarvestedToc!.Count(s => s.IsEncrypted))   // stub field: never throws on a locked set
+            .DefaultIfEmpty(0).Max();
+        return (Math.Max(byHeader, byToc), byToc > byHeader);
+    }
+
+    /// <summary>
     /// Renders a scan map as a headline, its severity, and detail lines. Pure — the scan counterpart of
     ///  <see cref="VerbalizeFileOperation"/>.
     /// </summary>
@@ -499,6 +519,13 @@ public partial class TapeServiceBase
         if (headerless > 0)
             details.Add($"{headerless:N0} backup set(s) identified by their first file — written without set headers, " +
                         "so their order and completeness cannot be checked from the tape alone, without TOC");
+
+        var (encrypted, encryptedByTocOnly) = CountEncryptedSets(map);
+        if (encrypted > 0)
+            details.Add(encryptedByTocOnly
+                ? $"{encrypted:N0} encrypted backup set(s) per the recovered TOC — their content cannot be inspected " +
+                  "without the password; those written without set headers read as unidentified data"
+                : $"{encrypted:N0} encrypted backup set(s) — their content cannot be inspected without the password");
 
         if (map.LastSetUnclosed)
         {

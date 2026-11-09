@@ -1,4 +1,4 @@
-<Window x:Class="TapeWinNET.BackupWindow"
+﻿<Window x:Class="TapeWinNET.BackupWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -495,6 +495,38 @@
 
                             </StackPanel>
 
+                            <!-- Encryption (Design-Encryption §11.1.4): the scheme — or, for an incremental on an
+                                 encrypted set, the chain's — then the password: new (twice), or an existing set's. -->
+                            <TextBlock Text="Encryption:" Margin="0,4,0,4"/>
+                            <ComboBox ItemsSource="{Binding EncryptionOptions}"
+                                      SelectedIndex="{Binding SelectedEncryptionIndex}"
+                                      Visibility="{Binding ShowEncryptionSelector, Converter={StaticResource BoolToVis}}"
+                                      Margin="0,0,0,6"/>
+                            <TextBlock Text="{Binding InheritedEncryptionText}"
+                                       Visibility="{Binding IsIncrementalOnEncrypted, Converter={StaticResource BoolToVis}}"
+                                       TextWrapping="Wrap" Margin="0,0,0,6"/>
+                            <StackPanel Visibility="{Binding ShowPasswordSourceSelector, Converter={StaticResource BoolToVis}}"
+                                        Margin="0,0,0,6">
+                                <TextBlock Text="Password:" Margin="0,0,0,4"/>
+                                <ComboBox ItemsSource="{Binding PasswordSourceOptions}"
+                                          SelectedItem="{Binding SelectedPasswordSource}"
+                                          DisplayMemberPath="DisplayText"/>
+                            </StackPanel>
+                            <controls:NewPasswordInput
+                                      PasswordSource="{Binding NewPasswordSource, Mode=OneWayToSource}"
+                                      Visibility="{Binding ShowNewPassword, Converter={StaticResource BoolToVis}}"
+                                      Margin="0,0,0,8"
+                                      help:HelpControlNameAttachedProperty.ControlName="New password"/>
+                            <controls:PasswordInput x:Name="ExistingPasswordInput"
+                                      Label="{Binding ExistingPasswordLabel}"
+                                      Message="{Binding ExistingPasswordError, Mode=OneWay}"
+                                      IsVerified="{Binding ExistingPasswordVerified, Mode=OneWay}"
+                                      PasswordSource="{Binding ExistingPasswordSource, Mode=OneWayToSource}"
+                                      RetryDelaySource="{Binding PasswordRetryDelaySource}"
+                                      Visibility="{Binding ShowExistingPassword, Converter={StaticResource BoolToVis}}"
+                                      LostKeyboardFocus="ExistingPasswordInput_LostKeyboardFocus"
+                                      Margin="0,0,0,8"
+                                      help:HelpControlNameAttachedProperty.ControlName="Existing set password"/>
                             <CheckBox Content="No multivolume"
                                       IsChecked="{Binding NoMultivolume}"
                                       ToolTip="Stop the backup when the tape is full instead of continuing to a new volume"

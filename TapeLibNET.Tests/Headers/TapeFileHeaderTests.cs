@@ -235,9 +235,9 @@ public class TapeFileHeaderTests
     }
 
     [Fact]
-    public void Probing_Incompressible_PrefixStored_ThenRawBody()
+    public void Probing_ShortIncompressible_PrefixStored_ThenRawBody()
     {
-        byte[] data = new byte[2 * ProbingCompressionStream.ProbeLength + 5];
+        byte[] data = new byte[ProbingCompressionStream.ProbeLength - 5]; // slightly less than the probing window
         new Random(42).NextBytes(data);
 
         byte[] output = Probe(data, prefix: true, out TapeFileCodec codec);
@@ -245,6 +245,19 @@ public class TapeFileHeaderTests
         Assert.Equal(TapeFileCodec.Stored, codec);
         Assert.Equal((byte)TapeFileCodec.Stored, output[0]);
         Assert.Equal(data, output[1..]);
+    }
+
+    [Fact]
+    public void Probing_LongIncompressible_PrefixZstd_ThenDecompressibleBody()
+    {
+        byte[] data = new byte[ProbingCompressionStream.ProbeLength + 5]; // slightly more then the probing window
+        new Random(42).NextBytes(data);
+
+        byte[] output = Probe(data, prefix: true, out TapeFileCodec codec);
+
+        Assert.Equal(TapeFileCodec.Zstd, codec);
+        Assert.Equal((byte)TapeFileCodec.Zstd, output[0]);
+        Assert.Equal(data, Decompress(output[1..]));
     }
 
     [Fact]

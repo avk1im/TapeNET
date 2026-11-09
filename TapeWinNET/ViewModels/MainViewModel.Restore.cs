@@ -115,36 +115,102 @@ public partial class MainViewModel
         return summary != null ? $"{verb} {summary}..." : $"{verb}...";
     }
 
-    /// <summary>
-    /// Returns a concise description of the current restore selection, or <c>null</c>
-    ///  when nothing actionable is selected.
-    /// <para>
-    /// Priority: (1) checked files across sets → "N files selected",
-    ///  (2) tree/list selected set → "set #std | alt",
-    ///  (3) media loaded with sets → "all sets",
-    ///  (4) null.
-    /// </para>
-    /// </summary>
-    private string? GetSelectionSummaryText()
+    /// <summary>Where the restore selection comes from (Design-Encryption §11.1.2), in priority order.</summary>
+    private enum RestoreSelectionKind
     {
-        // (1) Checked files across all backup set views
-        int checkedCount = _tocView?.GetTotalCheckedCount() ?? 0;
-        if (checkedCount > 0)
-            return $"{checkedCount:N0} files selected";
-
-        // (2) Tree or list selected backup set (no per-file selection)
-        if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet)
-            return $"set {_selectedTreeItem.IndexDisplay}";
-
-        if (SelectedBackupSet is { } selSet)
-            return $"set {selSet.IndexDisplay}";
-
-        // (3) No specific selection — all sets when media is loaded
-        if (_tapeService.TOC is { Count: > 0 })
-            return "all sets";
-
-        return null;
+        /// <summary>No TOC: nothing to restore.</summary>
+        None,
+        /// <summary>Type 1 — checkboxes: checked files across sets, and checked locked sets.</summary>
+        Checked,
+        /// <summary>Type 2a — the set selected in the tree (its file view is shown).</summary>
+        TreeSet,
+        /// <summary>Type 2b — one or more highlighted rows of the backup sets list.</summary>
+        Highlighted,
+        /// <summary>Type 3 — nothing selected: all sets.</summary>
+        AllSets,
     }
+
+    /// <summary>The current restore selection — computed once per change by <see cref="NotifyCommandTextChanged"/>.</summary>
+    private sealed record RestoreSelection(RestoreSelectionKind Kind, IReadOnlyList<int> SetIndexes,
+        int Files, long Bytes, int LockedSets)
+    {
+        public static readonly RestoreSelection Empty = new(RestoreSelectionKind.None, [], 0, 0, 0);
+    }
+
+    private RestoreSelection _selection = RestoreSelection.Empty;
+
+    /// <summary>
+    /// Type 1, else 2a, else 2b, else 3 — see <see cref="RestoreSelectionKind"/>. Reads the TOC: call only while it is quiet
+    ///  (the views are built from the current TOC, so every index here is valid).
+    /// </summary>
+    private RestoreSelection ComputeRestoreSelection()
+    {
+        AssertTocQuiet();
+        if (_tapeService.TOC is not { Count: > 0 } toc || _tocView is null)
+            return RestoreSelection.Empty;
+
+        var checkedSel = _tocView.GetCheckedSummary();
+        if (checkedSel.SetIndexes.Count > 0)
+            return new(RestoreSelectionKind.Checked, checkedSel.SetIndexes,
+                checkedSel.Files, checkedSel.Bytes, checkedSel.LockedSets);
+
+        // A tree node outlives its set until the tree is rebuilt: range-checked, else ignored
+        if (_selectedTreeItem is { ItemType: TreeItemType.BackupSet, SetIndex: int treeSet })
+            return WholeSets(RestoreSelectionKind.TreeSet, [treeSet]);
+
+        if (_selectedBackupSets.Count > 0)
+            return WholeSets(RestoreSelectionKind.Highlighted, [.. _selectedBackupSets.Select(s => s.SetIndex)]);
+
+        // Counts are not needed for "all sets": the text names no figures, the status bar shows the media
+        return new(RestoreSelectionKind.AllSets, [], 0, 0, 0);
+
+        RestoreSelection WholeSets(RestoreSelectionKind kind, IReadOnlyList<int> sets)
+        {
+            int files = 0, locked = 0;
+            long bytes = 0;
+            foreach (int i in sets)
+            {
+                var set = toc[i];
+                if (set.IsLocked)
+                {
+                    locked++;
+                    continue;
+                }
+                files += set.Count;
+                bytes += set.TotalFileSize;
+            }
+            return new(kind, sets, files, bytes, locked);
+        }
+    }
+
+
+    /// <summary>"set #3 | 0" for a single set, else null.</summary>
+    private string? SingleSetDisplay(RestoreSelection s)
+        => s.SetIndexes.Count == 1 && _tapeService.TOC is { } toc
+            ? $"set #{s.SetIndexes[0]} | {toc.SetIndexToAlt(s.SetIndexes[0])}"
+            : null;
+
+    /// <summary>
+    /// The selection summary of the command texts — "195 files selected from 2 sets", "27 files from set #3 | 0",
+    ///  "3 locked sets", "all sets" — or null when nothing can be restored.
+    /// </summary>
+    private string? GetSelectionSummaryText() => _selection.Kind switch
+    {
+        RestoreSelectionKind.None => null,
+        RestoreSelectionKind.AllSets => "all sets",
+        _ => SelectionText.Describe(_selection.Files, _selection.SetIndexes.Count, _selection.LockedSets,
+            SingleSetDisplay(_selection), selected: _selection.Kind == RestoreSelectionKind.Checked),
+    };
+
+    /// <summary>
+    /// The selection for the status bar, with its size — "195 files selected from 2 sets (119 MB)". Null for "all sets"
+    ///  and no selection: the status bar then shows the media and its capacity.
+    /// </summary>
+    public string? SelectionStatus => _selection.Kind is RestoreSelectionKind.None or RestoreSelectionKind.AllSets
+        ? null
+        : SelectionText.Describe(_selection.Files, _selection.SetIndexes.Count, _selection.LockedSets,
+            SingleSetDisplay(_selection), selected: _selection.Kind == RestoreSelectionKind.Checked,
+            bytes: _selection.Bytes);
 
     #endregion
 
@@ -161,18 +227,18 @@ public partial class MainViewModel
     /// </summary>
     private void InitializeRestoreCommands()
     {
-        RestoreCommand = new RelayCommand(
-            _ => StartRestore(RestoreMode.Restore),
-            _ => CanStartRestore);
-        ValidateCommand = new RelayCommand(
-            _ => StartRestore(RestoreMode.Validate),
-            _ => CanStartRestore);
-        VerifyCommand = new RelayCommand(
-            _ => StartRestore(RestoreMode.Verify),
-            _ => CanStartRestore);
-        RestoreAllSetsCommand = new RelayCommand(
-            _ => StartRestoreAllSets(),
-            _ => CanRestoreAllSets);
+        RestoreCommand = new AsyncRelayCommand(
+            () => StartRestoreAsync(RestoreMode.Restore),
+            () => CanStartRestore);
+        ValidateCommand = new AsyncRelayCommand(
+            () => StartRestoreAsync(RestoreMode.Validate),
+            () => CanStartRestore);
+        VerifyCommand = new AsyncRelayCommand(
+            () => StartRestoreAsync(RestoreMode.Verify),
+            () => CanStartRestore);
+        RestoreAllSetsCommand = new AsyncRelayCommand(
+            StartRestoreAllSetsAsync,
+            () => CanRestoreAllSets);
         AbortRestoreCommand = new RelayCommand(AbortRestore, _ => IsRestoreInProgress);
     }
 
@@ -189,19 +255,15 @@ public partial class MainViewModel
     ///  Does not alter the check state of existing <see cref="BackupSetListItem"/>s,
     ///  so cancelling the dialog leaves the UI unchanged.
     /// </summary>
-    private void StartRestoreAllSets()
+    private Task StartRestoreAllSetsAsync()
     {
         var toc = _tapeService.TOC;
         if (toc == null || _tocView == null || toc.Count == 0)
-            return;
+            return Task.CompletedTask;
 
-        var setItems = CreateAdHocSetItems(); // for all sets
-        OpenRestoreWindow(RestoreMode.Restore, setItems, targetDirectory: null);
-    }
-
-    private void StartRestore(RestoreMode mode)
-    {
-        StartRestore(mode, targetDirectory: null);
+        return OpenRestoreWindowUnlockingAsync(RestoreMode.Restore,
+            () => CreateAdHocSetItems(), // for all sets
+            targetDirectory: null);
     }
 
     /// <summary>
@@ -210,36 +272,69 @@ public partial class MainViewModel
     /// (single source of truth), resolves display items, and opens RestoreWindow.
     /// Falls back to all sets when nothing specific is selected.
     /// </summary>
-    private void StartRestore(RestoreMode mode, string? targetDirectory)
+    private Task StartRestoreAsync(RestoreMode mode, string? targetDirectory = null)
     {
+        if (_tocStale)
+            RefreshAfterTocChange();            // a TOC change not yet shown: rebuild before acting
+
         var toc = _tapeService.TOC;
         if (toc == null || _tocView == null)
-            return;
+            return Task.CompletedTask;
 
-        // Build display items for the selected sets
-        var setItems = _tocView.BuildBackupSetItemList(checkedOnly: true);
-
-        // Fall back to selected set(s) when no explicit file checkmarks exist
-        if (setItems.Count == 0)
+        // Build display items for the selected sets depending on the selection kind. The selection is captured once:
+        //  the pre-unlock rebuilds the views (and with them the list's highlighted rows) — the set indexes stay.
+        var selection = ComputeRestoreSelection();      // fresh — never act on a stale summary
+        var view = _tocView;
+        return OpenRestoreWindowUnlockingAsync(mode, () => selection.Kind switch
         {
-            var fallbackIndexes = SelectedSetIndexes;
-            // If nothing explicitly selected, fall back to all sets
-            setItems = CreateAdHocSetItems(fallbackIndexes.Count > 0 ? fallbackIndexes : null);
+            RestoreSelectionKind.Checked => view.BuildBackupSetItemList(checkedOnly: true),   // incl. locked (F2)
+            RestoreSelectionKind.AllSets => CreateAdHocSetItems(),
+            RestoreSelectionKind.None => [],
+            _ => CreateAdHocSetItems([.. selection.SetIndexes]),
+        }, targetDirectory);
+    }
+
+    /// <summary>
+    /// Opens the RestoreWindow for the items <paramref name="buildItems"/> returns — after unlocking the locked ones
+    ///  (Design-Encryption §11.1.5): the window shows file counts and sizes, which need the keys. One dialog, checked in
+    ///  place and tried on every chain; sets still locked afterwards (declined, or another password) are left out and the
+    ///  window's warning pane says so. Nothing left: no window.
+    /// </summary>
+    /// <remarks>
+    /// Runs between operations, so the dialog may call the service (W3). The service's own pre-flight and
+    ///  <c>OnAskPassword</c> remain the safety net — e.g. for a volume whose TOC predates a password change.
+    /// </remarks>
+    private async Task OpenRestoreWindowUnlockingAsync(RestoreMode mode, Func<List<BackupSetListItem>> buildItems,
+        string? targetDirectory)
+    {
+        var setItems = buildItems();
+        List<int> locked = [.. setItems
+            .Where(i => i.IsCheckedForRestore != false && i.IsLocked && i.SetTOC.IsUnlockable)
+            .Select(i => i.SetIndex)];
+        if (locked.Count > 0)
+        {
+            await UnlockWithDialogAsync(locked, all: false);    // refreshes the views when anything opened
+            setItems = buildItems();                            // the opened sets now show their files
         }
 
+        int leftOut = setItems.RemoveAll(i => i.IsLocked);
         if (setItems.Count == 0)
+        {
+            if (leftOut > 0)
+                StatusMessage = $"Nothing to {mode.ToString().ToLowerInvariant()}: " +
+                    (leftOut == 1 ? "the selected set is locked" : $"all {leftOut} selected sets are locked");
             return;
-
-        OpenRestoreWindow(mode, setItems, targetDirectory);
+        }
+        OpenRestoreWindow(mode, setItems, targetDirectory, leftOut);
     }
 
     /// <summary>
     /// Creates the <see cref="RestoreViewModel"/>, applies optional pre-fill, and shows
-    ///  the <see cref="RestoreWindow"/> dialog. Shared by <see cref="StartRestore"/> and
-    ///  <see cref="StartRestoreAllSets"/>.
+    ///  the <see cref="RestoreWindow"/> dialog. Reached through <see cref="OpenRestoreWindowUnlockingAsync"/>.
     /// </summary>
+    /// <param name="lockedLeftOut">Selected encrypted sets left out because they stayed locked.</param>
     private void OpenRestoreWindow(RestoreMode mode, List<BackupSetListItem> setItems,
-        string? targetDirectory)
+        string? targetDirectory, int lockedLeftOut = 0)
     {
         var viewModel = new RestoreViewModel(
             mode: mode,
@@ -259,7 +354,8 @@ public partial class MainViewModel
             {
                 Application.Current.Windows.OfType<RestoreWindow>().FirstOrDefault()?.Close();
             },
-            suggestNoMultivolume: _tapeService.IsInMemoryDrive);
+            suggestNoMultivolume: _tapeService.IsInMemoryDrive,
+            lockedLeftOut: lockedLeftOut);
 
         // Pre-fill target directory (e.g. from drag-to-Explorer)
         if (targetDirectory != null)
@@ -290,16 +386,17 @@ public partial class MainViewModel
             return [];
 
         setIndexes ??= [.. Enumerable.Range(1, toc.Count)];
-
         var items = new List<BackupSetListItem>(setIndexes.Count);
+
         foreach (var idx in setIndexes)
         {
             var setTOC = toc[idx];
             var altIdx = toc.SetIndexToAlt(idx);
-            items.Add(new BackupSetListItem(setTOC, idx, altIdx, setTOC.Volume == toc.Volume)
+            items.Add(new BackupSetListItem(setTOC, idx, altIdx, setTOC.Volume == toc.Volume,
+                continuesOnNextVolume: toc.IsSetContOnNextVolume(idx))
             {
                 IsCheckedForRestore = true,
-                CheckedFileCount = setTOC.Count
+                CheckedFileCount = setTOC.IsLocked ? null : setTOC.Count,   // hidden while locked
             });
         }
         return items;
@@ -334,7 +431,7 @@ public partial class MainViewModel
             {
                 // Bring our window back to the foreground — Explorer still has focus after the drop
                 Application.Current.MainWindow?.Activate();
-                StartRestore(RestoreMode.Restore, targetFolder);
+                _ = StartRestoreAsync(RestoreMode.Restore, targetFolder);
             }
         }
         catch { }
@@ -345,14 +442,12 @@ public partial class MainViewModel
     }
 
     /// <summary>
-    /// Whether restore/validate/verify commands should be enabled.
-    /// Requires: not busy, media loaded, TOC available with at least one set.
-    ///  When nothing specific is selected, "all sets" is the implicit target.
+    /// Whether restore/validate/verify commands are enabled: not busy, media loaded, and a selection
+    ///  — "all sets" when nothing is chosen.
+    ///  A locked-only selection stays enabled: the service unlocks before reading.
     /// </summary>
     private bool CanStartRestore =>
-        CanRestoreAllSets
-        || (!IsBusy && _tapeService.IsMediaLoaded && _tapeService.TOC != null
-            && (SelectedSetIndexes.Count > 0 || HasFilesCheckedForRestore));
+        !IsBusy && _tapeService.IsMediaLoaded && _selection.Kind != RestoreSelectionKind.None;
 
     /// <summary>
     /// Gets or sets whether all backup sets are checked for restore.
@@ -382,7 +477,7 @@ public partial class MainViewModel
                 //  propagates to FilteredFileList even for non-visited sets.
                 var view = _tocView?[item.SetIndex];
                 if (view == null && check && _tocView != null)
-                    view = _tocView.GetOrCreate(item.SetIndex, ShowIncrementalSets);
+                    view = _tocView.TryGetOrCreate(item.SetIndex, ShowIncrementalSets);   // null for a locked set
 
                 if (view != null)
                 {
@@ -391,8 +486,11 @@ public partial class MainViewModel
                 }
                 else
                 {
+                    if (item.IsLocked)
+                        _tocView?.SetCheckedWhole(item.SetIndex, check);   // no view: TOCView keeps the set-level choice
                     item.CheckedFileCount = null;
                 }
+
                 item.IsCheckedForRestore = check;
             }
 
@@ -442,13 +540,6 @@ public partial class MainViewModel
             CommandManager.InvalidateRequerySuggested();
         }
     }
-
-    /// <summary>
-    /// Whether any files are selected for restore — either explicitly checkmarked
-    /// or selected (clicked) in the file ListView.
-    /// </summary>
-    private bool HasFilesCheckedForRestore =>
-        (_currentSetView is { } sv && sv.FilteredFiles.CheckedCount > 0) || SelectedFile != null;
 
     /// <summary>
     /// Called from code-behind when a file row checkbox is toggled.
@@ -527,7 +618,7 @@ public partial class MainViewModel
         //  Non-visited sets won't have a view yet — create one on demand when checking.
         var view = _tocView?[item.SetIndex];
         if (view == null && check && _tocView != null)
-            view = _tocView.GetOrCreate(item.SetIndex, ShowIncrementalSets);
+            view = _tocView.TryGetOrCreate(item.SetIndex, ShowIncrementalSets);   // null for a locked set
 
         if (view != null)
         {
@@ -536,6 +627,8 @@ public partial class MainViewModel
         }
         else
         {
+            if (item.IsLocked)
+                _tocView?.SetCheckedWhole(item.SetIndex, check);   // no view: TOCView keeps the set-level choice
             item.CheckedFileCount = null;
         }
 
@@ -556,44 +649,26 @@ public partial class MainViewModel
     }
 
     /// <summary>
-    /// Fires PropertyChanged for all dynamic command text properties.
-    ///  Called whenever the selection state changes (file checks, set checks, tree selection).
+    /// Recomputes the restore selection and notifies everything that shows it: the three command texts, the status bar,
+    ///  the commands' enabled state. Called on every selection change (file checks, set checks, tree and list selection,
+    ///  TOC changes).
     /// </summary>
     private void NotifyCommandTextChanged()
     {
+        if (IsTocQuiet)
+        {
+            _selection = ComputeRestoreSelection();
+            UpdateUnlockTargets();          // the Unlock command follows the same selection (MainViewModel.Encryption.cs)
+        }
+        // else keep the last selection: the refresh recomputes it
+
         OnPropertyChanged(nameof(RestoreCommandText));
         OnPropertyChanged(nameof(ValidateCommandText));
         OnPropertyChanged(nameof(VerifyCommandText));
-    }
-
-    /// <summary>
-    /// Gets the set indexes selected for restore: checked sets in the backup set list,
-    /// or the single set selected in the tree view.
-    /// </summary>
-    private List<int> SelectedSetIndexes
-    {
-        get
-        {
-            // First try: checked backup sets in the list view (multi-select via checkboxes)
-            //  Include fully checked (true) and partially checked (null/indeterminate) sets
-            var checkedSets = BackupSetList
-                .Where(b => b.IsCheckedForRestore != false)
-                .Select(b => b.SetIndex)
-                .ToList();
-
-            if (checkedSets.Count > 0)
-                return checkedSets;
-
-            // Second try: backup set selected in tree view
-            if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet && _selectedTreeItem.SetIndex.HasValue)
-                return [_selectedTreeItem.SetIndex.Value];
-
-            // Third try: backup set selected (clicked) in the backup set list view
-            if (SelectedBackupSet != null)
-                return [SelectedBackupSet.SetIndex];
-
-            return [];
-        }
+        OnPropertyChanged(nameof(SelectionStatus));
+        OnPropertyChanged(nameof(StatusBarText));
+        OnPropertyChanged(nameof(StatusBarRemaining));
+        CommandManager.InvalidateRequerySuggested();
     }
 
     #endregion
@@ -693,6 +768,19 @@ public partial class MainViewModel
                     SimpleBox.Show($"{modeName} completed successfully!",
                         $"{modeName} Complete", MessageBoxButton.OK, SimpleBox.ImageComplete);
                 }
+            }
+
+            // A swap left the series TOC held while the drive holds another cartridge (TOCSource.Series)
+            if (!request.EjectWhenDone && operationResult is { TocDescribesDrive: false } && _tapeService.IsMediaLoaded)
+            {
+                string inDrive = operationResult.VolumeInDrive is int v
+                    ? $"The cartridge in the drive is volume #{v}"
+                    : "The cartridge in the drive is not identified";
+                if (SimpleBox.Show(
+                        $"{inDrive}; the view shows the series' table of contents.\n\n" +
+                        "Read the loaded cartridge's table of contents now? Until then, backup, delete and rename are unavailable.",
+                        $"{modeName} — Volume Changed", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+                    await RereadMediaAsync();
             }
         }
         catch (Exception ex)

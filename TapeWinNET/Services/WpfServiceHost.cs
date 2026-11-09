@@ -1067,4 +1067,37 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
         => Ask("Rename Backup Set",
                $"Enter a new description for backup set #{setIndex} | {altIndex}:",
                currentDescription);
+
+    // ── ITapeServiceHost — Password prompt (Design-Encryption §10.4, §11.1.13) ──
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// <para>
+    /// Service mode of <see cref="PasswordDialog"/>: called on the worker thread, which HOLDS the service lock while this
+    ///  dialog is open. The dialog therefore gets NO validator — <c>VerifyPasswordAsync</c> would wait for that very lock
+    ///  (deadlock). It returns the password; the service checks it and asks again after a wrong one, with the failure and
+    ///  the attempt. The wrong-password countdown reads <see cref="TapeServiceBase.PasswordRetryDelay"/>, which is lock-free.
+    /// </para>
+    /// <para>
+    /// The thread rule of this class still holds: the UI thread never holds the service lock, so marshalling the dialog
+    ///  to it cannot deadlock.
+    /// </para>
+    /// </remarks>
+    public char[]? OnAskPassword(in PasswordRequest request)
+    {
+        var options = PasswordDialogOptions.ForRequest(request);    // copy: an 'in' parameter cannot be captured
+        var svc = ServiceRef;
+        char[]? password = null;
+        
+        _dispatcher.Invoke(() =>
+        {
+            var dialog = new PasswordDialog(options, retryDelay: svc is null ? null : () => svc.PasswordRetryDelay)
+            {
+                Owner = Application.Current.MainWindow,
+            };
+            if (dialog.ShowDialog() == true)
+                password = dialog.Password;
+        });
+        return password;
+    }
 }

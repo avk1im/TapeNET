@@ -26,9 +26,10 @@ This walkthrough takes you from a blank tape to a completed backup in a few step
 ## Step 2 — Start a New Backup
 
 1. Click **Backup → New Backup…** (or the toolbar **New Backup** button).
-2. In the [New Backup dialog](help://topic/dialog.backup), add the folders or files you want to back up.
+2. In the [New Backup dialog](help://topic/dialog.backup), add the folders or files you want to back up. You can also drag and drop files from Windows Explorer into the list.
 3. Optionally set an [FCL](help://glossary/fcl) [file filter](help://topic/concepts.fcl-filters) to include or exclude files by name, size, or date.
-4. Click **Start Backup**.
+4. Optionally select if you'd like to compress or [encrypt](help://topic/concepts.encryption) the backup set.
+5. Click **Start Backup**.
 
 ## Step 3 — Monitor Progress
 

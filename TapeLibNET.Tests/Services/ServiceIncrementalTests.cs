@@ -26,7 +26,7 @@ public class ServiceIncrementalTests : ServiceTestBase
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task IncrementalChain_BackupStatistics_CorrectSkipSucceedCounts(bool withInitiator)
+    public async Task IncrementalChain_BackupStatistics_CorrectUpToDateAndSucceedCounts(bool withInitiator)
     {
         using var media = new TempVirtualMedia(withInitiator, ContentCapacity, InitiatorCapacity);
         using var src   = new TempFileTree();
@@ -38,23 +38,23 @@ public class ServiceIncrementalTests : ServiceTestBase
         Assert.True(w0.Success,                "Wave 0 backup failed");
         Assert.Equal(0,  w0.FilesFailed);
         Assert.Equal(15, w0.FilesSucceeded);
-        Assert.Equal(0,  w0.FilesSkipped);
+        Assert.Equal(0,  w0.FilesUpToDate);
         Assert.Equal(15, w0.FilesTotal);
 
-        // ── Wave 1: incremental — 5 modified, 10 skipped ─────────────────────
+        // ── Wave 1: incremental — 5 modified, 10 up-to-date ─────────────────────
         var w1 = chain.Wave1Result;
         Assert.True(w1.Success,                "Wave 1 backup failed");
         Assert.Equal(0,  w1.FilesFailed);
         Assert.Equal(5,  w1.FilesSucceeded);
-        Assert.Equal(10, w1.FilesSkipped);
+        Assert.Equal(10, w1.FilesUpToDate);
         Assert.Equal(15, w1.FilesTotal);
 
-        // ── Wave 2: incremental — 3 modified + 2 new = 5 written, 12 skipped ─
+        // ── Wave 2: incremental — 3 modified + 2 new = 5 written, 12 up-to-date ─
         var w2 = chain.Wave2Result;
         Assert.True(w2.Success,                "Wave 2 backup failed");
         Assert.Equal(0,  w2.FilesFailed);
         Assert.Equal(5,  w2.FilesSucceeded);
-        Assert.Equal(12, w2.FilesSkipped);
+        Assert.Equal(12, w2.FilesUpToDate);
         Assert.Equal(17, w2.FilesTotal);
 
         // ── TOC flags and per-set file counts ─────────────────────────────────
@@ -188,6 +188,29 @@ public class ServiceIncrementalTests : ServiceTestBase
             // Note: byte-for-byte comparison is intentionally omitted here — wave-0
             //  source files have been overwritten by ModifyFile calls in subsequent waves.
             //  The count assertion above is the meaningful check for set-1 restore coverage.
+        }
+    }
+
+    /// <summary>An incremental that writes only the changed files reports full success — unchanged files are no skips.</summary>
+    [Fact]
+    public async Task Incremental_UnchangedFiles_AreNoSkips_FullSuccess()
+    {
+        using var media = new TempVirtualMedia(withInitiator: false, ContentCapacity, InitiatorCapacity);
+        using var tree = new TempFileTree();
+        tree.AddFiles("inc", count: 5, minSize: 512, maxSize: 4 * 1024);
+        var (svc, host) = await OpenAndFormatAsync(media);
+        using (svc)
+        {
+            Assert.True((await svc.ExecuteBackupAsync(MakeBackupRequest(svc, tree.RootPath, "Base"))).Success);
+            File.AppendAllText(tree.Files[0], "changed");
+            File.SetLastWriteTimeUtc(tree.Files[0], DateTime.UtcNow.AddMinutes(5));
+
+            var result = await svc.ExecuteBackupAsync(
+                MakeBackupRequest(svc, tree.RootPath, "Inc", append: true, incremental: true));
+
+            Assert.True(result.IsFullSuccess, host.DumpReports());
+            Assert.Equal((1, 0, 4), (result.FilesSucceeded, result.FilesSkipped, result.FilesUpToDate));
+            Assert.True(host.ContainsMessage("4 unchanged"), host.DumpReports());
         }
     }
 

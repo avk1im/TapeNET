@@ -30,6 +30,10 @@ public static class HelpPaneLayoutCoordinator
     /// <summary>Minimal width of the pane column while open.</summary>
     public const double MinPaneWidth = 200.0;
 
+    /// <summary>Opening the pane grows a short dialog to the minimal height,
+    ///  but never beyond this share of the work area.</summary>
+    public const double MaxHeightFraction = 2.0 / 3.0;
+
     /// <summary>Window bounds plus the original height to restore on close (or <c>null</c>).</summary>
     public readonly record struct Layout(double Left, double Top, double Width, double Height, double? OriginalHeight);
 

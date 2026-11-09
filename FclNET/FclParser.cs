@@ -536,7 +536,7 @@ public sealed class FclParser(List<FclToken> tokens)
                 _diagnostics.Add(new FclDiagnostic(
                     FclDiagnosticSeverity.Error,
                     FclDiagnosticCodes.InvalidSizeLiteral,
-                    $"Unknown size unit: '{suffixPart}'. Expected B, KB, MB, GB, or TB.",
+                    $"Unknown size unit: '{suffixPart}'. Expected {FclSizeLiteral.UnitList}.",
                     lastSpan));
                 return null;
             }
@@ -552,42 +552,13 @@ public sealed class FclParser(List<FclToken> tokens)
     }
 
     private static void SplitNumberAndSuffix(string text, out string numeric, out string suffix)
-    {
-        // Find where the alphabetic suffix starts.
-        int i = text.Length;
-        for (int j = 0; j < text.Length; j++)
-        {
-            char c = text[j];
-            if (char.IsLetter(c))
-            {
-                i = j;
-                break;
-            }
-        }
-        numeric = text[..i];
-        suffix = text[i..];
-    }
+        => FclSizeLiteral.SplitNumberAndSuffix(text, out numeric, out suffix);
 
     private static bool TryParseSizeUnit(string text, out FclSizeUnit unit)
-    {
-        unit = default;
-        if (text.Equals("B", StringComparison.OrdinalIgnoreCase)) { unit = FclSizeUnit.Bytes; return true; }
-        if (text.Equals("KB", StringComparison.OrdinalIgnoreCase)) { unit = FclSizeUnit.KB; return true; }
-        if (text.Equals("MB", StringComparison.OrdinalIgnoreCase)) { unit = FclSizeUnit.MB; return true; }
-        if (text.Equals("GB", StringComparison.OrdinalIgnoreCase)) { unit = FclSizeUnit.GB; return true; }
-        if (text.Equals("TB", StringComparison.OrdinalIgnoreCase)) { unit = FclSizeUnit.TB; return true; }
-        return false;
-    }
+        => FclSizeLiteral.TryParseUnit(text, out unit);
 
-    private static double GetSizeMultiplier(FclSizeUnit unit) => unit switch
-    {
-        FclSizeUnit.Bytes => 1,
-        FclSizeUnit.KB => 1024,
-        FclSizeUnit.MB => 1024 * 1024,
-        FclSizeUnit.GB => 1024 * 1024 * 1024,
-        FclSizeUnit.TB => 1024L * 1024 * 1024 * 1024,
-        _ => 1
-    };
+    private static double GetSizeMultiplier(FclSizeUnit unit)
+        => FclSizeLiteral.GetMultiplier(unit);
 
     // ── Date values ─────────────────────────────────────
 

@@ -1,17 +1,14 @@
-﻿using System.Collections.ObjectModel;
+﻿using FclNET;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
-
-using FclNET;
-
 using TapeLibNET.Agents;
 using TapeLibNET.Drive;
 using TapeLibNET.Services;
 using TapeLibNET.Toc;
 using TapeLibNET.Virtual;
-
 using TapeWinNET.Controls;
 using TapeWinNET.Models;
 using TapeWinNET.Services;
@@ -91,8 +88,10 @@ public partial class MainViewModel : ViewModelBase
     private bool _isTOCAbortPending;
     private bool _showFullPathname = false;
     private bool _showIncrementalSets = true;
+    private bool _isLockedSetShown;
     private FileListItem? _selectedFile;
     private BackupSetListItem? _selectedBackupSet;
+    private IReadOnlyList<BackupSetListItem> _selectedBackupSets = []; // multi-set selection
     private TapeTreeItemViewModel? _selectedTreeItem;
     private ContentPaneType _contentType = ContentPaneType.DriveInfo;
 
@@ -117,7 +116,7 @@ public partial class MainViewModel : ViewModelBase
         OpenVirtualDriveCommand = new RelayCommand(ShowOpenVirtualDriveWindow, _ => !IsBusy);
         OpenRecentVirtualDriveCommand = new AsyncRelayCommand(OpenRecentVirtualDriveAsync, _ => !IsBusy);
         SetIoSpeedCommand = new RelayCommand(SetIoSpeed, _ => IsIoSpeedEnabled);
-        RefreshCommand = new AsyncRelayCommand(ReloadMediaAsync, () => !IsBusy && _tapeService.IsDriveOpen);
+        RefreshCommand = new AsyncRelayCommand(() => ReloadMediaAsync(keepSelection: true), () => !IsBusy && _tapeService.IsDriveOpen);
         RereadMediaCommand = new AsyncRelayCommand(RereadMediaAsync, () => !IsBusy && _tapeService.IsDriveOpen);
         EjectCommand = new AsyncRelayCommand(EjectAsync, () => !IsBusy && _tapeService.IsMediaLoaded);
         FormatMediaCommand = new RelayCommand(ShowFormatMediaWindow, _ => !IsBusy && _tapeService.IsMediaLoaded);
@@ -125,10 +124,15 @@ public partial class MainViewModel : ViewModelBase
             // We can handle the case of missing TOC in TapeServiceBase.DeleteBackupSetsAsync() --> no need to check for TOCIsFrom
         ExportTOCCommand = new AsyncRelayCommand(ExportTOCAsync, () => !IsBusy && _tapeService.TOC != null);
         ImportTOCCommand = new AsyncRelayCommand(ImportTOCAsync, () => !IsBusy && _tapeService.IsDriveOpen);
-        NavigateToBackupSetCommand = new RelayCommand(NavigateToSelectedBackupSet, _ => SelectedBackupSet != null);
+        NavigateToBackupSetCommand = new AsyncRelayCommand(NavigateToSelectedBackupSetAsync, () => SelectedBackupSet != null);
         UsageBar = new MediaUsageBarPresenter(_tapeService, SelectBackupSetByIndex);
+
         RenameSelectedCommand = new AsyncRelayCommand(RenameSelectedAsync, () => CanRenameSelected);
+        RenameBackupSetCommand = new AsyncRelayCommand(
+            () => _selectedBackupSets is [var set] ? RenameBackupSetAsync(set.SetIndex) : Task.CompletedTask,
+            () => !IsBusy && _tapeService.TOC != null && _selectedBackupSets.Count == 1);
         RenameMediaCommand = new AsyncRelayCommand(RenameMediaAsync, () => CanRenameMedia);
+
         ResetWindowPositionsCommand = new RelayCommand(ResetWindowPositions);
         ExitCommand = new RelayCommand(Exit);
         AboutCommand = new RelayCommand(ShowAbout);
@@ -143,6 +147,8 @@ public partial class MainViewModel : ViewModelBase
 
         // Initialize calibration commands (from MainViewModel.Calibration.cs)
         InitializeCalibrationCommands();
+
+        // Initialize scan commands (from MainViewModel.Scan.cs)
         InitializeScanCommands();
 
         // Initialize restore commands (from MainViewModel.Restore.cs)
@@ -150,6 +156,9 @@ public partial class MainViewModel : ViewModelBase
 
         // Initialize remote host commands (from MainViewModel.Remote.cs)
         InitializeRemoteCommands();
+
+        // Initialize encryption commands (from MainViewModel.Encryption.cs)
+        InitializeEncryptionCommands();
 
         // Initialize drive menu items
         InitializeDriveMenu();
@@ -212,17 +221,32 @@ public partial class MainViewModel : ViewModelBase
         set => SetProperty(ref _windowTitle, value);
     }
 
+    /// <summary>
+    /// The main status bar message. Can be replaced by the selection summary, s. <see cref="StatusBarText"/>.
+    /// </summary>
     public string StatusMessage
     {
         get => _statusMessage;
         set
         {
             SetProperty(ref _statusMessage, value);
+            OnPropertyChanged(nameof(StatusBarText));
+
             // The remaining/EW indication is re-evaluated whenever the status changes,
             //  since every status transition follows a drive/media/TOC operation.
             RefreshRemainingAndEw();
         }
     }
+
+    /// <summary>
+    /// The status bar's main text: the restore selection when there is one (<see cref="SelectionStatus"/>), else the
+    ///  last status message — the media description included.
+    /// </summary>
+    public string StatusBarText => SelectionStatus ?? StatusMessage;
+
+    /// <summary>The capacity field.</summary>
+    /// <remarks>Consider hiding (setting to null) while a selection is shown: the intent then is restoring</remarks>
+    public string? StatusBarRemaining => RemainingAndEw; // SelectionStatus is null ? RemainingAndEw : null;
 
     /// <summary>
     /// Status-bar and property-pane indication of the estimated remaining capacity plus the
@@ -231,7 +255,11 @@ public partial class MainViewModel : ViewModelBase
     public string? RemainingAndEw
     {
         get => _remainingAndEw;
-        private set => SetProperty(ref _remainingAndEw, value);
+        private set
+        {
+            if (SetProperty(ref _remainingAndEw, value))
+                OnPropertyChanged(nameof(StatusBarRemaining));
+        }
     }
 
     /// <summary>Re-reads the remaining/EW indication from the service (null when unavailable, so the field hides).</summary>
@@ -282,7 +310,7 @@ public partial class MainViewModel : ViewModelBase
     public bool IsBusy
     {
         get => _isBusy;
-        set
+        private set
         {
             if (SetProperty(ref _isBusy, value))
             {
@@ -290,10 +318,13 @@ public partial class MainViewModel : ViewModelBase
                 OnPropertyChanged(nameof(IsIoSpeedEnabled));
                 OnPropertyChanged(nameof(IsMediaBrowsingEnabled));
                 CommandManager.InvalidateRequerySuggested();
+                // The service machinery stopped -> rebuild the views if the TOC
+                //  changed meanwhile (MainViewModel.TocBarrier.cs)
+                if (!value && _tocStale)
+                    ScheduleTocRefresh();
             }
         }
     }
-
 
     /// <summary>
     /// True while the TOC is being read from media (shows cancellable overlay).
@@ -461,12 +492,30 @@ public partial class MainViewModel : ViewModelBase
         set
         {
             if (SetProperty(ref _selectedBackupSet, value))
-            {
-                NotifyCommandTextChanged();
-                UsageBar.UpdateHighlight(value?.SetIndex);
-            }
+                UpdateUsageBarHighlight();
+            // The selection itself is reported by OnBackupSetsSelectionChanged, which follows on every change.
         }
         // Navigation now triggered by double-click or Enter, not selection change
+    }
+
+    /// <summary>
+    /// Called by the view on every <c>SelectionChanged</c> of the backup sets list with ALL highlighted rows — one or
+    ///  many (Ctrl/Shift+Click). WPF updates the <c>SelectedItem</c> binding first, so this always runs last.
+    /// </summary>
+    public void OnBackupSetsSelectionChanged(IReadOnlyList<BackupSetListItem> selected)
+    {
+        _selectedBackupSets = selected;
+        UpdateUsageBarHighlight();
+        NotifyCommandTextChanged();
+    }
+
+    /// <summary>Frames every highlighted row's segment in the usage bar.</summary>
+    private void UpdateUsageBarHighlight()
+    {
+        if (_selectedBackupSets.Count > 0)
+            UsageBar.UpdateHighlight(_selectedBackupSets.Select(s => s.SetIndex));
+        else
+            UsageBar.UpdateHighlight(_selectedBackupSet?.SetIndex);
     }
 
     public ContentPaneType ContentType
@@ -475,7 +524,10 @@ public partial class MainViewModel : ViewModelBase
         set
         {
             if (value != ContentPaneType.BackupSetInfo)
+            {
                 _currentSetView = null; // important to prevent backup set-only UI changes e.g. table calHeader
+                IsLockedSetShown = false;
+            }
 
             if (SetProperty(ref _contentType, value))
             {
@@ -493,6 +545,16 @@ public partial class MainViewModel : ViewModelBase
 
     /// <summary>Whether the files table is visible (BackupSet selected)</summary>
     public bool IsFileTableVisible => ContentType == ContentPaneType.BackupSetInfo;
+
+    /// <summary>
+    /// The selected backup set is encrypted and locked: the files pane shows the placeholder instead of the list
+    ///  (Design-Encryption §11.1.1). The [Unlock…] button unlocks it (<see cref="UnlockShownSetCommand"/>).
+    /// </summary>
+    public bool IsLockedSetShown
+    {
+        get => _isLockedSetShown;
+        private set => SetProperty(ref _isLockedSetShown, value);
+    }
 
     /// <summary>Whether the backup sets table is visible (Media selected)</summary>
     public bool IsBackupSetTableVisible => ContentType == ContentPaneType.MediaInfo;
@@ -754,6 +816,8 @@ public partial class MainViewModel : ViewModelBase
     public ICommand NavigateToBackupSetCommand { get; }
 
     public ICommand RenameSelectedCommand { get; }
+    /// <summary>Renames the one highlighted row of the backup sets list (its context menu, F2 there).</summary>
+    public ICommand RenameBackupSetCommand { get; }
     public ICommand RenameMediaCommand { get; }
 
     public ICommand ResetWindowPositionsCommand { get; }
@@ -879,7 +943,7 @@ public partial class MainViewModel : ViewModelBase
 
     /// <summary>
     /// Wraps an async service call with general busy state management.
-    /// Captures and restores prior IsBusy/BusyMessage so the helpers nest safely
+    ///  Captures and restores prior IsBusy/BusyMessage so the helpers nest safely
     ///  inside an outer busy scope (e.g. FormatVirtualDriveAsync).
     /// </summary>
     private async Task<T?> RunBusyAsync<T>(string busyMessage, Func<Task<T>> action)
@@ -1206,14 +1270,14 @@ public partial class MainViewModel : ViewModelBase
             return;
         }
 
-        await ReloadMediaAsync();
+        await ReloadMediaAsync(keepSelection: false); // service resets the TOC
     }
 
     /// <summary>
     /// Reloads medium content and updates the tree/content pane, both upon user request (F5)
     ///  and after a backup/restore operation completes.
     /// </summary>
-    private async Task ReloadMediaAsync()
+    private async Task ReloadMediaAsync(bool keepSelection = true)
     {
         if (!_tapeService.IsDriveOpen)
             return;
@@ -1224,9 +1288,7 @@ public partial class MainViewModel : ViewModelBase
         //  content still loaded): rebuild the views WITHOUT touching the tape.
         if (_tapeService.TOC is not null)
         {
-            UpdateTreeFromTOC(driveNumber);
-            // select the latest backup set (#0)
-            SelectMostRecentSet();
+            RebuildTreeKeepingSelection(keepSelection);
             return;
         }
 
@@ -1443,9 +1505,7 @@ public partial class MainViewModel : ViewModelBase
 
     private void UpdateTreeForDriveOnly(int driveNumber)
     {
-        TreeItems.Clear();
-        _tocView = null;
-        _currentSetView = null;
+        ResetTree(keepTocView: false); // no TOC given nor needed for drive-only view
 
         var driveItem = TapeTreeItemViewModel.CreateDriveItem(driveNumber, _tapeService.DeviceName);
         TreeItems.Add(driveItem);
@@ -1463,9 +1523,7 @@ public partial class MainViewModel : ViewModelBase
     /// </summary>
     private void UpdateTreeForCalibrationMedia(int driveNumber)
     {
-        TreeItems.Clear();
-        _tocView = null;
-        _currentSetView = null;
+        ResetTree(keepTocView: false); // no TOC given nor needed for calibration media
 
         var calHeader = _tapeService.CalibrationHeader;
 
@@ -1495,8 +1553,7 @@ public partial class MainViewModel : ViewModelBase
             return;
         }
 
-        TreeItems.Clear();
-        _currentSetView = null;
+        ResetTree(keepTocView: true); // we'll continue using our TOCView
 
         var toc = _tapeService.TOC;
         if (toc == null)
@@ -1520,7 +1577,8 @@ public partial class MainViewModel : ViewModelBase
             : null;
         var tapeItem = TapeTreeItemViewModel.CreateTapeItem(toc, driveItem, tocFileName,
             isInMemory: _tapeService.IsInMemoryDrive,
-            tocRecovered: _tapeService.TOCIsFrom is TOCSource.Recovered);
+            tocRecovered: _tapeService.TOCIsFrom is TOCSource.Recovered,
+            tocSeries: _tapeService.TOCIsFrom is TOCSource.Series);
         driveItem.Children.Add(tapeItem);
 
         // Add backup sets (from latest to oldest for consistency with alt index display)
@@ -1545,6 +1603,8 @@ public partial class MainViewModel : ViewModelBase
 
         if (_tapeService.TOCIsFrom is TOCSource.Recovered)
             StatusMessage += " (using recovered TOC)";
+        else if (_tapeService.TOCIsFrom is TOCSource.Series)
+            StatusMessage += " (series TOC — Reread TOC to edit)";
     }
 
     private void SelectMostRecentSet()
@@ -1639,6 +1699,8 @@ public partial class MainViewModel : ViewModelBase
     /// </summary>
     private void LoadMediaInfo()
     {
+        AssertTocQuiet();
+
         PropertyList.Clear();
         BackupSetList.Clear();
         FileList = [];
@@ -1682,6 +1744,8 @@ public partial class MainViewModel : ViewModelBase
     /// <param name="setIndex">The index of the backup set to load.</param>
     private void LoadBackupSetInfo(int setIndex)
     {
+        AssertTocQuiet();
+
         if (_tapeService.TOC is not { } toc || _tocView is null)
             return;
 
@@ -1698,12 +1762,25 @@ public partial class MainViewModel : ViewModelBase
             int altIndex = toc.SetIndexToAlt(setIndex);
             PropertiesHeader = $"Backup Set #{setIndex} | {altIndex} Properties";
 
-            // Also makes setIndex the TOC's current set — the view below relies on that.
             ShowProperties(PropertyList, _tapeService.DescribeSet(setIndex));
 
             // Get or create the BackupSetView (handles incremental file resolution,
             //  caching, and checked-state migration)
-            var setView = _tocView.GetOrCreate(setIndex, ShowIncrementalSets);
+
+            var setView = _tocView.TryGetOrCreate(setIndex, ShowIncrementalSets);
+
+            // A locked set: its files are hidden — show the placeholder, never
+            //  a list (Design-Encryption §11.1.1)
+            IsLockedSetShown = setView is null;
+            if (setView is null)
+            {
+                _currentSetView = null;
+                FileList = [];
+                NotifyFilterPropertiesChanged();
+                TableHeader = "Files (locked)";
+                StatusMessage = $"Set #{setIndex} | #{altIndex}: encrypted and locked";
+                return;
+            }
             _currentSetView = setView;
 
             // Build the display list (creates FileListItem proxies as needed)
@@ -1722,12 +1799,25 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
-    private void NavigateToSelectedBackupSet(object? parameter)
+    /// <summary>
+    /// Double-click / Enter on a backup set row: navigates into the set — a locked one is unlocked first
+    ///  (Design-Encryption §11.1.1), and declining leaves the view where it is.
+    /// </summary>
+    private async Task NavigateToSelectedBackupSetAsync()
     {
-        if (SelectedBackupSet != null)
+        if (SelectedBackupSet is not { } item)
+            return;
+        if (item.IsLocked)
         {
-            OnBackupSetSelectedInTable(SelectedBackupSet);
+            var set = item.SetTOC;
+            if (!await UnlockWithDialogAsync([item.SetIndex], all: false))
+                return;
+            // The list was rebuilt from the refreshed TOC: find the set again by object
+            item = BackupSetList.FirstOrDefault(b => ReferenceEquals(b.SetTOC, set));
+            if (item is null)
+                return;
         }
+        OnBackupSetSelectedInTable(item);
     }
 
     /// <summary>
@@ -1823,30 +1913,10 @@ public partial class MainViewModel : ViewModelBase
         BusyMessage = "Renaming media...";
         try
         {
-            if (await _tapeService.RenameMediaAsync())
-            {
-                var newName = _tapeService.TOC?.Description ?? string.Empty;
-                // Iterate thru TreeItems to find the tape node and update its display name
-                foreach (var driveNode in TreeItems)
-                {
-                    foreach (var tapeNode in driveNode.Children)
-                    {
-                        if (tapeNode.ItemType == TreeItemType.Tape)
-                        {
-                            tapeNode.DisplayName = newName;
-                            break;
-                        }
-                    }
-                }
-                WindowTitle = $"TapeWin - {newName}";
-                if (_selectedTreeItem?.ItemType == TreeItemType.Tape)
-                    LoadMediaInfo(); // refresh properties pane if media node is selected
-            }
-            else if (_tapeService.LastError is not null)
-            {
+            if (!await _tapeService.RenameMediaAsync() && _tapeService.LastError is not null)
                 SimpleBox.Show($"Failed to rename media.\n\n{_tapeService.LastError}",
                     "Rename Failed", MessageBoxButton.OK, SimpleBox.ImageFailed);
-            }
+            // Success: TocChanged → refreshed when IsBusy drops (MainViewModel.TocBarrier.cs)
         }
         finally
         {
@@ -1856,66 +1926,32 @@ public partial class MainViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Prompts for a new backup-set description (via the service host) and writes the updated TOC back to tape.
+    /// Opens the RenameBackupSetWindow (Design-Encryption §11.1.6) — name, and for an encrypted set the current password and
+    ///  an optional new one — then writes the updated TOC back to tape.
     /// </summary>
     private async Task RenameBackupSetAsync(int setIndex)
     {
-        IsBusy = true;
-        BusyMessage = "Renaming backup set...";
-        try
+        if (_tapeService.TOCIsFrom is TOCSource.Series)
         {
-            if (await _tapeService.RenameBackupSetAsync(setIndex))
-            {
-                var newName = _tapeService.TOC?[setIndex].Description ?? string.Empty;
-                // Update tree node if it is currently selected: "Set #N | -M: description"
-                if (_selectedTreeItem?.ItemType == TreeItemType.BackupSet &&
-                    _selectedTreeItem.SetIndex == setIndex)
-                {
-                    var colonIdx = _selectedTreeItem.DisplayName.IndexOf(':');
-                    _selectedTreeItem.DisplayName = colonIdx >= 0
-                        ? $"{_selectedTreeItem.DisplayName[..colonIdx]}: {newName}"
-                        : newName;
-                    LoadBackupSetInfo(setIndex); // refresh properties pane
-                }
-                else
-                {
-                    // Iterate thru all tree nodes to find and rename the node for this backup set
-                    foreach (var driveNode in TreeItems)
-                    {
-                        foreach (var tapeNode in driveNode.Children)
-                        {
-                            if (tapeNode.ItemType == TreeItemType.Tape)
-                            {
-                                foreach (var setNode in tapeNode.Children)
-                                {
-                                    if (setNode.ItemType == TreeItemType.BackupSet &&
-                                        setNode.SetIndex == setIndex)
-                                    {
-                                        var colonIdx = setNode.DisplayName.IndexOf(':');
-                                        setNode.DisplayName = colonIdx >= 0
-                                            ? $"{setNode.DisplayName[..colonIdx]}: {newName}"
-                                            : newName;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (_selectedTreeItem?.ItemType == TreeItemType.Tape)
-                        LoadMediaInfo(); // refresh backup set table pane if media node is selected
-                }
-            }
-            else if (_tapeService.LastError is not null)
-            {
-                SimpleBox.Show($"Failed to rename backup set.\n\n{_tapeService.LastError}",
-                    "Rename Failed", MessageBoxButton.OK, SimpleBox.ImageFailed);
-            }
+            SimpleBox.Show("The view shows the series' table of contents, not the loaded volume's own.\n\n" +
+                "Reread the media first (Media | Reread Media) to rename a backup set.",
+                "Rename Backup Set", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
         }
-        finally
-        {
-            IsBusy = false;
-            BusyMessage = string.Empty;
-        }
+        if (!IsTocQuiet || _tapeService.TOC is not { } toc || setIndex < 1 || setIndex > toc.Count)
+            return;
+
+        var viewModel = new RenameBackupSetViewModel(_tapeService, setIndex);
+        var window = new RenameBackupSetWindow(viewModel) { Owner = Application.Current.MainWindow };
+        if (window.ShowDialog() != true || viewModel.Result is not { } r)
+            return;
+
+        bool ok = await RunBusyAsync("Renaming backup set...",
+            () => _tapeService.RenameBackupSetAsync(setIndex, r.NewName, r.CurrentPassword, r.NewPassword));
+        if (!ok && _tapeService.LastError is not null)
+            SimpleBox.Show($"Failed to rename backup set.\n\n{_tapeService.LastError}",
+                "Rename Failed", MessageBoxButton.OK, SimpleBox.ImageFailed);
+        // Success: TocChanged → refreshed when IsBusy drops (MainViewModel.TocBarrier.cs)
     }
 
     #endregion
@@ -1972,11 +2008,12 @@ public partial class MainViewModel : ViewModelBase
                 CommandManager.InvalidateRequerySuggested();
             }
 
+            // Never read the TOC here: this runs while the operation holds it (MainViewModel.TocBarrier.cs).
             if (change.HasFlag(ServiceStateChange.TocChanged))
-            {
-                UsageBar.Rebuild();
-                CommandManager.InvalidateRequerySuggested();
-            }
+                OnTocChangedNotification();
+
+            if (change.HasFlag(ServiceStateChange.OperationEnded) && _tocStale && !IsBusy)
+                ScheduleTocRefresh();
 
             if (change.HasFlag(ServiceStateChange.TOCSaveStarted))
                 IsAbortBackupEnabled = false;
@@ -2034,30 +2071,25 @@ public partial class MainViewModel : ViewModelBase
         if (!await ConfirmAndDisconnectRemoteHostAsync())
             return;
 
-        // A — Open virtual drive. Custom failure UI: "open existing" re-shows the
-        //  dialog so the user can switch to "create new"; "create new" just errors.
-        var mediaMode = request.IsCreateNew ? FileMode.Create : FileMode.Open;
-        if (!await OpenVirtualDriveCoreAsync(request, mediaMode))
+        if (request.IsCreateNew)
         {
-            if (!request.IsCreateNew)
-            {
-                SimpleBox.Show(
-                    $"Failed to open existing virtual media.\n\n{_tapeService.LastError}\n\n" +
-                    "Please check the file path or select 'Create new virtual media'.",
-                    "Open Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+            await CreateVirtualDriveAsync(request);
+            return;
+        }
 
-                // Re-show dialog with pre-populated path, suggesting "Create new"
-                ShowOpenVirtualDriveWindowInternal(
-                    prePopulatedPath: request.Media.ContentPath,
-                    preSelectCreateNew: null); // Let user decide
-            }
-            else
-            {
-                SimpleBox.Show(
-                    $"Failed to create virtual drive.\n\n{_tapeService.LastError}",
-                    "Error", MessageBoxButton.OK, SimpleBox.ImageFailed);
-                UpdateTreeForDriveOnly(0);
-            }
+        // A — Open existing virtual media (FileMode.Open never creates). The backend takes block sizes and the
+        //  recorded mark profile from the media; the request's capabilities matter only for legacy media.
+        //  Custom failure UI: re-show the dialog so the user can switch to "create new".
+        if (!await OpenVirtualDriveCoreAsync(request, FileMode.Open))
+        {
+            SimpleBox.Show(
+                $"Failed to open existing virtual media.\n\n{_tapeService.LastError}\n\n" +
+                "Please check the file path or select 'Create new virtual media'.",
+                "Open Failed", MessageBoxButton.OK, MessageBoxImage.Warning);
+
+            ShowOpenVirtualDriveWindowInternal(
+                prePopulatedPath: request.Media.ContentPath,
+                preSelectCreateNew: null); // Let user decide
             return;
         }
 
@@ -2068,33 +2100,54 @@ public partial class MainViewModel : ViewModelBase
             return;
         }
 
-        // Apply IO speed selected in the dialog (if any) before any TOC operations
-        //  so that the TOC operations already reflect the selected speed.
+        // Apply the IO speed selected in the dialog (if any) before any TOC operation,
+        //  so the TOC operations already reflect it.
         if (request.IoRate != null)
             SelectedIoSpeed = request.IoRate;
         NotifyIoSpeedChanged();
 
-        // For "Create new", create and save the initial TOC (warning only on failure)
-        if (request.IsCreateNew)
-        {
-            var tocCreated = await RunBusyAsync("Creating initial TOC...",
-                () => _tapeService.CreateInitialTOCAsync(request.MediaName));
-            if (!tocCreated)
-                LogWarn("Could not create initial TOC");
-        }
-
-        // C — Identify media and read TOC / calibration calHeader. For freshly created media there's no
-        //  prior TOC to import, so suppress the file-import recovery prompt in that case.
-        var outcome = await IdentifyMediaWithUIAsync(0, offerFileImportOnFailure: !request.IsCreateNew);
+        // C — Identify media and read TOC / calibration header
+        var outcome = await IdentifyMediaWithUIAsync(0);
         if (outcome == IdentifyMediaOutcome.Failed)
             return;
 
-        var modeText = request.Media.InMemory ? "Created in-memory"
-            : request.IsCreateNew ? "Created new" : "Opened existing";
-        LogInfo($"{modeText} virtual media: {request.Media.ContentPath}");
+        LogInfo($"Opened existing virtual media: {request.Media.ContentPath}");
+        AddToVirtualDriveMru(request.Media.ContentPath);
+    }
 
-        // Don't add in-memory drives to MRU (they can't be reopened)
-        if (!_tapeService.IsInMemoryDrive) // same as if (!request.Media.InMemory)
+    /// <summary>
+    /// "Create new" from the Open Virtual Drive dialog, through the shared service policy
+    ///  (<see cref="TapeServiceBase.CreateVirtualMediaAsync"/>): create, load and format — media header plus empty
+    ///  TOC — so the new media opens straight into the usual tree. The dialog already warned what an overwrite loses,
+    ///  so the service does not ask again.
+    /// </summary>
+    private async Task CreateVirtualDriveAsync(VirtualDriveOpenRequest request)
+    {
+        var busy = request.Media.InMemory ? "Creating in-memory virtual drive..." : "Creating virtual drive...";
+        var outcome = await RunBusyAsync(busy, () => _tapeService.CreateVirtualMediaAsync(
+            request.Capabilities, request.Media, request.MediaName,
+            overwriteWithoutPrompt: true,
+            ioRate: request.IoRate?.Rate,
+            ewProfile: request.EwProfile));
+
+        if (request.IoRate != null)
+            SelectedIoSpeed = request.IoRate;
+        NotifyIoSpeedChanged();
+
+        if (outcome != VirtualMediaCreateOutcome.Created)
+        {
+            SimpleBox.Show($"Failed to create virtual media.\n\n{_tapeService.LastError}",
+                "Error", MessageBoxButton.OK, SimpleBox.ImageFailed);
+            UpdateTreeForDriveOnly(0);
+            return;
+        }
+
+        // Formatted: the TOC is in memory — rebuild the views without another tape pass.
+        UpdateTreeFromTOC(_tapeService.DriveNumber);
+        SelectMostRecentSet();
+
+        LogInfo($"{(request.Media.InMemory ? "Created in-memory" : "Created new")} virtual media: {request.Media.ContentPath}");
+        if (!_tapeService.IsInMemoryDrive)
             AddToVirtualDriveMru(request.Media.ContentPath);
     }
 
@@ -2245,6 +2298,7 @@ public partial class MainViewModel : ViewModelBase
             SupportsInitiatorPartition = _tapeService.SupportsInitiatorPartition,
             SupportsCompression = false,
         };
+        long defaultTocCapacity = _tapeService.DefaultTOCCapacity;   // drive-dependent: read before the drive closes
 
         var lastVmd = _tapeService.LastVMD;
         VirtualMediaDescriptor? newVmd = null;
@@ -2276,53 +2330,49 @@ public partial class MainViewModel : ViewModelBase
         if (newVmd == null)
             return;
 
-        IsBusy = true;
-        BusyMessage = "Creating virtual media...";
-
-        try
+        // The Format dialog decides on the TOC partition; the volume dialog on where and how large. The drive is
+        //  reopened under the same profile, now with the partition support the format asks for.
+        bool withInitiator = formatViewModel.CreateInitiatorPartition;
+        var vmd = newVmd with
         {
-            if (!_tapeService.InsertVirtualMedia(newVmd, FileMode.Create, newEwProfile))
-            {
-                SimpleBox.Show($"Failed to create virtual media files.\n\n{_tapeService.LastError}",
-                    "Format Error", MessageBoxButton.OK, SimpleBox.ImageFailed);
-                return;
-            }
+            InitiatorPath = !withInitiator ? null
+                : newVmd.InitiatorPath
+                  ?? (newVmd.InMemory ? VirtualMediaPaths.InMemoryPlaceholder
+                                      : VirtualMediaPaths.BuildInitiatorFilePath(newVmd.ContentPath)),
+            InitiatorPartitionCapacity = !withInitiator ? 0
+                : newVmd.InitiatorPartitionCapacity > 0 ? newVmd.InitiatorPartitionCapacity
+                : defaultTocCapacity,
+        };
+        var caps = currentCaps with { SupportsInitiatorPartition = withInitiator };
 
-            if (!await LoadMediaWithUIAsync("Loading media...", "virtual media"))
-                return;
+        // The user confirmed "all data will be erased" before this dialog: no second prompt.
+        var outcome = await RunBusyAsync("Creating virtual media...", () => _tapeService.CreateVirtualMediaAsync(
+            caps, vmd, formatViewModel.MediaName,
+            overwriteWithoutPrompt: true,
+            ioRate: _selectedIoSpeed.Rate,
+            ewProfile: newEwProfile));
+        NotifyIoSpeedChanged();
 
-            BusyMessage = "Formatting media...";
-            long initiatorPartitionSize = formatViewModel.CreateInitiatorPartition
-                ? _tapeService.DefaultTOCCapacity : -1;
-
-            if (!await _tapeService.FormatMediaAsync(initiatorPartitionSize, formatViewModel.MediaName))
-            {
-                SimpleBox.Show($"Failed to format media.\n\n{_tapeService.LastError}",
-                    "Format Error", MessageBoxButton.OK, SimpleBox.ImageFailed);
-                return;
-            }
-
-            UpdateTreeFromTOC(_tapeService.DriveNumber);
-            SelectMostRecentSet();
-
-            // Don't add in-memory drives to MRU (they can't be reopened)
-            if (!_tapeService.IsInMemoryDrive)
-                AddToVirtualDriveMru(newVmd.ContentPath);
-
-            SimpleBox.Show("Virtual media formatted successfully!", "Format Complete",
-                MessageBoxButton.OK, SimpleBox.ImageComplete);
-        }
-        catch (Exception ex)
+        if (outcome != VirtualMediaCreateOutcome.Created)
         {
-            LogErr($"Format failed: {ex.Message}");
-            SimpleBox.Show($"Format failed.\n\n{ex.Message}", "Format Error",
-                MessageBoxButton.OK, MessageBoxImage.Error);
+            SimpleBox.Show($"Failed to format virtual media.\n\n{_tapeService.LastError}",
+                "Format Error", MessageBoxButton.OK, SimpleBox.ImageFailed);
+            if (_tapeService.IsDriveOpen)
+                UpdateTreeFromTOC(_tapeService.DriveNumber);
+            else
+                UpdateTreeForDriveOnly(0);
+            return;
         }
-        finally
-        {
-            IsBusy = false;
-            BusyMessage = string.Empty;
-        }
+
+        UpdateTreeFromTOC(_tapeService.DriveNumber);
+        SelectMostRecentSet();
+
+        // Don't add in-memory drives to MRU (they can't be reopened)
+        if (!_tapeService.IsInMemoryDrive)
+            AddToVirtualDriveMru(vmd.ContentPath);
+
+        SimpleBox.Show("Virtual media formatted successfully!", "Format Complete",
+            MessageBoxButton.OK, SimpleBox.ImageComplete);
     }
 
     #endregion

@@ -96,6 +96,7 @@ public partial class TapeServiceBase
                 FilesSucceeded = progressHandler?.FilesSucceeded ?? 0,
                 FilesFailed = progressHandler?.FilesFailed ?? 0,
                 FilesSkipped = progressHandler?.FilesSkipped ?? 0,
+                FilesUpToDate = progressHandler?.FilesUpToDate ?? 0,
                 BytesProcessed = agent?.BytesBackedup ?? 0,
                 WasAborted = aborted,
                 HasFailed = failed,
@@ -147,6 +148,11 @@ public partial class TapeServiceBase
                 return MakeResult(failed: true,
                     diagnosis: TapeResult.Fail((uint)Windows.Win32.Foundation.WIN32_ERROR.ERROR_INVALID_STATE, LastError));
             }
+
+            if (request.AppendMode && RefuseOnSeriesToc(what: "append"))
+                return MakeResult(failed: true,
+                    diagnosis: TapeResult.Fail((uint)Windows.Win32.Foundation.WIN32_ERROR.ERROR_INVALID_STATE, LastError!));
+
             bool append = request.AppendMode;
 
             // --- TOC preparation ---
@@ -237,6 +243,7 @@ public partial class TapeServiceBase
                     suppress = true;
 
                 LogInfo("Creating new backup, replacing all existing content");
+                ClearKeys();            // the old series' keys never reach the new one (E17); its sets lock first
                 backupTOC = new TapeTOC(toc);
                 toc.RemoveAllSets();
                 toc.Volume = 1;         // volume indexing starts from 1
@@ -283,6 +290,21 @@ public partial class TapeServiceBase
             toc.CurrentSetTOC.BlockSize = request.BlockSize;
             toc.CurrentSetTOC.Compression = request.Compression;
             toc.CurrentSetTOC.CompressionLevel = request.CompressionLevel;
+            // Design-Encryption §10.2 — before the agent touches anything: refusals leave the tape untouched.
+            TapeResult encryption = ConfigureBackupEncryption(toc, request);
+            if (!encryption)
+            {
+                if (backupTOC is not null)
+                    toc.CopyFrom(backupTOC);        // overwrite / append-after: the TOC as it was
+                else
+                    toc.RemoveLastEmptySet();       // straight append: the new, still empty set
+                LastError = encryption.ErrorMessage;
+                LogErr($"Backup refused: {encryption.ErrorMessage}");
+                LogErrSub("The tape is unchanged");
+                OnStatusUpdate("Backup refused");
+                return MakeResult(failed: true, diagnosis: encryption);
+            }
+
             int startVolume = toc.Volume;
 
             LogInfo($"Backup set: >{request.Description}<");
@@ -830,6 +852,8 @@ public partial class TapeServiceBase
         }
         finally
         {
+            if (request.Password is { } password)
+                Array.Clear(password);
             progressHandler?.DisposeProgress();
             _agent?.Dispose();
             _agent = null;

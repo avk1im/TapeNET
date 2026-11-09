@@ -140,6 +140,9 @@ public abstract record FileOperationResult : ServiceOperationResult
     /// <summary>Files that were explicitly skipped (e.g. via "Skip" in an error dialog).</summary>
     public int FilesSkipped { get; init; }
 
+    /// <summary>Files an incremental found unchanged — handled, not written, and not counted as skipped.</summary>
+    public int FilesUpToDate { get; init; }
+
     /// <summary>Whether the user aborted the operation before completion.</summary>
     public bool WasAborted { get; init; }
 
@@ -195,6 +198,24 @@ public sealed record RestoreResult : FileOperationResult
     ///  progress handler. Kept for post-operation bookkeeping by callers.
     /// </summary>
     public Dictionary<int, List<TapeFileInfo>> ProcessedFiles { get; init; } = [];
+
+    /// <summary>
+    /// Selected sets skipped because they stayed locked (Design-Encryption §10.3) — no password, or a wrong one.
+    ///  Their files are unknown and appear in no file counter.
+    /// </summary>
+    public int SetsLocked { get; init; }
+
+    /// <summary>A volume swap took place during the operation.</summary>
+    public bool MediaSwapped { get; init; }
+
+    /// <summary>The volume number of the cartridge in the drive at the end, by its media header; null when unknown or empty.</summary>
+    public int? VolumeInDrive { get; init; }
+
+    /// <summary>
+    /// The TOC held at the end describes the cartridge in the drive — no swap, or the swaps returned to the volume the
+    ///  operation started on. False: <see cref="TapeServiceBase.TOCIsFrom"/> is <see cref="TOCSource.Series"/>.
+    /// </summary>
+    public bool TocDescribesDrive { get; init; } = true;
 }
 
 // ── Calibrate ────────────────────────────────────────────────────────────────
@@ -454,6 +475,10 @@ public sealed record ScanMediaResult : ServiceOperationResult
     public int TocCopiesFound { get; init; }
     public int TocsRecovered { get; init; }
     public int UnknownFragments { get; init; }
+    /// <summary>
+    /// Encrypted sets the scan proves — by their set header, or listed by a recovered TOC (Design-Encryption §12).
+    /// </summary>
+    public int EncryptedSets { get; init; }
     public bool LastSetUnclosed { get; init; }
 
     /// <summary>Follow-up actions, most useful first.</summary>

@@ -1,10 +1,12 @@
 using System.Collections.ObjectModel;
 using System.Windows.Input;
+
+using Windows.Win32.System.SystemServices; // for Helpers
+
 using TapeLibNET.Agents;
 using TapeLibNET.Services;
 using TapeLibNET.Toc;
 using TapeWinNET.Models;
-using Windows.Win32.System.SystemServices; // for Helpers
 
 namespace TapeWinNET.ViewModels;
 
@@ -76,15 +78,24 @@ public class RestoreViewModel : ViewModelBase
     /// </summary>
     private readonly bool _isMultivolume;
 
+    /// <summary>Selected encrypted sets left out because they stayed locked (Design-Encryption §11.1.5).</summary>
+    private readonly int _lockedLeftOut;
+
+    /// <param name="lockedLeftOut">
+    /// Selected encrypted sets the pre-unlock could not open — not in <paramref name="preSelectedSets"/>; the warning pane
+    ///  says so.
+    /// </param>
     public RestoreViewModel(
         RestoreMode mode,
         List<BackupSetListItem> preSelectedSets,
         Action<RestoreFormData> onStart,
         Action onCancel,
-        bool suggestNoMultivolume = false)
+        bool suggestNoMultivolume = false,
+        int lockedLeftOut = 0)
     {
         _onStart = onStart;
         _onCancel = onCancel;
+        _lockedLeftOut = lockedLeftOut;
         _mode = mode;
         _recurseSubdirectories = true; // pre-assume user wants to include subdirs
 
@@ -217,6 +228,13 @@ public class RestoreViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Whether "Include incremental chain" applies: a checked set is incremental — or locked,
+    ///  whose incremental flag is hidden until the service unlocks it.
+    /// </summary>
+    public bool IsIncrementalEnabled =>
+        BackupSets.Any(b => b.IsCheckedForRestore != false && (b.IsIncremental || b.IsLocked));
+
+    /// <summary>
     /// Whether to confine the operation to backup sets on the current volume only.
     ///  When checked, unchecks all sets not on the current volume. Only enabled
     ///  when the selection spans multiple volumes.
@@ -255,6 +273,8 @@ public class RestoreViewModel : ViewModelBase
                 OnPropertyChanged(nameof(RestoreToTargetDir));
                 OnPropertyChanged(nameof(IsTargetDirectoryInputEnabled));
                 OnPropertyChanged(nameof(IsRecurseSubdirsEnabled));
+
+                NotifyCanStart();
             }
         }
     }
@@ -269,7 +289,11 @@ public class RestoreViewModel : ViewModelBase
     public string TargetDirectory
     {
         get => _targetDirectory;
-        set => SetProperty(ref _targetDirectory, value);
+        set
+        {
+            if (SetProperty(ref _targetDirectory, value))
+                NotifyCanStart();
+        }
     }
 
     public HandleExistingOption SelectedHandleExisting
@@ -378,21 +402,38 @@ public class RestoreViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Warning level for the options panel.</summary>
-    public WarningLevel WarningLevel => _mode == RestoreMode.Restore ? _selectedHandleExisting.Value switch
+    /// <summary>
+    /// The warning pane's lines (W6), each only while its condition holds: how existing files are handled (Restore mode),
+    ///  and the encrypted sets left out because they stayed locked.
+    /// </summary>
+    private IEnumerable<(WarningLevel Level, string Text)> WarningLines()
     {
-        TapeHowToHandleExisting.Overwrite => WarningLevel.Warning,
-        TapeHowToHandleExisting.KeepBoth => WarningLevel.Info,
-        _ => WarningLevel.None
-    } : WarningLevel.None;
+        if (_mode == RestoreMode.Restore)
+        {
+            switch (_selectedHandleExisting.Value)
+            {
+                case TapeHowToHandleExisting.Overwrite:
+                    yield return (WarningLevel.Warning, "Existing files will be overwritten without prompt.");
+                    break;
+                case TapeHowToHandleExisting.KeepBoth:
+                    yield return (WarningLevel.Info, "Append version number to the file name if it already exists.");
+                    break;
+            }
+        }
+        if (_lockedLeftOut > 0)
+            yield return (WarningLevel.Info, _lockedLeftOut == 1
+                ? "1 encrypted set left out — it is locked."
+                : $"{_lockedLeftOut} encrypted sets left out — they are locked.");
+    }
+
+    /// <summary>Warning level for the options panel: the most severe of its lines.</summary>
+    public WarningLevel WarningLevel => WarningLines()
+        .Select(l => l.Level)
+        .DefaultIfEmpty(WarningLevel.None)
+        .Max();     // ServiceReportLevel is ordered by severity: None < Info < … < Error
 
     /// <summary>Message for the warning panel.</summary>
-    public string WarningMessage => _selectedHandleExisting.Value switch
-    {
-        TapeHowToHandleExisting.Overwrite => "Existing files will be overwritten without prompt.",
-        TapeHowToHandleExisting.KeepBoth => "Append version number to the file name if it already exists.",
-        _ => string.Empty
-    };
+    public string WarningMessage => string.Join("\n", WarningLines().Select(l => l.Text));
 
     #region Preview Properties
 
@@ -461,7 +502,16 @@ public class RestoreViewModel : ViewModelBase
         }
     }
 
-    public bool CanStart => BackupSets.Any(b => b.IsCheckedForRestore != false);
+    /// <summary>A set is checked, and — when restoring to a target folder — the folder is given.</summary>
+    public bool CanStart =>
+        BackupSets.Any(b => b.IsCheckedForRestore != false)
+        && !(IsTargetDirectoryInputEnabled && string.IsNullOrWhiteSpace(_targetDirectory));
+
+    private void NotifyCanStart()
+    {
+        OnPropertyChanged(nameof(CanStart));
+        CommandManager.InvalidateRequerySuggested();
+    }
 
     /// <summary>
     /// Called from code-behind when a set checkbox is toggled.
@@ -525,7 +575,7 @@ public class RestoreViewModel : ViewModelBase
         var request = new RestoreFormData(
             Mode: _mode,
             CheckedFilesBySet: checkedFilesBySet,
-            Incremental: _incremental,
+            Incremental: _incremental && IsIncrementalEnabled,
             TargetDirectory: targetDir,
             RecurseSubdirectories: targetDir != null && _recurseSubdirectories,
             HandleExisting: _selectedHandleExisting.Value,
@@ -603,9 +653,8 @@ public class RestoreViewModel : ViewModelBase
         //  true (all files) from null (partial — only checked files)
         PreviewTotalFiles = TotalFileCount.ToString("N0");
 
-        // Total size: for fully checked (true) or indeterminate-but-all-originally, use full set size;
-        //  for partial selections, we approximate with full set size (exact per-file is in TOCView data model)
-        long totalSize = checkedSets.Sum(s => s.TotalSize);
+        // Total size: full sets by their size, partial sets by their checked files' size
+        long totalSize = checkedSets.Sum(s => s.IsCheckedForRestore == true ? s.TotalSize : s.CheckedBytes ?? s.TotalSize);
         PreviewTotalSize = Helpers.BytesToStringLong(totalSize);
 
         // Multivolume: determine volume range across checked sets
@@ -637,6 +686,8 @@ public class RestoreViewModel : ViewModelBase
         OnPropertyChanged(nameof(TotalFileCount));
         UpdateItemsGroupHeader();
         UpdatePreview();
+        OnPropertyChanged(nameof(IsIncrementalEnabled));  // re-checking an incremental set restores the user's choice
+                                                          //  (The checkbox keeps its value while disabled.)
         OnPropertyChanged(nameof(CanStart));
         CommandManager.InvalidateRequerySuggested();
     }

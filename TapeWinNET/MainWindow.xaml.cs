@@ -389,6 +389,11 @@ namespace TapeWinNET
             }
         }
 
+        /// <summary>Hands all highlighted rows to the view model — no binding carries a multi-selection.</summary>
+        private void BackupSetsListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
+            => _viewModel.OnBackupSetsSelectionChanged(
+                [.. BackupSetsListView.SelectedItems.OfType<BackupSetListItem>()]);
+
         // Routed event handlers for row checkbox changes — bubble up from any CheckBox in the ListView.
         // Zero per-item subscriptions; refreshes the header "select all" checkbox.
         private void FileCheckBox_Changed(object sender, RoutedEventArgs e)

@@ -264,14 +264,13 @@
             <Grid.RowDefinitions>
                 <!-- row 0: guide header strip (auto-height; hidden when no tour active) -->
                 <RowDefinition Height="Auto"/>
-                <!-- row 1: content -->
+                <!-- row 1: content, with the walkthrough step-nav docked under it -->
                 <RowDefinition x:Name="ContentRow" Height="*" MinHeight="60"/>
-                <!-- row 2: walkthrough step-nav footer (auto-height; hidden when no tour active) -->
+                <!-- row 2: splitter — directly between content and chat, so dragging it resizes exactly those two.
+                     (A row between them — the step-nav used to sit there — would be resized instead.) -->
                 <RowDefinition Height="Auto"/>
-                <!-- row 3: splitter -->
-                <RowDefinition Height="Auto"/>
-                <!-- row 4: chat subpane -->
-                <RowDefinition x:Name="ChatRow"    Height="200" MinHeight="80"/>
+                <!-- row 3: chat subpane -->
+                <RowDefinition x:Name="ChatRow" Height="200" MinHeight="80"/>
             </Grid.RowDefinitions>
 
             <!-- Guide-Me header strip (row 0): amber title bar showing tour title + step counter.
@@ -287,74 +286,76 @@
                            TextTrimming="CharacterEllipsis"/>
             </Border>
 
-            <!-- Content subpane.
-                 RichTextBox is used instead of FlowDocumentScrollViewer because FDSV's internal
-                 TextEditor captures all mouse input for text selection before Hyperlink.Click can
-                 ever fire. RichTextBox with IsReadOnly="True" correctly surfaces interactive
-                 elements: the cursor becomes a hand over links and Hyperlink.Click bubbles normally.
-                 Document is set in code-behind (ContentViewer.Document) because RichTextBox.Document
-                 is not a bindable dependency property. -->
-            <RichTextBox x:Name="ContentViewer"
-                         Grid.Row="1"
-                         IsReadOnly="True"
-                         BorderThickness="0"
-                         Background="Transparent"
-                         VerticalScrollBarVisibility="Auto"
-                         HorizontalScrollBarVisibility="Disabled"
-                         FontFamily="Segoe UI" FontSize="12"
-                         PreviewMouseLeftButtonDown="RichTextBox_PreviewMouseLeftButtonDown"
-                         PreviewMouseMove="RichTextBox_PreviewMouseMove"
-                         MouseLeave="RichTextBox_MouseLeave"/>
-
-            <!-- Walkthrough step-navigation footer (row 2):
-                 Shown only when a tour is active; sits between the content pane and the
-                 chat splitter so it does not push the chat pane upward during a tour. -->
-            <Border Grid.Row="2"
+            <DockPanel Grid.Row="1" LastChildFill="True">
+                <!-- Walkthrough step-navigation footer: shown only during a tour; docked under the content, so it
+                     never pushes the chat pane upward. -->
+                <Border DockPanel.Dock="Bottom"
                     Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}"
                     BorderBrush="LightGray" BorderThickness="0,1,0,0" Padding="4,3"
                     Visibility="{Binding IsGuideHeaderVisible,
                                  Converter={StaticResource BoolToVis}}">
-                <DockPanel LastChildFill="False">
-                    <!-- Back step -->
-                    <Button DockPanel.Dock="Left"
+                    <DockPanel LastChildFill="False">
+                        <!-- Back step -->
+                        <Button DockPanel.Dock="Left"
                             Command="{Binding BackStepCommand}"
                             Content="&#x25C0; Back" Padding="6,2" FontSize="11"
                             ToolTip="Go to previous step"/>
-                    <!-- Next / Do it -->
-                    <Button DockPanel.Dock="Right"
+                        <!-- Next / Do it -->
+                        <Button DockPanel.Dock="Right"
                             Command="{Binding NextStepCommand}"
                             Padding="6,2" FontSize="11" FontWeight="SemiBold">
-                        <Button.Style>
-                            <Style TargetType="Button">
-                                <Setter Property="Content" Value="Next &#x25B6;"/>
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsActionStep}" Value="True">
-                                        <Setter Property="Content" Value="Do it &#x25B6;"/>
-                                        <Setter Property="Background"
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Content" Value="Next &#x25B6;"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsActionStep}" Value="True">
+                                            <Setter Property="Content" Value="Do it &#x25B6;"/>
+                                            <Setter Property="Background"
                                                 Value="{StaticResource WarningBg.Completed}"/>
-                                    </DataTrigger>
-                                    <DataTrigger Binding="{Binding IsLastStep}" Value="True">
-                                        <Setter Property="Content" Value="Finish"/>
-                                        <Setter Property="Background"
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsLastStep}" Value="True">
+                                            <Setter Property="Content" Value="Finish"/>
+                                            <Setter Property="Background"
                                                 Value="{StaticResource WarningBg.Completed}"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Button.Style>
-                    </Button>
-                </DockPanel>
-            </Border>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </DockPanel>
+                </Border> <!-- Walkthrough step-navigation footer -->
 
-            <!-- Splitter between content/step-nav and chat -->
+                <!-- Content subpane.
+                     RichTextBox is used instead of FlowDocumentScrollViewer because FDSV's internal
+                     TextEditor captures all mouse input for text selection before Hyperlink.Click can
+                     ever fire. RichTextBox with IsReadOnly="True" correctly surfaces interactive
+                     elements: the cursor becomes a hand over links and Hyperlink.Click bubbles normally.
+                     Document is set in code-behind (ContentViewer.Document) because RichTextBox.Document
+                     is not a bindable dependency property. -->
+                <RichTextBox x:Name="ContentViewer"
+                             IsReadOnly="True"
+                             BorderThickness="0"
+                             Background="Transparent"
+                             VerticalScrollBarVisibility="Auto"
+                             HorizontalScrollBarVisibility="Disabled"
+                             FontFamily="Segoe UI" FontSize="12"
+                             PreviewMouseLeftButtonDown="RichTextBox_PreviewMouseLeftButtonDown"
+                             PreviewMouseMove="RichTextBox_PreviewMouseMove"
+                             MouseLeave="RichTextBox_MouseLeave"/>
+
+            </DockPanel>
+
+            <!-- Splitter between content and chat -->
             <GridSplitter x:Name="ChatSplitter"
-                          Grid.Row="3" Height="4"
+                          Grid.Row="2" Height="4"
                           HorizontalAlignment="Stretch"
                           VerticalAlignment="Center"
+                          ResizeBehavior="PreviousAndNext"
                           Background="LightGray"
                           DragCompleted="ChatSplitter_DragCompleted"/>
 
             <!-- Chat subpane -->
-            <Grid Grid.Row="4">
+            <Grid Grid.Row="3">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*"/>
                     <RowDefinition Height="Auto"/>

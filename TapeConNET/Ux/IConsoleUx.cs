@@ -51,6 +51,12 @@ public interface IConsoleUx
     /// </summary>
     string Ask(string question, string? defaultValue = null);
 
+    /// <summary>
+    /// Prompt for a secret, masked. Returns <see langword="null"/> when the user enters nothing, and under
+    /// <see cref="NonInteractive"/> / <see cref="QuietMode"/> — a secret never has a default.
+    /// </summary>
+    string? AskSecret(string question);
+
     // ─── Progress ────────────────────────────────────────────────────────────
 
     /// <summary>

@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 
 using TapeLibNET.Drive;
+using TapeLibNET.Encryption;
 using TapeLibNET.Headers;
 using TapeLibNET.Toc;
 
@@ -128,6 +129,17 @@ public sealed record TapeMediaFragment
     /// <summary>Block size recorded in the header.</summary>
     public uint? BlockSize { get; init; }
 
+    /// <summary>
+    /// The set's encryption scheme, from an ENCRYPTED set header (Design-Encryption §5.6, §12); null for a plain set and
+    ///  for every other kind. By value: a scheme this build does not know reads as its number (E15).
+    /// </summary>
+    /// <remarks>
+    /// Null rather than <see cref="TapeEncryption.None"/> for plain sets: JSON omits nulls, so every existing map —
+    ///  and every plain fragment — serializes exactly as before. A header-less encrypted set has no fragment that could
+    ///  carry it: its first block is ciphertext (Unknown).
+    /// </remarks>
+    public TapeEncryption? Encryption { get; init; }
+
     // ── TOC ──────────────────────────────────────────────────────────────────────────────
 
     /// <summary>TOC format version, when the copy was deserialized far enough to read it.</summary>
@@ -213,7 +225,9 @@ public sealed record TapeMediaFragment
     public string DisplayName => Kind switch
     {
         FragmentKind.MediaHeader        => Description ?? $"Media {Id:N} · vol {Volume}",
-        FragmentKind.SetHeader          => Description ?? $"Set #{VolumeSetIndex}",
+        FragmentKind.SetHeader          => Description
+                                            ?? (Encryption is not null ? $"Set #{VolumeSetIndex} (encrypted)"
+                                            : $"Set #{VolumeSetIndex}"),
         FragmentKind.CalibrationHeader  => $"Calibration run {Id:N}",
         FragmentKind.TOC                => "Table of contents",
         FragmentKind.MarkRun            => $"{MarkCount} consecutive mark(s)",

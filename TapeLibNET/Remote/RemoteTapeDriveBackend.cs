@@ -569,7 +569,7 @@ public class RemoteTapeDriveBackend : TapeDriveBackend
                 }
                 : TapeLibNET.Virtual.VirtualTapeDriveCapabilities.WithFilemarksOnlyLargeBlocks;
 
-            var media = new TapeLibNET.Services.VirtualMediaDescriptor(
+            var media = new VirtualMediaDescriptor(
                 ContentPath:                v.FileConfig?.ContentFilePath ?? string.Empty,
                 ContentCapacity:            v.FileConfig?.ContentCapacity ?? 0,
                 InitiatorPath:              string.IsNullOrEmpty(v.FileConfig?.InitiatorFilePath)

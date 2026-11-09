@@ -107,7 +107,7 @@ public class RemoteServiceIncrementalTests(LocalHostTapeServiceFixture fixture)
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task Remote_IncrementalChain_BackupStatistics_CorrectSkipSucceedCounts(bool withInitiator)
+    public async Task Remote_IncrementalChain_BackupStatistics_CorrectUpToDateSucceedCounts(bool withInitiator)
     {
         using var media = new TempVirtualMedia(withInitiator, ContentCapacity, InitiatorCapacity);
         using var src   = new TempFileTree();
@@ -118,24 +118,27 @@ public class RemoteServiceIncrementalTests(LocalHostTapeServiceFixture fixture)
         var w0 = chain.Wave0Result;
         Assert.True(w0.Success,                "Wave 0 backup failed");
         Assert.Equal(0,  w0.FilesFailed);
-        Assert.Equal(15, w0.FilesSucceeded);
         Assert.Equal(0,  w0.FilesSkipped);
+        Assert.Equal(15, w0.FilesSucceeded);
+        Assert.Equal(0,  w0.FilesUpToDate);
         Assert.Equal(15, w0.FilesTotal);
 
         // ── Wave 1: incremental — 5 modified, 10 skipped ─────────────────────
         var w1 = chain.Wave1Result;
         Assert.True(w1.Success,                "Wave 1 backup failed");
         Assert.Equal(0,  w1.FilesFailed);
+        Assert.Equal(0,  w1.FilesSkipped);
         Assert.Equal(5,  w1.FilesSucceeded);
-        Assert.Equal(10, w1.FilesSkipped);
+        Assert.Equal(10, w1.FilesUpToDate);
         Assert.Equal(15, w1.FilesTotal);
 
         // ── Wave 2: incremental — 3 modified + 2 new = 5 written, 12 skipped ─
         var w2 = chain.Wave2Result;
         Assert.True(w2.Success,                "Wave 2 backup failed");
         Assert.Equal(0,  w2.FilesFailed);
+        Assert.Equal(0,  w2.FilesSkipped);
         Assert.Equal(5,  w2.FilesSucceeded);
-        Assert.Equal(12, w2.FilesSkipped);
+        Assert.Equal(12, w2.FilesUpToDate);
         Assert.Equal(17, w2.FilesTotal);
 
         // ── TOC flags and per-set file counts ─────────────────────────────────
@@ -202,6 +205,7 @@ public class RemoteServiceIncrementalTests(LocalHostTapeServiceFixture fixture)
                 var result = await svc.ExecuteRestoreAsync(req);
                 Assert.True(result.Success, "Case A: incremental restore failed");
                 Assert.Equal(0,  result.FilesFailed);
+                Assert.Equal(0,  result.FilesSkipped);
                 // 17 total files (15 original + 2 added in wave 2)
                 Assert.Equal(17, result.FilesSucceeded);
                 Assert.False(host.HasErrors, "Case A: restore host received unexpected errors");
@@ -234,6 +238,7 @@ public class RemoteServiceIncrementalTests(LocalHostTapeServiceFixture fixture)
                 var result = await svc.ExecuteRestoreAsync(req);
                 Assert.True(result.Success, "Case B: set-2 restore failed");
                 Assert.Equal(0, result.FilesFailed);
+                Assert.Equal(0, result.FilesSkipped);
                 Assert.Equal(5, result.FilesSucceeded);
                 Assert.False(host.HasErrors, "Case B: restore host received unexpected errors");
             }
@@ -261,6 +266,7 @@ public class RemoteServiceIncrementalTests(LocalHostTapeServiceFixture fixture)
 
                 var result = await svc.ExecuteRestoreAsync(req);
                 Assert.Equal(0,  result.FilesFailed);
+                Assert.Equal(0,  result.FilesSkipped);
                 Assert.Equal(15, result.FilesSucceeded);
                 Assert.False(host.HasErrors, "Case C: restore host received unexpected errors");
             }

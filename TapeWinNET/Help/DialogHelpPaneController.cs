@@ -46,6 +46,8 @@ public sealed class DialogHelpPaneController
 
     private double? _originalHeight; // set when opening the pane grew the window, restored on close
 
+    private SizeToContent? _restoreSizeToContent;   // a content-sized dialog: frozen while the pane is open
+
     // Optional toggle button this controller drives (label + enabled state).
     private readonly Button?            _helpButton;
 
@@ -123,13 +125,31 @@ public sealed class DialogHelpPaneController
     // ── IHelpPaneHost forwarding ───────────────────────────────────────────────
 
     /// <summary>Expands the window to the right to reveal the pane, shifting left if needed.</summary>
+    /// <remarks>
+    /// A dialog sized to its content (<c>SizeToContent</c>) has no <c>Window.Height</c> (NaN): the geometry would
+    ///  not apply, and the pane — a scroll viewer measured with unlimited height — would stretch the window to the screen.
+    ///  Its current size is frozen first; closing the pane gives the dialog back its content sizing.
+    /// </remarks>
     public void OnPaneOpening(double desiredWidth)
     {
+        if (_window.SizeToContent != SizeToContent.Manual)
+        {
+            _restoreSizeToContent = _window.SizeToContent;
+            double width = _window.ActualWidth, height = _window.ActualHeight;
+            _window.SizeToContent = SizeToContent.Manual;
+            _window.Width = width;
+            _window.Height = height;
+        }
+
+        // Grow moderately: to the minimal height, never beyond a share of the work area
+        double minimal = Math.Min(_mininimalHeight,
+            SystemParameters.WorkArea.Height * HelpPaneLayoutCoordinator.MaxHeightFraction);
+
         // Expand (and if needed shift / heighten) the dialog to make room for splitter + pane
-        _originalHeight = HelpPaneLayoutCoordinator.OpenAdjacent(_window, desiredWidth, _mininimalHeight);
+        _originalHeight = HelpPaneLayoutCoordinator.OpenAdjacent(_window, desiredWidth, minimal);
 
         // Reveal the new column and splitter
-        _paneColumn.Width    = new GridLength(desiredWidth, GridUnitType.Pixel);
+        _paneColumn.Width = new GridLength(desiredWidth, GridUnitType.Pixel);
         _paneColumn.MinWidth = HelpPaneLayoutCoordinator.MinPaneWidth;
         _splitter.Visibility = Visibility.Visible;
     }
@@ -157,6 +177,12 @@ public sealed class DialogHelpPaneController
         HelpPaneLayoutCoordinator.CloseAdjacent(
             _window, _paneColumn.ActualWidth, _dialogContentWidth, _originalHeight);
         _originalHeight = null;
+        if (_restoreSizeToContent is { } sizing)
+        {
+            // Content-sized again: the dialog follows its warning lines and expanders as before
+            _window.SizeToContent = sizing;
+            _restoreSizeToContent = null;
+        }
 
         _paneColumn.Width    = new GridLength(0);
         _paneColumn.MinWidth = 0;

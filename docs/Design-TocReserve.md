@@ -355,7 +355,7 @@ would need a lock on the hot path, and the arithmetic is as accurate.
 ### 9.5 Allocation discipline (TB-4)
 
 Nothing is written, so nothing is reused: `GroupBound` is spans and arithmetic; the meter keeps three scalars and a
-reference to the previous name. Pinned by a test: ≤ 256 B over 10 000 files after warm-up.
+reference to the previous name. Pinned by a test: ≤ 256 B added by 10 000 more files (a slope, so one-off runtime allocations cancel).
 
 ### 9.6 Telling the user (TB-5)
 
@@ -390,7 +390,7 @@ with the agent's diagnosis and the volume-space advice.
 
 | Suite | Proves |
 |---|---|
-| `TocTightEntryTests` | `GroupBound` ≥ the entry, within `MaxSlack`, every name shape and extreme values; the estimate covers the saved TOC with batches closed by count and by bytes; byte-closed batches round-trip; the meter's accept rule; `Reset` on a full set; ≤ 256 B over 10 000 files |
+| `TocTightEntryTests` | `GroupBound` ≥ the entry, within `MaxSlack`, every name shape and extreme values; the estimate covers the saved TOC with batches closed by count and by bytes; byte-closed batches round-trip; the meter's accept rule; `Reset` on a full set; ≤ 256 B added by 10 000 more files (a slope, so one-off runtime allocations cancel) |
 | `TocBudgetTests` | the drive's cache filled where seen, cleared on reload; a 96 KiB TOC partition ends a volume by the budget — both copies stand, the reason is given, the files restore; an equal next volume stops the series with the partition wording, no third volume; within budget no stop; TOC in set has no budget |
 | `ServiceTocBudgetTests` | the volume-space policy and wording; a larger next partition completes with warning and advice, everything restores; an equal one ends as failed — files left out named, advice given, no prompt |
 

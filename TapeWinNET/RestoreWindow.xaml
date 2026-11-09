@@ -207,11 +207,13 @@
                 <GroupBox Header="Options" help:HelpTopicIdAttachedProperty.TopicId="dialog.restore.options"
                           help:HelpControlNameAttachedProperty.ControlName="Options">
                     <StackPanel Margin="8">
-                        <CheckBox Content="Include incremental chain"
+                                <CheckBox Content="Include incremental chain"
                                   IsChecked="{Binding Incremental}"
+                                  IsEnabled="{Binding IsIncrementalEnabled}"
+                                  ToolTipService.ShowOnDisabled="True"
                                   Margin="0,0,0,4"
-                                  ToolTip="Process files from all backup sets of the incremental chain"/>
-                        <CheckBox Content="This volume only"
+                                  ToolTip="Process files from all backup sets of the incremental chain. Available when a selected set is incremental."/>
+                                <CheckBox Content="This volume only"
                                   IsChecked="{Binding NoMultivolume}"
                                   IsEnabled="{Binding IsNoMultivolumeEnabled}"
                                   Margin="0,4,0,4"
@@ -244,7 +246,7 @@
                                   Margin="0,12,0,4"/>
                         <CheckBox Content="Eject media when done"
                                   IsChecked="{Binding EjectWhenDone}"
-                                  ToolTip="Eject the media after the backup is complete"
+                                  ToolTip="Eject the media after the operation is complete"
                                   Margin="0,4,0,0"/>
                         
                             </StackPanel>
@@ -314,7 +316,7 @@
                         Command="{Binding LoadDefaultsCommand}"
                         Padding="8,1"
                         Margin="0,0,24,0"
-                        ToolTip="Reset backup options to their defaults"/>
+                        ToolTip="Reset restore options to their defaults"/>
                     <Button Content="Cancel"
                         Command="{Binding CancelCommand}"
                         IsCancel="True"

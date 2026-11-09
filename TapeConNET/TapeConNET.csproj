@@ -28,6 +28,10 @@
   <Import Project="..\Versioning.targets" />
 
   <ItemGroup>
+	<InternalsVisibleTo Include="TapeConNET.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Compile Remove="Excluded Files\**" />
     <EmbeddedResource Remove="Excluded Files\**" />
     <None Remove="Excluded Files\**" />

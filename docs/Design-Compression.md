@@ -1,484 +1,307 @@
-# Design: Per-File Software Compression (ZSTD) for TapeNET
+## Design: Per-File Software Compression (ZSTD) for TapeNET
 
-**Status:** Implemented in `TapeLibNET` (library + tests). UI exposure (WPF, CLI) is pending.  
-**Branch:** `dev`  
-**Last updated:** 2026-05-31
+**Status:** v2.0 · **as implemented** — library, service, CLI and WPF.
+**Last updated:** 2026-11 (encryption branch: the probe chooses the remainder's level, §6.2; the interlock with software
+encryption, §7).
+**Related:** Design-FormatV21 §5.3 (codec byte), Design-Encryption §9 (cipher seam, compression × encryption).
 
----
+### 1. Motivation and Scope
 
-## 1. Motivation and Scope
+TapeNET supports hardware compression — a drive-level toggle that has the drive's built-in compressor compress the
+on-tape byte stream. It is opaque to the software: no per-file ratios, no fallback for incompressible data, no per-file
+metadata.
 
-TapeNET already supports hardware compression — a drive-level toggle that instructs the tape
-drive's built-in compressor to compress the on-tape byte stream. Hardware compression is opaque
-to the software: the drive handles it transparently, and the software has no visibility into
-per-file ratios, no fallback for incompressible data, and no per-file metadata.
-
-Software compression adds a third axis to the existing (`HashAlgorithm`, `BlockSize`) per-set
-configuration model:
+Software compression adds a third axis to the per-set configuration:
 
 | Axis | Scope | Stored in |
-|------|-------|-----------|
-| `HashAlgorithm` | Per set | `TapeSetTOC` |
-| `BlockSize` | Per set | `TapeSetTOC` |
-| `Compression` + `CompressionLevel` | Per set (applied per file) | `TapeSetTOC` |
-| `Codec` (Stored / Zstd) | Per file | `TapeFileInfo` |
+|---|---|---|
+| HashAlgorithm | per set | TapeSetTOC |
+| BlockSize | per set | TapeSetTOC |
+| Compression + CompressionLevel | per set (applied per file) | TapeSetTOC |
+| Codec (Stored / Zstd) | per file | TapeFileInfo, and the file body's first byte |
 
-The design goal is byte-for-byte identical restore regardless of which compression mode a set
-was written with, without any user intervention on restore.
+The goal is byte-for-byte identical restore whichever mode a set was written with, without user intervention on restore.
 
----
+### 2. Codec Choice: ZSTD via ZstdNet
 
-## 2. Codec Choice: ZSTD via ZstdNet
+**ZstdNet 1.5.7** (MIT) wraps **libzstd** (BSD-3-Clause / GPLv2 dual licence, redistributed under BSD-3-Clause). The
+native libzstd.dll ships in `runtimes/win-x64/native` and flows to every dependent project (TapeLibNET, TapeConNET,
+TapeWinNET, TapeServiceNET). THIRD-PARTY-NOTICES at the repo root carries the attribution.
 
-**ZstdNet 1.5.7** (MIT licence) wraps **libzstd** (BSD-3-Clause / GPLv2 dual licence,
-redistributable under BSD-3-Clause with attribution). The native `libzstd.dll` is bundled
-in `runtimes/win-x64/native` by the NuGet package and flows automatically to the output
-directories of all dependent projects (`TapeLibNET`, `TapeConNET`, `TapeWinNET`,
-`TapeServiceNET`).
+ZSTD over LZ4, Brotli and Deflate for:
+- **Streaming API** (`CompressionStream` / `DecompressionStream`) — bounded memory for files of any size.
+- **Levels 1–19** — Fast 3, Balanced 5 (default), High 9; above ~12 for power users.
+- **Concatenated frames read as one stream** — exploited by ProbingCompressionStream (§6): a probe frame followed by a
+  remainder frame, no separator, no format change.
+- **Raw blocks** — an incompressible 128 KiB block is stored raw inside the frame (≈ 3 bytes of block header), so
+  compressing incompressible data costs almost nothing (§6.2).
+- **ZSTD_compressBound** (`Compressor.GetCompressBound(int)`) — sizes the probe buffer exactly.
 
-A `THIRD-PARTY-NOTICES` file at the repo root records the required BSD-3-Clause attribution
-for libzstd.
+### 3. Compression Modes and Levels
 
-ZSTD was chosen over alternatives (LZ4, Brotli, Deflate) for its combination of:
-- **Streaming API** (`ZstdNet.CompressionStream` / `DecompressionStream`) — no full-file
-  buffering required, files of arbitrary size are handled with bounded memory.
-- **Adjustable levels 1–19** — `Fast=3`, `Balanced=5` (default), `High=9` cover realistic
-  tape workloads; levels above ~12 have diminishing returns and are exposed for power users.
-- **Concatenated-frame transparency** — `DecompressionStream` reads multiple consecutive ZSTD
-  frames as a single byte stream. This is exploited by `ProbingCompressionStream` (§5) to
-  write a probe frame followed by a live frame with no separator and no format change.
-- **`ZSTD_compressBound`** — exposed as `Compressor.GetCompressBound(int)`, used to size the
-  probe compression buffer precisely.
-
----
-
-## 3. Compression Modes and Levels
-
-### `TapeCompression` enum (`TapeLibNET/Compression/TapeCompression.cs`)
-
+#### TapeCompression (TapeLibNET/Compression/TapeCompression.cs)
 ```
-None      — no software processing; HW compression is disabled
-Hardware  — drive's built-in compressor; no software involvement
-Software  — ZSTD, applied per-file with configurable level
+None      — no software processing; hardware compression disabled
+Hardware  — the drive's compressor; no software involvement
+Software  — ZSTD per file, configurable level
 ```
+Software disables hardware compression (§7). Software **encryption** rules out Hardware compression (§7).
 
-`None` and `Hardware` are mutually exclusive with `Software`. Selecting `Software` always
-disables hardware compression (§7). Hardware mode leaves the drive's own compressor enabled.
-
-### Level constants (`ZstdLevel`)
+#### Level constants (ZstdLevel)
 
 | Constant | Value | Intent |
-|----------|-------|--------|
-| `Min` | 1 | Fastest, weakest ratio |
-| `Fast` | 3 | Fast preset |
-| `Balanced` / `Default` | 5 | Default for new sets |
-| `High` | 9 | Better ratio, moderate speed cost |
-| `Max` | 19 | Best ratio, slow |
+|---|---|---|
+| Min | 1 | fastest — also the remainder level after an incompressible probe (§6.2) |
+| Fast | 3 | fast preset |
+| Balanced / Default | 5 | default for new sets |
+| High | 9 | better ratio, moderate cost |
+| Max | 19 | best ratio, slow |
 
-`ZstdLevel.Clamp(int)` normalises any caller-supplied value to `[1, 19]`.
+`ZstdLevel.Clamp(int)` normalises to [1, 19].
 
-### `CompressionPreset` helper
-
-A shared static helper (`TapeLibNET/Compression/TapeCompression.cs`) translates between the human-readable
-strings used by the CLI and WPF and the `(TapeCompression, level)` pair stored in the TOC:
+#### CompressionPreset (same file)
+Translates the CLI / WPF specifiers to (TapeCompression, level) and back:
 
 | Specifier | Mode | Level |
-|-----------|------|-------|
-| `off`, `none`, `""` | `None` | — |
-| `hardware` | `Hardware` | — |
-| `low` | `Software` | `Fast` (3) |
-| `medium` | `Software` | `Balanced` (5) |
-| `high` | `Software` | `High` (9) |
-| `1`–`19` | `Software` | numeric |
+|---|---|---|
+| off, none, "" | None | — |
+| hardware | Hardware | — |
+| low | Software | Fast (3) |
+| medium | Software | Balanced (5) |
+| high | Software | High (9) |
+| 1–19 | Software | numeric |
 
-`CompressionPreset.TryParse`, `DisplayName`, `PresetName`, and `ToSpecifier` provide the
-full round-trip without duplication between the two app front-ends.
+`TryParse`, `DisplayName`, `PresetName`, `ToSpecifier` give the round trip for both apps. The CLI maps `drive` and `hw`
+to `hardware` before calling `TryParse` (§13.3).
 
----
-
-## 4. Per-Set Metadata (`TapeSetTOC`)
-
-Two fields added to `TapeSetTOC` (`TapeLibNET/Toc/TapeTOC.cs`):
+### 4. Per-Set Metadata (TapeSetTOC)
 
 ```csharp
-public TapeCompression Compression     { get; set; } = TapeCompression.None;
-public int             CompressionLevel{ get; set; } = ZstdLevel.Default;
+public TapeCompression Compression      { get; set; } = TapeCompression.None;
+public int             CompressionLevel { get; set; } = ZstdLevel.Default;
 ```
+Serialized in the 2.1 TocSet record (Design-FormatV21); legacy TOCs read back as None / Default. TapeSetTOCParams
+carries both, so continuation sets on later volumes inherit the configuration. On an **encrypted** set both are hidden
+while it is locked (Design-Encryption §6.1) — the sealed TOC entry carries them.
 
-two int32 values in layout B,
-and layout-A TOCs (written before compression) read back as None / Default.
+### 5. Per-File Codec Flag (TapeFileInfo)
 
-`CopyFrom` propagates both to continuation sets, so a multi-volume backup inherits the
-original set's compression configuration automatically.
-
-`TapeSetTOCParams` (the immutable snapshot passed at set-creation time) carries both fields;
-`TapeSetTOC.ToParams()` and the `AddNewSetTOC` / continuation-creation paths all route through
-this record, ensuring the values flow end-to-end without manual threading.
-
----
-
-## 5. Per-File Codec Flag (`TapeFileInfo`)
-
-Auto store-fallback (§6) means a single set may contain a mix of `Stored` and `Zstd` files.
-Restore must therefore know per-file which codec was used:
-
+Auto store-fallback (§6) means a set may mix Stored and Zstd files. Restore learns each file's codec twice:
 ```csharp
 // TapeLibNET/Compression/TapeCompressionStream.cs
-public enum TapeFileCodec : byte
-{
-	Stored = 0,   // uncompressed (None/Hardware path, or auto-fallback)
-	Zstd   = 1,   // ZSTD-compressed body
-}
-
-// TapeLibNET/Toc/TapeTOC.cs — TapeFileInfo
+public enum TapeFileCodec : byte { Stored = 0, Zstd = 1 }
+// TapeFileInfo
 internal TapeFileCodec Codec { get; set; } = TapeFileCodec.Stored;
 ```
+- **TOC:** file-entry field 7 (critical) in format 2.1.
+- **On tape:** the first byte of every 2.1 file body (`EmitsCodecPrefix`, Design-FormatV21 §5.3). Restore reads the
+  body's byte (ReadBodyCodec) — authoritative even when the TOC entry is unavailable (scan, recovered TOC).
 
-Codec is TOC file-entry field 7 (critical) in format 2.1, and is also written as the first byte of every 2.1 file body (Design-FormatV21 §5.3).
+### 6. Adaptive Compression: ProbingCompressionStream
 
----
+#### Problem
+Knowing whether compression pays needs compressed output, but compressing a multi-gigabyte file twice — or buffering it —
+is prohibitive. The **probe window**: compress the first 128 KiB (ZSTD_BLOCKSIZE_MAX, one ZSTD block), compare, decide.
 
-## 6. Adaptive Compression: `ProbingCompressionStream`
-
-### Problem: avoid full-file buffering, avoid committing to compression prematurely
-
-Naïvely, detecting whether compression wins requires compressing the whole file first. For
-multi-gigabyte files this is prohibitive. The solution is a **probe window**: compress the
-first 128 KiB (= `ZSTD_BLOCKSIZE_MAX`, one ZSTD block), compare sizes, then decide.
-
-### `ProbingCompressionStream` (`TapeLibNET/Compression/TapeCompressionStream.cs`)
-
-A write-only `Stream` that wraps the packer write façade (`wstream`):
-
+#### ProbingCompressionStream (TapeLibNET/Compression/TapeCompressionStream.cs)
+A write-only Stream over the record's sink:
 ```
-Source → HashingStream (uncompressed hash) → ProbingCompressionStream → wstream
+source → HashingStream (uncompressed hash) → ProbingCompressionStream → [cipher sink] → packer write façade
 ```
+**Probe phase** (the first ≤ 128 KiB): every byte goes to `Session.RawBuf` (plain) and through the probe compressor into
+`Session.CompBuf`.
 
-**Probe phase** (first ≤ 128 KiB written):  
-Every byte goes simultaneously into `Session.RawBuf` (plain) and through
-`_probeZstream` into `Session.CompBuf` (compressed). Both `MemoryStream` buffers live
-in a `Session` object (see §6.1) and are reused across files.
+**Commit** — when the probe window fills, or on Dispose for smaller files. The probe frame is finalized (CompBuf length
+exact), then the decision of §6.2, the codec byte (with `EmitsCodecPrefix`), and the probe's output go to the sink.
 
-**Commit** (triggered when the probe window fills, or on `Dispose` for smaller files):  
-`_probeZstream` is disposed to finalize the ZSTD frame, making `CompBuf.Length` accurate.
-Then:
+**FinalCodec timing.** FinalCodec is valid only after Commit; for a file smaller than the probe window Commit runs only in
+Dispose. The backup agent therefore calls `probing.Dispose()` explicitly before reading `FinalCodec` (§12.1).
 
-- `CompBuf.Length < RawBuf.Length` → **compression wins**: flush `CompBuf` to `wstream`;
-  open a live `ZstdNet.CompressionStream` wrapping `wstream` for the remainder. The live
-  stream produces a second ZSTD frame immediately after the probe frame. libzstd reads
-  multiple concatenated frames transparently on decompress, so the reader sees a single
-  unbroken byte stream.  
-  **Sub-probe case** (file ≤ 128 KiB): no live stream is opened. The probe frame is the
-  complete output. Opening a live stream here would emit a spurious empty frame.  
-  `FinalCodec = TapeFileCodec.Zstd`.
+##### 6.1 ProbingCompressionStream.Session
+Session-scoped resources for one backup set, reused for every file:
+- **ZstdCodec** at the set's level — re-created only when the level changes (multi-volume edge case).
+- **FastCodec** at ZstdLevel.Min — created on first need (§6.2).
+- **RawBuf** — pre-allocated to ProbeLength (128 KiB).
+- **CompBuf** — pre-allocated to `Compressor.GetCompressBound(ProbeLength)`: never reallocates, even for incompressible
+  data with worst-case frame overhead.
 
-- `CompBuf.Length ≥ RawBuf.Length` → **store wins** (incompressible): flush `RawBuf` to
-  `wstream`; subsequent bytes pass through `_inner.Write` directly.  
-  `FinalCodec = TapeFileCodec.Stored`.
+`ResetBuffers()` clears both buffers between files — no allocation per file. TapeFileBackupAgent creates the session on
+the first Software-mode file and disposes it (both codecs) in `Dispose(bool)`.
 
-**`FinalCodec` timing** — a subtle correctness requirement: `FinalCodec` is only valid
-*after* `Dispose()` has run `Commit()`. For files smaller than the probe window, `Commit()`
-runs *only* during disposal. The backup agent therefore calls `probing.Dispose()` explicitly
-before reading `probing.FinalCodec`, rather than relying on the implicit `using`-statement
-disposal that would follow the codec read.
+##### 6.2 The probe chooses the remainder's level, not whether to compress
+The probe sees only a file's head. A file may start incompressible and compress well afterwards (a random header block,
+an embedded preview, test data with a random prefix); deciding "store" from the head would store all of it. So:
 
-#### 6.1 `ProbingCompressionStream.Session`
+| File | Probe compresses | Probe does not compress |
+|---|---|---|
+| **≤ 128 KiB** (seen whole) | Zstd — the probe frame is complete | **Stored** — the raw bytes |
+| **> 128 KiB** | Zstd — probe frame, remainder frame at the **set's level** | Zstd — probe frame (raw blocks), remainder frame at **ZstdLevel.Min** |
 
-A nested class that owns the session-scoped resources shared across all files in one backup
-set:
+- **Cost of the worst case:** ZSTD stores an incompressible block raw — about 3 bytes per 128 KiB plus a frame header per
+  file. Level 1 runs far ahead of any tape drive.
+- **Gain:** a file whose head does not compress still gets every compressible part after it compressed; at level 1
+  rather than the set's level, a deliberate speed/ratio trade (the head predicts the rest more often than not).
+- **Restore unchanged:** DecompressionFilterStream reads the two frames as one stream; raw blocks are ordinary ZSTD.
 
-- `ZstdCodec` — wraps `CompressionOptions` (which holds a native ZSTD context); re-created
-  only when the compression level changes (multi-volume edge case).
-- `RawBuf` — `MemoryStream` pre-allocated to `ProbeLength` (128 KiB).
-- `CompBuf` — `MemoryStream` pre-allocated to `Compressor.GetCompressBound(ProbeLength)`
-  bytes. Using the library's own `GetCompressBound` (instead of a heuristic percentage)
-  guarantees the buffer never reallocates even when the probe data is fully incompressible
-  and ZSTD adds its worst-case frame overhead.
+**History.** Until 2026-11 an incompressible probe stored the whole file. Test data with a random prefix of ≥ 128 KiB per
+1 MiB pattern (≈ 12.5 % randomization) compressed not at all; real files with an incompressible head lost their
+compressible remainder.
 
-`Session.ResetBuffers()` clears both streams to length zero between files; no heap
-allocation per file. `TapeFileBackupAgent` holds the session as `_compressionSession`
-(lazily created on first Software-mode file) and disposes it in `Dispose(bool)` via the
-base class `TapeFileAgent.Dispose` pattern.
+### 7. Hardware Compression Interlock
 
----
+An active hardware compressor re-compresses what the host writes — wasted work on Software-compressed or encrypted data.
+The interlock sets the drive's compressor per set, on both paths:
 
-## 7. Hardware Compression Interlock
-
-When a tape drive's hardware compressor is active, it re-compresses bytes that arrive from
-the host. For a Software-compressed set this would double-compress; for a None set it wastes
-drive resources. For a Hardware set the drive's compressor *is* the compression.
-
-The interlock is applied in **two places**:
-
-**Backup** (`TapeFileBackupAgent.BeginWriteContentForCurrentSet`):
+**Backup** (TapeFileBackupAgent.BeginWriteContentForCurrentSet) and **Restore / Validate / Verify**
+(TapeFileRestoreAgent.BeginReadContentForCurrentSet):
 ```csharp
-Drive.SetHardwareCompression(TOC.CurrentSetTOC.Compression == TapeCompression.Hardware);
+Drive.SetHardwareCompression(TOC.CurrentSetTOC.Compression == TapeCompression.Hardware
+    && CipherFor(TOC.CurrentSetTOC).AllowsHardwareCompression);
 ```
+- **Software encryption** (`SoftwareSetCipher.AllowsHardwareCompression = false`): ciphertext does not compress. The
+  combination is refused before the tape moves — library ERROR_INVALID_PARAMETER (Design-Encryption §10.2), CLI usage
+  error, WPF removes Hardware from the compression list while software encryption applies (§13.2).
+- **Hardware (drive) encryption (v2)** allows it: the drive compresses before it encrypts.
 
-**Restore / Validate / Verify** (`TapeFileRestoreAgent.BeginReadContentForCurrentSet`):
-```csharp
-Drive.SetHardwareCompression(TOC.CurrentSetTOC.Compression == TapeCompression.Hardware);
+`TapeDrive.SetHardwareCompression(bool)` updates only the compression flag of the current drive parameters; failure is
+swallowed (as `SetOptimalDriveParams`), so drives without a dynamic toggle still work.
+
+### 8. Backup Pipeline Integration
+
+TapeFileBackupAgent.BackupFile (packed path):
 ```
-
-`TapeDrive.SetHardwareCompression(bool)` reads the current `DriveParameters` snapshot,
-overrides only the compression flag, then calls `m_backend.SetDriveParameters(...)`.
-Failure is silently swallowed (matching `SetOptimalDriveParams`), so drives that don't
-support dynamic toggle are not broken.
-
----
-
-## 8. Backup Pipeline Integration
-
-`TapeFileBackupAgent.BackupFile` (packed path):
-
+open file (TapeBackupSourceStream / BackupRead)
+  ↓ HashingStream                — hashes the uncompressed bytes
+  ↓ ProbingCompressionStream     — §6
+  ↓ cipher sink                  — identity, or EncryptingStream (Design-Encryption §9.3)
+  ↓ packer write façade
 ```
-Open file (TapeBackupSourceStream / BackupRead)
-  ↓
-HashingStream          ← hashes uncompressed bytes
-  ↓
-ProbingCompressionStream   ← probe → ZSTD or passthrough
-  ↓
-wstream (packer write façade)
+- **The 2.1 file header frame** is written before the compressor, uncompressed — restore reads it without knowing the
+  codec. (For an encrypted set the whole record, header included, is inside the cipher.)
+- **Hash coverage is codec-independent:** the same hash validates stored, hardware- and software-compressed files.
+- **Order at the end:** `probing.Dispose()` (seals the ZSTD frame, sets FinalCodec), then the cipher's CompleteWrite,
+  then the length is counted and the packer slot closed. FinalCodec is registered with PackedCommitTracker
+  (PendingEntry.Codec) and stamped on the TapeFileInfo at commit, so it persists in the TOC.
+
+### 9. Restore Pipeline Integration
+
+TapeFileRestoreAgent.RestoreNextFile (packed path):
 ```
-
-Header serialization is **always uncompressed** (written directly to `wstream` before the
-compression stream is opened), so the 2.1 file header frame on restore
-can read the header without knowing the codec.
-
-Hash coverage is deliberately **codec-independent**: `HashingStream` wraps the source
-*before* the compressor, so `tfi.Hash` always reflects the original uncompressed bytes.
-This means the same hash validates whether the set is stored, hardware-compressed, or
-software-compressed — no hash algorithm changes on restore.
-
-After all file bytes are copied, `probing.Dispose()` seals the ZSTD frame (if compressed)
-and sets `FinalCodec`. The codec is then passed out of `BackupFile` as an `out` parameter
-and registered with `PackedCommitTracker`.
-
-`PackedCommitTracker.PendingEntry` carries `TapeFileCodec Codec` alongside the hash.
-`OnCommitted` stamps `Codec` onto the final `TapeFileInfo` that is promoted into the TOC,
-so the codec persists across TOC save/load.
-
----
-
-## 9. Restore Pipeline Integration
-
-`TapeFileRestoreAgent.RestoreNextFile` (packed path):
-
-```csharp
-Stream bodyStream = tfi.Codec == TapeFileCodec.Zstd
-	? new DecompressionFilterStream(rstream)
-	: rstream;
-
-// bodyStream → RestoreFileCore(fileInfo, bodyStream, hasher)
+rstream (bounded to SizeOnTape) → cipher OpenRead (identity / DecryptingStream)
+  → CheckFileHeader → ReadBodyCodec
+  → Zstd ? DecompressionFilterStream : the stream itself
+  → RestoreFileCore(fileInfo, body, hasher)
+  → cipher CompleteRead (authenticates what the decoder left unread)
 ```
+All three restore agents (Restore, Validate, Verify) see uncompressed bytes — hashing is codec-independent. The
+interlock (§7) puts the drive's compressor in the right state before the first read.
 
-`DecompressionFilterStream` wraps `rstream` (which is size-limited to `tfi.SizeOnTape`)
-and presents a plain read stream of uncompressed bytes. `RestoreFileCore` — and all three
-restore agent overrides (`TapeFileRestoreAgent`, `TapeFileValidateAgent`,
-`TapeFileVerifyAgent`) — see uncompressed bytes; hashing inside `RestoreFileCore` is
-therefore codec-independent, matching backup.
-
-The hardware interlock (`§7`) ensures the drive's compressor is in the correct state before
-reading begins, so hardware-compressed sets read back through the drive's decompressor while
-software-compressed sets bypass it.
-
----
-
-## 10. On-Tape Layout
+### 10. On-Tape Layout
 
 Per file, in write order:
-
 ```
-[2.1 file header frame][codec u8][file body — Stored or ZSTD]
+[2.1 file header frame][codec u8][body — Stored, or one / two ZSTD frames]
 ```
+| File | Body |
+|---|---|
+| ≤ 128 KiB, compressible | one probe frame |
+| ≤ 128 KiB, incompressible | raw bytes (Stored) |
+| > 128 KiB | probe frame + remainder frame — the remainder at the set's level, or at level 1 after an incompressible probe (§6.2) |
 
-For a compressed file the body is one or two ZSTD frames:
-- Files ≤ 128 KiB: one probe frame (complete).
-- Files > 128 KiB: probe frame + live frame (concatenated; transparent to libzstd).
+An encrypted set wraps this whole record in its cipher (Design-Encryption §5.7). SizeOnTape (set by the packer at
+commit) covers header frame, codec byte and body, incl. ZSTD and cipher overhead; `FileDescr.Length` holds the logical
+size.
 
-`SizeOnTape` (set by the packer on commit) covers all three: the header frame, the codec byte and the (compressed) body incl. ZSTD frame
-overhead. `TapeFileInfo.FileDescr.Length` always holds the original logical file size.
-`tfi.Codec` tells restore which one to decompress.
+### 11. Tests (TapeLibNET.Tests)
 
----
+#### CompressionRoundTripTests.cs
+`[Theory]` over the drive profiles (Setmarks, Partitions, SeqFilemarks, FilemarksOnly):
 
-## 11. Tests (`TapeLibNET.Tests`)
+| Test | Covers |
+|---|---|
+| Compression_ByteForByteRoundTrip | backup + restore byte equality × hash algorithms |
+| Compression_TOC_StoresCodecAndSizeOnTape | Codec == Zstd, SizeOnTape < logical size after reload |
+| Compression_StoreFallback_IncompressibleData | random files ≤ 128 KiB stay Stored; larger random files become Zstd at about their logical size (`SizeOnTape ≤ Length + header + 64 + Length / 32768`); all restore |
+| **Compression_IncompressibleHead_CompressibleBody** | 192 KiB random + 4 MiB zeros → Zstd, `SizeOnTape < Length / 4` (§6.2) |
+| Compression_ProbeStraddle_FilesSmallerThanProbeWindow | the sub-probe path, no spurious empty frame |
+| Compression_SessionReuse_ManyFilesAllRestoreCorrectly | session reuse over 20 files |
 
-### `CompressionRoundTripTests.cs`
+#### Elsewhere
+- **LargeFileTests:** the four large-file tests run `[InlineData(false)]` / `[InlineData(true)]`; the compressed variant
+  exercises the two-frame path.
+- **Encryption suites** (EncryptionAgentTests × compression {None, Software}): compression inside the cipher.
+- **Service and CLI:** BackupRequest.Compression; Software encryption + Hardware compression refused
+  (ServiceEncryptionTests, EncryptionCliTests).
+- **Helpers:** `VirtualTapeFixture.BackupFiles(compression:, compressionLevel:)`; `TempFileTree.AddRandomFiles`.
 
-Five targeted `[Theory]` tests parameterised over drive profiles
-(`Setmarks`, `Partitions`, `SeqFilemarks`, `FilemarksOnly`):
+#### Test data
+The test-data generator script spreads its randomization over every 4 KiB page and draws fresh random bytes per chunk:
+"15 % random" then means 15 % throughout each file, not a random prefix followed by zeros.
 
-| Test | What it covers |
-|------|----------------|
-| `Compression_ByteForByteRoundTrip` | Backup + restore byte equality across all profiles × hash algorithms |
-| `Compression_TOC_StoresCodecAndSizeOnTape` | `TapeFileInfo.Codec == Zstd`, `SizeOnTape < logical size` after TOC reload |
-| `Compression_StoreFallback_IncompressibleData` | Random-byte files trigger `Stored` fallback; restore still succeeds |
-| `Compression_ProbeStraddle_FilesSmallerThanProbeWindow` | Files < 128 KiB compress correctly (sub-probe path, no spurious empty frame) |
-| `Compression_SessionReuse_ManyFilesAllRestoreCorrectly` | Session reuse across 20 files; hash and byte equality for all |
+### 12. Bugs Found and Fixed
 
-### Helper extensions
+#### 12.1 FinalCodec read before Commit() ran
+**Symptom:** files under 128 KiB recorded as Stored although they compressed; restore read the ZSTD frame as plain data.
+**Cause:** FinalCodec was read inside the `using` block; for sub-probe files Commit runs only in Dispose.
+**Fix:** `probing.Dispose()` explicitly before reading FinalCodec; the implicit disposal is a no-op (`_disposed`).
 
-`VirtualTapeFixture.BackupFiles` gained optional `TapeCompression compression` and
-`int compressionLevel` parameters (defaulting to `None`/`5`) so existing tests are
-unaffected while compression tests opt in with a single argument.
+#### 12.2 Spurious empty ZSTD frame for sub-probe files
+**Symptom:** sub-probe compressed files restored as 0 bytes or failed to decompress.
+**Cause:** Commit always opened a remainder stream; disposed unused, it emitted an empty frame.
+**Fix:** the remainder stream opens only when the probe window filled (`RawBuf.Length >= ProbeLength`).
 
-`TempFileTree.AddRandomFiles` generates files filled with `RandomNumberGenerator.Fill`
-bytes — effectively incompressible — for store-fallback coverage.
+#### 12.3 An incompressible head stored the whole file
+**Symptom:** test sets with more than ~12.5 % randomization did not compress at any level; real files with an
+incompressible head lost their compressible remainder.
+**Cause:** the probe decided store-or-compress for the whole file from its first 128 KiB.
+**Fix:** §6.2 — a file larger than the probe window is always Zstd; an incompressible probe only lowers the remainder's
+level.
 
-### `LargeFileTests.cs`
+### 13. UI Exposure — implemented
 
-All four large-file tests (`FileOver2GB`, `FileOver4GB`, `MultipleLargeFiles`,
-`Validate_FileOver2GB`) are parameterised with `[Theory] [InlineData(false)] [InlineData(true)]`.
-The `compress: true` variant exercises the multi-frame path (probe frame + live frame) because
-sparse/zero-filled files are several gigabytes of highly compressible data, and confirms
-`SizeOnTape < logical size` after compression.
+#### 13.1 Service layer
+`BackupRequest` (ServiceOperationRequest.cs) carries `Compression` and `CompressionLevel`; the backup path applies them
+to the new TapeSetTOC with description, hash algorithm and block size. A Software-encryption request with Hardware
+compression is refused before the tape moves (Design-Encryption §10.2).
 
----
+#### 13.2 WPF (TapeWinNET)
+- **BackupWindow, Options:** a Compression combo (None / Hardware / Software) with the level for Software; "Load
+  defaults" and "Load from last backup" set it.
+- **Stored by value:** the selection survives the list changing — Hardware leaves the list while software encryption
+  applies (explicit or implied by an encrypted incremental base); the warning pane says *"Hardware compression is not
+  available with software encryption — software compression selected."* (Info) until the user picks a compression or
+  encryption is off.
+- **Display:** the set properties pane and the backup sets list show `CompressionPreset.DisplayName`; "—" for a locked
+  set.
 
-## 12. Bugs Found and Fixed During Implementation
-
-### 12.1 `FinalCodec` read before `Commit()` ran
-
-**Symptom:** Files smaller than 128 KiB were recorded as `Stored` in the TOC even when they
-compressed well; restore ignored the ZSTD frame on tape and read garbage.
-
-**Root cause:** The backup agent called `codec = probing.FinalCodec` while `probing` was still
-alive inside a `using` block. For sub-probe files, `Commit()` only runs during `Dispose()`.
-Reading `FinalCodec` before disposal therefore always returned the default value `Stored`.
-
-**Fix:** `probing.Dispose()` is called explicitly before `probing.FinalCodec` is read. The
-implicit `using`-statement disposal becomes a no-op (guarded by `_disposed`).
-
-### 12.2 Spurious empty ZSTD frame for sub-probe files
-
-**Symptom:** Even with the codec timing fix, sub-probe compressed files restored as 0 bytes
-or triggered decompressor errors.
-
-**Root cause:** `Commit()` unconditionally opened a live `ZstdNet.CompressionStream`. For
-sub-probe files this stream was immediately disposed (no bytes written), emitting a valid but
-empty ZSTD frame trailer after the probe frame. libzstd processed the empty frame but then
-the read window (from `SizeOnTape`) was exhausted prematurely.
-
-**Fix:** The live stream is opened only when `RawBuf.Length >= ProbeLength` — i.e., only when
-the probe window was fully saturated and more bytes are guaranteed to follow.
-
----
-
-## 13. Pending: UI Exposure
-
-The compression feature is fully wired in `TapeLibNET` but not yet surfaced in the WPF app
-(`TapeWinNET`) or the CLI (`TapeConNET`). The following sections describe the intended design,
-consistent with how `HashAlgorithm` is already exposed.
-
-### 13.1 Service Layer (`TapeLibNET.Services`)
-
-**`BackupRequest`** (`TapeLibNET/Services/ServiceOperationRequest.cs`):
-```csharp
-public TapeCompression Compression      { get; init; } = TapeCompression.None;
-public int             CompressionLevel { get; init; } = ZstdLevel.Default;
+#### 13.3 CLI (TapeConNET)
 ```
-
-**`TapeServiceBase` backup path** — where `Description`, `HashAlgorithm`, and `BlockSize`
-are applied to the new `TapeSetTOC`, add:
-```csharp
-setTOC.Compression      = request.Compression;
-setTOC.CompressionLevel = request.CompressionLevel;
+--compression <spec>   off | none | hardware | drive | hw | low | medium | high | 1–19     (default: none)
 ```
-
-### 13.2 WPF App (`TapeWinNET`)
-
-The natural home is the **BackupWindow "Options"** panel, mirroring the `HashAlgorithm` combo.
-
-**ViewModel additions to `NewBackupSetViewModel`:**
-
-```csharp
-// Mode combo: None / Hardware / Software
-public TapeCompression Compression { get; set; } = TapeCompression.None;
-
-// Level slider/spinner — enabled only when Compression == Software
-public int CompressionLevel { get; set; } = ZstdLevel.Default;
-
-// Preset buttons (bind to CompressionLevel)
-public ICommand SetFastCommand    { get; }  // → ZstdLevel.Fast    (3)
-public ICommand SetBalancedCommand{ get; }  // → ZstdLevel.Balanced (5)
-public ICommand SetHighCommand    { get; }  // → ZstdLevel.High    (9)
-```
-
-**XAML sketch (Options panel):**
-
-```xml
-<!-- Compression mode -->
-<ComboBox ItemsSource="{Binding CompressionModes}"
-		  SelectedItem="{Binding Compression}" />
-
-<!-- Level controls — collapsed unless Software -->
-<StackPanel Visibility="{Binding Compression,
-				Converter={StaticResource EqToVis},
-				ConverterParameter=Software}">
-	<Slider Minimum="1" Maximum="19"
-			Value="{Binding CompressionLevel}"
-			TickFrequency="1" IsSnapToTickEnabled="True" />
-	<StackPanel Orientation="Horizontal">
-		<Button Content="Fast"     Command="{Binding SetFastCommand}" />
-		<Button Content="Balanced" Command="{Binding SetBalancedCommand}" />
-		<Button Content="High"     Command="{Binding SetHighCommand}" />
-	</StackPanel>
-	<TextBlock Text="{Binding CompressionLevel,
-				   StringFormat='Level {0} — {1}',
-				   Converter=…}" />
-</StackPanel>
-```
-
-**BackupSetInfo pane** — add a "Compression" row alongside "Hash algorithm", using
-`CompressionPreset.DisplayName(set.Compression, set.CompressionLevel)`.
-
-### 13.3 CLI (`TapeConNET`)
-
-Add `--compression` to the `backup` verb:
-
-```
---compression <spec>    off | none | hardware | low | medium | high | 1–19
-						Default: none
-						low=3, medium=5 (Balanced), high=9
-```
-
-**Implementation:**
-
-1. Add `Option<string> compressionOption` to the `backup` command builder, defaulting to
-   `CompressionPreset.KeyNone`.
-2. In the backup handler, call `CompressionPreset.TryParse(spec, out mode, out level, out err)`;
-   on failure print the error and exit non-zero.
-3. Set `request.Compression = mode; request.CompressionLevel = level;`.
-4. Update `--help` and `TapeConNET/Resources/Docs/concepts.md` to document the option.
-
-**Example invocations:**
+`drive` and `hw` map to `hardware` before `CompressionPreset.TryParse`; a parse error is a usage error. With
+`--encrypt` / `--encryption software`, hardware compression is a usage error. `tapecon info` / `list --sets-only` show
+the compression per set ("—" for a locked one).
 ```
 tapecon backup D:\Data --compression medium
-tapecon backup D:\Data --compression high
 tapecon backup D:\Data --compression 7
-tapecon backup D:\Data --compression hardware
-tapecon backup D:\Data --compression off
+tapecon backup D:\Data --compression drive
+tapecon backup D:\Data --encrypt --compression high --password-file key.txt
 ```
 
-**`tapecon info` / set listing** — add a "Compression" column to the set table output,
-formatted via `CompressionPreset.DisplayName`.
-
----
-
-## 14. File Map
+### 14. File Map
 
 | File | Role |
-|------|------|
-| `TapeLibNET/Compression/TapeCompression.cs` | `TapeCompression` enum, `ZstdLevel` constants, `CompressionPreset` parse/format helper |
-| `TapeLibNET/Compression/TapeCompressionStream.cs` | `TapeFileCodec` enum, `ZstdCodec`, `CompressionFilterStream`, `ProbingCompressionStream` (+ `Session`), `DecompressionFilterStream` |
-| `TapeLibNET/Toc/TapeTOC.cs` | `TapeSetTOC.Compression` / `CompressionLevel`; `TapeFileInfo.Codec` / `SizeOnTape`; serialization; `TapeSetTOCParams` |
-| `TapeLibNET/Agents/TapeFileBackupAgent.cs` | Hardware interlock on write; `ProbingCompressionStream` usage in `BackupFile`; session lifecycle in `Dispose(bool)` |
-| `TapeLibNET/Agents/TapeFileRestoreAgent.cs` | Hardware interlock on read; `DecompressionFilterStream` wrapping in `RestoreNextFile` |
-| `TapeLibNET/TapeFilePacker/PackedCommitTracker.cs` | `PendingEntry.Codec`; codec propagation through `Register` → `OnCommitted` → TOC |
-| `TapeLibNET/TapeDrive.cs` | `SetHardwareCompression(bool)` |
-| `TapeLibNET.Tests/CompressionRoundTripTests.cs` | Focused compression test suite (5 × 4 profiles = 20 tests) |
-| `TapeLibNET.Tests/LargeFileTests.cs` | Large-file tests parameterised `[InlineData(false/true)]` for compress/no-compress |
-| `TapeLibNET.Tests/Helpers/TempFileTree.cs` | `AddRandomFiles(...)` for incompressible test data |
-| `TapeLibNET.Tests/Helpers/VirtualTapeFixture.cs` | `BackupFiles(compression:, compressionLevel:)` optional params |
-| `THIRD-PARTY-NOTICES` | BSD-3-Clause attribution for libzstd |
+|---|---|
+| TapeLibNET/Compression/TapeCompression.cs | TapeCompression, ZstdLevel, CompressionPreset |
+| TapeLibNET/Compression/TapeCompressionStream.cs | TapeFileCodec, ZstdCodec, ProbingCompressionStream (+ Session with FastCodec), DecompressionFilterStream |
+| TapeLibNET/Toc/TapeTOC.cs, TapeTOC.Format.cs | Compression / CompressionLevel; TapeFileInfo.Codec / SizeOnTape; 2.1 serialization; TapeSetTOCParams |
+| TapeLibNET/Agents/TapeFileBackupAgent.cs | interlock on write; BackupFile; session lifecycle |
+| TapeLibNET/Agents/TapeFileRestoreAgent.cs | interlock on read; ReadBodyCodec; DecompressionFilterStream in RestoreNextFile |
+| TapeLibNET/Encryption/TapeSetCipher.cs | AllowsHardwareCompression per scheme |
+| PackedCommitTracker.cs | PendingEntry.Codec → TOC |
+| TapeLibNET/Drive/TapeDrive.cs | SetHardwareCompression(bool) |
+| TapeLibNET/Services/ServiceOperationRequest.cs, TapeServiceBase.Backup.cs, TapeServiceBase.Encryption.cs | request fields; application; the encryption interlock |
+| TapeConNET: backup command | `--compression` |
+| TapeWinNET: BackupViewModel.cs, BackupViewModel.Encryption.cs, BackupWindow.xaml | the Compression combo; the encryption interlock |
+| TapeLibNET.Tests/CompressionRoundTripTests.cs, LargeFileTests.cs, Helpers/TempFileTree.cs, Helpers/VirtualTapeFixture.cs | §11 |
+| THIRD-PARTY-NOTICES | libzstd attribution |

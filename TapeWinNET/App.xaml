@@ -53,6 +53,9 @@
             <SolidColorBrush x:Key="WarningFg.Info"      Color="Blue"/>
             <SolidColorBrush x:Key="WarningFg.Completed" Color="Green"/>
 
+            <!-- Locked (encrypted) sets: normal, never a warning colour (Design-Encryption §11.1.1) -->
+            <SolidColorBrush x:Key="LockedFg" Color="#FF707070"/>
+
             <!-- ═══════════════════════════════════════════════════════════ -->
             <!-- Toolbar button styles                                      -->
             <!-- ═══════════════════════════════════════════════════════════ -->

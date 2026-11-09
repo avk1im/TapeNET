@@ -21,3 +21,5 @@ The status bar along the bottom of the window summarises the current state:
   *Remote: host:port* (see [Remote service](help://topic/concepts.remote-service)).
 - **Capacity / usage** — a quick read on used versus remaining space, also
   available as a usage bar via **View → Show Usage Bar**.
+- **Current selection** — the number and size of selected files and sets, if any.
+- For virtual drives: **The emulated IO speed** (see [Virtual drives](help://topic/concepts.virtual-drives)).

@@ -1,4 +1,5 @@
 using TapeLibNET.Compression;
+using TapeLibNET.Encryption;
 using TapeLibNET.Headers;
 using TapeLibNET.Toc;
 
@@ -27,6 +28,21 @@ public readonly record struct ServiceProperty(
     ServiceReportLevel Level = ServiceReportLevel.None,
     double? Ratio = null);
 
+/// <summary>One backup set's share of the volume, for usage displays.</summary>
+public readonly record struct SetUsage(int SetIndex, int AltIndex, string DisplayName, string DisplayCount, long SizeOnTape);
+
+/// <summary>
+/// The loaded volume in numbers — the figures the "Capacity" property rows show, for graphical hosts (the usage bar).
+/// </summary>
+/// <param name="EstimatedCapacity">The content partition's true total (calibrated, else reported).</param>
+/// <param name="Sets">The sets of this volume, oldest first; each with its set header when the media has them.</param>
+/// <param name="TocInPartition">The TOC lives in its own partition.</param>
+/// <param name="TocSpace">The TOC reserve (TOC in set), or the TOC partition's capacity.</param>
+/// <param name="TocSize">One copy of the loaded TOC, estimated.</param>
+/// <param name="Writable">What a backup may still spend on content.</param>
+public sealed record MediaUsage(long EstimatedCapacity, IReadOnlyList<SetUsage> Sets, bool TocInPartition,
+    long TocSpace, long TocSize, long Writable);
+
 
 public partial class TapeServiceBase
 {
@@ -37,9 +53,8 @@ public partial class TapeServiceBase
     //   the app's business: the List hooks log each property as a sub-entry, the WPF view model adds each one as a
     //   PropertyItem. A new fact is added here and appears in both apps.
     //
-    //  Pure reads of in-memory state, no tape I/O and no lock — callable from the UI thread between operations,
-    //   exactly as the view model read the same properties before. DescribeSet moves TOC.CurrentSetIndex, as the
-    //   callers already did, because the volume-continuation flags are relative to the current set.
+    //  Pure reads of in-memory state, no tape I/O and no lock — callable from the UI thread between operations.
+    //   None of them moves TOC.CurrentSetIndex.
 
     /// <summary>The drive model ("vendor product rev X"), or empty when the drive reports none.</summary>
     public string DeviceModel
@@ -124,47 +139,76 @@ public partial class TapeServiceBase
         string placement = TOCIsFrom is TOCSource.File
             ? $"File: {TOCFilePath}"
             : (HasInitiatorPartition ? "Partition" : "Set")
-                + (TOCIsFrom is TOCSource.Recovered ? " (recovered TOC)" : string.Empty);
+                + (TOCIsFrom is TOCSource.Recovered ? " (recovered TOC)" : string.Empty)
+                + (TOCIsFrom is TOCSource.Series ? " (series TOC)" : string.Empty);
         props.Add(new("TOC Placement", placement,
-            TOCIsFrom is TOCSource.File or TOCSource.Recovered ? ServiceReportLevel.Warning : ServiceReportLevel.None));
+            TOCIsFrom is TOCSource.File or TOCSource.Recovered or TOCSource.Series ? ServiceReportLevel.Warning : ServiceReportLevel.None));
 
         props.Add(new("Volume", $"#{toc.Volume}"));
         props.Add(new("Continued on Next Volume", YesNo(toc.ContinuedOnNextVolume)));
         return props;
     }
 
-    /// <summary>One backup set. Makes it the TOC's current set (the continuation flags are relative to it).</summary>
-    /// <param name="setIndex">Standard (1-based) set index.</param>
+    /// <summary>One backup set. Leaves the TOC's current set as it is.</summary>
+    /// <remarks>A locked set shows its plain stub only (Design-Encryption §10.6) — never a hidden value.</remarks>
+    /// <param name="setIndex">Standard (1-based) set index; out of range: no properties.</param>
     public IReadOnlyList<ServiceProperty> DescribeSet(int setIndex)
     {
-        if (_toc is not TapeTOC toc)
+        if (_toc is not TapeTOC toc || setIndex < 1 || setIndex > toc.Count)
             return [];
 
-        toc.CurrentSetIndex = setIndex;
-        var set = toc.CurrentSetTOC;
+        var set = toc[setIndex];
+        uint blockSize = _drive?.DefaultBlockSize ?? 0;
 
-        return
-        [
+        ServiceProperty encryption = new("Encryption",
+            EncryptionPreset.DisplayName(set.Encryption) + (set.IsLocked ? " — locked" : string.Empty),
+            set.IsLocked ? ServiceReportLevel.Warning : ServiceReportLevel.None);
+
+        ServiceProperty continuedFrom = new("Continued from Previous Volume",
+            toc.IsSetContFromPrevVolume(setIndex) ? "Yes, directly"
+            : !set.IsLocked && toc.IsSetContFromPrevVolumeInc(setIndex) ? "Yes, incrementally"
+            : "No");
+        ServiceProperty continuedOn = new("Continued on Next Volume", YesNo(toc.IsSetContOnNextVolume(setIndex)));
+
+        long totalFileSizeOnTape = set.ComputeTotalFileSizeOnTape(blockSize);
+
+        if (set.IsLocked)
+        {
+            return
+            [
+                new("Description", set.DisplayName),
+                new("Set Index", $"#{setIndex} | {toc.SetIndexToAlt(setIndex)}"),
+                encryption,
+                new("Total File Size on Media", Helpers.BytesToStringLong(totalFileSizeOnTape)),
+                new("Data Format", DescribeDataFormat(set)),
+                new("Volume", $"#{set.Volume}"),
+                continuedFrom,
+                continuedOn,
+            ];
+        }
+
+        var props = new List<ServiceProperty>
+        {
             new("Description", set.Description ?? "(unnamed)"),
             new("Set Index", $"#{setIndex} | {toc.SetIndexToAlt(setIndex)}"),
             new("Files", set.Count.ToString("N0")),
-            new("Total File Size", Helpers.BytesToStringLong(set.Sum(tfi => tfi.FileDescr.Length))),
-            new("Total File Size on Media",
-                Helpers.BytesToStringLong(set.ComputeTotalFileSizeOnTape(_drive?.DefaultBlockSize ?? 0))),
+            new("Total File Size", Helpers.BytesToStringLong(set.TotalFileSize)),
+            new("Total File Size on Media", Helpers.BytesToStringLong(totalFileSizeOnTape)),
             new("Created On", set.CreationTime.ToLocalTime().ToString("G")),
             new("Last Saved", set.LastSaveTime.ToLocalTime().ToString("G")),
             new("Block Size", Helpers.BytesToStringLong(set.BlockSize)),
             new("Hash Algorithm", set.HashAlgorithm.ToString()),
             new("Compression", CompressionPreset.DisplayName(set.Compression, set.CompressionLevel)),
-            new("Data Format", DescribeDataFormat(set)),
-            new("Incremental", YesNo(set.Incremental)),
-            new("Volume", $"#{set.Volume}"),
-            new("Continued from Previous Volume",
-                toc.IsCurrentSetContFromPrevVolume ? "Yes, directly"
-                : toc.IsCurrentSetContFromPrevVolumeInc ? "Yes, incrementally"
-                : "No"),
-            new("Continued on Next Volume", YesNo(toc.IsCurrentSetContOnNextVolume)),
-        ];
+        };
+
+        if (set.IsEncrypted)
+            props.Add(encryption);
+        props.Add(new("Data Format", DescribeDataFormat(set)));
+        props.Add(new("Incremental", YesNo(set.Incremental)));
+        props.Add(new("Volume", $"#{set.Volume}"));
+        props.Add(continuedFrom);
+        props.Add(continuedOn);
+        return props;
     }
 
     /// <summary>
@@ -222,8 +266,10 @@ public partial class TapeServiceBase
         props.Add(new("Remaining Reported / Estimated", pair(ReportedContentRemaining, EstimatedContentRemaining)));
         props.Add(new("Writable", Helpers.BytesToStringLong(WritableRemaining),
             Ratio: estimatedCapacity > 0 ? (double)WritableRemaining / estimatedCapacity : null));
-        if (!HasInitiatorPartition)
-            props.Add(new("TOC Reserve",
+        props.Add(HasInitiatorPartition
+            ? new("TOC Partition",
+                $"{Helpers.BytesToStringLong(TocPartitionCapacity)} (TOC ~{Helpers.BytesToString(TocSizeEstimate)})")
+            : new("TOC Reserve",
                 $"{Helpers.BytesToStringLong(TocReserve)} (TOC ~{Helpers.BytesToString(TocSizeEstimate)})"));
         props.Add(new("Estimation By", RemainingEstimationSource,
             IsEarlyWarning ? ServiceReportLevel.Warning : ServiceReportLevel.None));
@@ -240,6 +286,38 @@ public partial class TapeServiceBase
     }
 
     private static string YesNo(bool value) => value ? "Yes" : "No";
+
+    #endregion
+
+    #region Media usage
+
+    /// <summary>
+    /// The loaded volume in numbers (<see cref="MediaUsage"/>); <see langword="null"/> without media. The same figures
+    ///  <see cref="AddCapacity"/> formats — a pure read, like the sheets.
+    /// </summary>
+    public MediaUsage? DescribeUsage()
+    {
+        if (_drive is not { IsMediaLoaded: true })
+            return null;
+
+        bool withSetHeaders = LoadedMediaHeader?.HasSetHeaders ?? false;   // as Used counts them
+        var sets = new List<SetUsage>();
+        if (_toc is TapeTOC { Count: > 0 } toc)
+        {
+            for (int i = toc.FirstSetOnVolume; i <= toc.LastSetOnVolume; i++)
+            {
+                var set = toc[i];
+                sets.Add(new(i, toc.SetIndexToAlt(i), set.DisplayName, set.DisplayCount,
+                    set.ComputeTotalFileSizeOnTape(DefaultBlockSize, withSetHeaders)));   // stub-safe on locked sets
+            }
+        }
+        return new(EstimatedCapacity, sets, HasInitiatorPartition,
+            HasInitiatorPartition ? TocPartitionCapacity : TocReserve,
+            TocSizeEstimate, WritableRemaining);
+    }
+
+    /// <summary>The TOC partition's capacity (drive cache, Design-TocReserve §9.2.1); the default until it is known.</summary>
+    public long TocPartitionCapacity => _drive?.InitiatorCapacity is long c and > 0 ? c : DefaultTOCCapacity;
 
     #endregion
 }

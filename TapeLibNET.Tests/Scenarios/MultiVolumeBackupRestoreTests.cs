@@ -1,9 +1,10 @@
 ﻿using TapeLibNET.Agents;
 using TapeLibNET.Drive;
 using TapeLibNET.Headers;
-using TapeLibNET.Tests.Helpers;
 using TapeLibNET.Toc;
 using TapeLibNET.Virtual;
+
+using TapeLibNET.Tests.Helpers;
 
 namespace TapeLibNET.Tests.Scenarios;
 
@@ -291,6 +292,8 @@ public abstract class MultiVolumeBackupRestoreTestsBase
 
         Assert.Equal(FileCount, stats.FilesSucceeded);
         Assert.Equal(0, stats.FilesFailed);
+        Assert.Equal(0, stats.FilesSkipped);
+        Assert.Equal(0, stats.FilesUpToDate);
         Assert.True(fixture.TotalVolumes >= 2,
             $"Expected at least 2 volumes, got {fixture.TotalVolumes}");
 
@@ -322,6 +325,8 @@ public abstract class MultiVolumeBackupRestoreTestsBase
 
             Assert.Equal(FileCount, restoreStats.FilesSucceeded);
             Assert.Equal(0, restoreStats.FilesFailed);
+            Assert.Equal(0, stats.FilesSkipped);
+            Assert.Equal(0, stats.FilesUpToDate);
 
             // Byte-for-byte verification
             string restoreRoot = RestoreEquivalentRoot(restoreDir, tree.RootPath);
@@ -413,6 +418,8 @@ public abstract class MultiVolumeBackupRestoreTestsBase
         //  (backing up all 8 modified files, same sizes, plus overhead)
         var stats1 = fixture.BackupFiles(tree.Files, "Incremental multi-vol", incremental: true);
         Assert.Equal(8, stats1.FilesSucceeded);
+        Assert.Equal(0, stats1.FilesUpToDate);
+        Assert.Equal(0, stats1.FilesFailed);
         Assert.Equal(0, stats1.FilesSkipped);
 
         // Verify incremental flags
@@ -429,6 +436,7 @@ public abstract class MultiVolumeBackupRestoreTestsBase
             // All 8 files should be restored — latest version from inc sets
             Assert.Equal(8, restoreStats.FilesSucceeded);
             Assert.Equal(0, restoreStats.FilesFailed);
+            Assert.Equal(0, restoreStats.FilesSkipped);
 
             // All files should be version 1
             string restoreRoot = RestoreEquivalentRoot(restoreDir, tree.RootPath);
@@ -467,7 +475,7 @@ public abstract class MultiVolumeBackupRestoreTestsBase
         // Wave 1: Incremental — only modified files backed up, may span volumes
         var stats1 = fixture.BackupFiles(tree.Files, "Incremental 1", incremental: true);
         Assert.Equal(FileCount / 2, stats1.FilesSucceeded);
-        Assert.Equal(FileCount / 2, stats1.FilesSkipped);
+        Assert.Equal(FileCount / 2, stats1.FilesUpToDate);
 
         // Incremental restore from the latest incremental set
         string restoreDir = Path.Combine(Path.GetTempPath(), $"TapeNET_MVIncChain_{Guid.NewGuid():N}");
@@ -567,7 +575,7 @@ public abstract class MultiVolumeBackupRestoreTestsBase
 
     /// <summary>
     /// Verifies that backup and restore statistics are consistent across volume
-    /// boundaries — total files, succeeded, failed, skipped, and bytes.
+    /// boundaries — total files, succeeded, failed, up-to-date, and bytes.
     /// </summary>
     [Theory]
     [MemberData(nameof(AllProfiles))]
@@ -584,9 +592,10 @@ public abstract class MultiVolumeBackupRestoreTestsBase
 
         // Backup statistics invariant
         Assert.Equal(backupStats.FilesProcessed,
-            backupStats.FilesSucceeded + backupStats.FilesFailed + backupStats.FilesSkipped);
+            backupStats.FilesSucceeded + backupStats.FilesFailed + backupStats.FilesUpToDate);
         Assert.Equal(FileCount, backupStats.FilesSucceeded);
         Assert.Equal(0, backupStats.FilesFailed);
+        Assert.Equal(0, backupStats.FilesSkipped);
         Assert.True(backupStats.FileBytesProcessed > 0, "BytesProcessed should be > 0");
 
         // Restore statistics
@@ -601,9 +610,10 @@ public abstract class MultiVolumeBackupRestoreTestsBase
 
             // Restore invariant
             Assert.Equal(restoreStats.FilesProcessed,
-                restoreStats.FilesSucceeded + restoreStats.FilesFailed + restoreStats.FilesSkipped);
+                restoreStats.FilesSucceeded + restoreStats.FilesFailed + restoreStats.FilesUpToDate);
             Assert.Equal(FileCount, restoreStats.FilesSucceeded);
             Assert.Equal(0, restoreStats.FilesFailed);
+            Assert.Equal(0, restoreStats.FilesSkipped);
             Assert.True(restoreStats.FileBytesProcessed > 0);
 
             // Callback counts
@@ -800,7 +810,7 @@ public abstract class MultiVolumeBackupRestoreTestsBase
         // Incremental backup
         var incStats = fixture.BackupFiles(tree.Files, "Inc after span", incremental: true);
         Assert.Equal(4, incStats.FilesSucceeded);
-        Assert.Equal(FileCount - 4, incStats.FilesSkipped);
+        Assert.Equal(FileCount - 4, incStats.FilesUpToDate);
 
         // Incremental restore from the latest set
         string restoreDir = Path.Combine(Path.GetTempPath(), $"TapeNET_MVFullInc_{Guid.NewGuid():N}");
@@ -811,6 +821,7 @@ public abstract class MultiVolumeBackupRestoreTestsBase
 
             Assert.Equal(FileCount, restoreStats.FilesSucceeded);
             Assert.Equal(0, restoreStats.FilesFailed);
+            Assert.Equal(0, restoreStats.FilesSkipped);
 
             string restoreRoot = RestoreEquivalentRoot(restoreDir, tree.RootPath);
             for (int i = 0; i < FileCount; i++)

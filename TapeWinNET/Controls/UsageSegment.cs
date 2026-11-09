@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using System.Windows.Media;
 
-namespace TapeWinNET.Models;
+namespace TapeWinNET.Controls;
 
 
 /// <summary>Identifies the role of a <see cref="UsageSegment"/> on the media usage bar.</summary>
@@ -9,10 +9,13 @@ public enum UsageSegmentKind
 {
     /// <summary>The TOC area (partition-based or set-based).</summary>
     TOC,
+
     /// <summary>Pending / preview TOC region used by BackupWindow</summary>
     PendingTOC,
+
     /// <summary>A backup set's data region.</summary>
     BackupSet,
+
     /// <summary>
     /// A pending / preview backup-set region used by BackupWindow (and reusable
     ///  by DeleteBackupSetsWindow for deletion previews). Behaves like a
@@ -20,6 +23,7 @@ public enum UsageSegmentKind
     ///  and label are supplied by the host (typically warning-level brushes).
     /// </summary>
     PendingBackupSet,
+    
     /// <summary>Unused / free space at the end of the media.</summary>
     Free,
 }

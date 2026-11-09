@@ -71,6 +71,15 @@ public enum TOCSource
 
     /// <summary>TOC recovered during media scan / repair.</summary>
     Recovered,
+
+    /// <summary>
+    /// The series TOC a multi-volume operation kept, while the drive holds another cartridge
+    ///  — not that volume's own TOC.
+    /// <para>
+    /// Read-only: writes refuse until the loaded volume's TOC is read (Reread Media).
+    /// </para>
+    /// </summary>
+    Series,
 }
 
 // ── TapeServiceBase ───────────────────────────────────────────────────────────
@@ -169,6 +178,12 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// <summary>Full path of the TOC file when <see cref="TOCIsFrom"/> is <see cref="TOCSource.File"/>;
     ///  <see langword="null"/> otherwise.</summary>
     public string? TOCFilePath { get; protected set; }
+
+    /// <summary>
+    /// Whether a service operation holds the TOC right now.
+    ///  Lock-free; a host's UI must not read the TOC while it is true.
+    /// </summary>
+    public bool IsOperationRunning => _operationLock.CurrentCount == 0;
 
     /// <summary>
     /// The running <see cref="TapeAgentBase"/> during an active operation; null otherwise.
@@ -481,6 +496,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 _agent?.Dispose();
                 _agent = null;
+                ClearKeys();
                 _toc = null;
                 _drive?.Dispose();
 
@@ -551,6 +567,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 }
 
                 LogOk("Media loaded successfully");
+                ClearKeys();
                 LogMediaInfo();
 
                 RefreshLoadedHeader();     // §10.2 — cheap BOM probe so identity is known at load (UI + later ops)
@@ -705,6 +722,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 _agent?.Dispose();
                 _agent = null;
+                ClearKeys();
                 _toc = null;
                 _drive?.Dispose();
 
@@ -773,6 +791,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 _agent?.Dispose();
                 _agent = null;
+                ClearKeys();
                 _toc = null;
                 _drive?.Dispose();
 
@@ -901,6 +920,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         {
             _agent?.Dispose();
             _agent = null;
+            ClearKeys();
             _toc = null;
             TOCIsFrom = TOCSource.Media;
             TOCFilePath = null;
@@ -924,6 +944,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             bool wasOpen = _drive?.IsDriveOpen ?? false;
             _agent?.Dispose();
             _agent = null;
+            ClearKeys();
             _toc = null;
             _drive?.Dispose();
             _drive = null;
@@ -944,6 +965,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         _disposed = true;
 
         _agent?.Dispose();
+        _keyRing.Dispose();
         _drive?.Dispose();
 
         // Best-effort synchronous cleanup of the persistent remote connection (defined in TapeServiceBase.Remote.cs).
@@ -1028,9 +1050,10 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
         {
             int setIndex = _toc.SetIndexToAlt(alt);
             var setTOC = _toc[setIndex];
-            LogInfoSub($"Set #{setIndex} | {alt}: {setTOC.Description} - {setTOC.Count} files" +
-                (setTOC.Incremental ? " [Incremental]" : "") +
-                (setTOC.DataFormat == TapeDataFormat.Legacy ? " [Legacy]" : ""));
+            LogInfoSub($"Set #{setIndex} | {alt}: {setTOC.DisplayName} - {setTOC.DisplayCount} files" +
+                (!setTOC.IsLocked && setTOC.Incremental ? " [Incremental]" : string.Empty) +
+                (setTOC.IsEncrypted ? " [Encrypted]" : string.Empty) +
+                (setTOC.DataFormat == TapeDataFormat.Legacy ? " [Legacy]" : string.Empty));
         }
     }
 
@@ -1066,6 +1089,17 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     /// Default is a no-op; WPF subclass adds a sub-entry warning about disabled features.
     /// </summary>
     protected virtual void OnImportTOCExtra() { }
+
+    /// <summary>A write that would put the held series TOC onto the loaded cartridge —
+    ///  refused (<see cref="TOCSource.Series"/>).</summary>
+    protected bool RefuseOnSeriesToc(string what)
+    {
+        if (TOCIsFrom != TOCSource.Series)
+            return false;
+        LastError = $"Cannot {what}: the table of contents shown is the series' — reread the loaded volume's own first";
+        LogErr(LastError);
+        return true;
+    }
 
     /// <summary>
     /// Signals the in-progress TOC load to abort cooperatively.
@@ -1126,7 +1160,10 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                     return false;
                 }
 
+                ClearKeys();
                 _toc = _agent.TOC;
+                ReapplyKeys();      // retained keys reopen their chains (Design-Encryption §11.1.7)
+
                 TOCIsFrom = TOCSource.Media;
                 TOCFilePath = null;
                 LogOk($"TOC restored with {_toc.Count} backup set(s)");
@@ -1211,6 +1248,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 {
                     case TapeCalibrationHeader:
                         // No TOC on a calibration cartridge — never seek to EOD. Report it and stop.
+                        ClearKeys();
                         _toc = null;
                         // Log just two lines isntead if full LogCalibrationInfo() -- done either by service.list or by main window display
                         LogInfo($"Calibration cartridge — no backup TOC");
@@ -1230,6 +1268,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                         if (choice == MediaMismatchChoice.Abort)
                         {
+                            ClearKeys();
                             _toc = null;
                             LogInfo("Unidentified media — TOC search skipped");
                             OnStatusUpdate("Unidentified media");
@@ -1268,7 +1307,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                     return IdentifyMediaOutcome.Failed;
                 }
 
+                ClearKeys();
                 _toc = _agent.TOC;
+                ReapplyKeys();      // retained keys reopen their chains (Design-Encryption §11.1.7)
                 TOCIsFrom = TOCSource.Media;
                 TOCFilePath = null;
 
@@ -1331,7 +1372,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                     return false;
                 }
 
+                ClearKeys();
                 _toc = _agent.TOC;
+                // no need to ReapplyKeys() to the initial TOC
                 TOCIsFrom = TOCSource.Media;
                 TOCFilePath = null;
                 LogOk($"Initial TOC created: {description}");
@@ -1559,6 +1602,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
                 _agent?.Dispose();
                 _agent = null;
+                ClearKeys();
                 _toc = null;
                 TOCIsFrom = TOCSource.Media;
                 TOCFilePath = null;
@@ -1591,7 +1635,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                     return false;
                 }
 
+                // ClearKeys(); already done above
                 _toc = _agent.TOC;
+                // no need to ReapplyKeys() to the newly created TOC
 
                 if (!_drive.ReloadMedia())
                 {
@@ -1631,8 +1677,10 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
     /// <summary>
     /// Imports a TOC from a file
-    /// Use when the on-tape TOC is missing or corrupt and a TOC file is available.
-    /// Only requires the drive to be open (media need not be loaded).
+    ///  Use when the on-tape TOC is missing or corrupt and a TOC file is available.
+    /// <para>
+    /// The media must be loaded, since the agent will need to create a navigator -- only possible with media.
+    /// </para>
     /// </summary>
     public Task<bool> ImportTOCFromFileAsync(string filePath)
     {
@@ -1658,7 +1706,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                     return false;
                 }
 
+                ClearKeys();
                 _toc = _agent.TOC;
+                ReapplyKeys();      // retained keys reopen their chains (Design-Encryption §11.1.7)
 
                 // Now compare the media header with the loaded _toc acc. to
                 //  verify-and-adopt-Volume-not-MediaId reconciliation (§10.8).
@@ -1765,6 +1815,9 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             return false;
         }
 
+        if (RefuseOnSeriesToc(what: "rename the media"))
+            return false;
+
         _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
         return await Task.Run(async () =>
         {
@@ -1786,6 +1839,7 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 }
 
                 LogOk($"Media renamed to: {newName}");
+                _host.OnServiceStateChanged(ServiceStateChange.TocChanged);
                 return true;
             }
             catch (Exception ex)
@@ -1817,87 +1871,13 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
             return false;
         }
 
+        if (RefuseOnSeriesToc(what: "rename the media")) return false;
+
         var newName = _host.OnAskMediaName(_toc.Description ?? string.Empty);
         if (newName is null || newName == _toc.Description)
             return false;
 
         return await RenameMediaAsync(newName);
-    }
-
-    /// <summary>
-    /// Renames a backup set by updating the set TOC description and writing the TOC
-    ///  back to tape using <see cref="SaveTocCore"/>. A legacy TOC is upgraded to 2.1
-    ///  by that write.
-    /// </summary>
-    public async Task<bool> RenameBackupSetAsync(int setIndex, string newName)
-    {
-        if (_toc is null || _drive is null)
-        {
-            LastError = "No media loaded";
-            return false;
-        }
-
-        _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
-        return await Task.Run(async () =>
-        {
-            await _operationLock.WaitAsync().ConfigureAwait(false);
-            try
-            {
-                var setTOC = _toc[setIndex];
-                LogInfo($"Renaming backup set #{setIndex} to: {newName}");
-                setTOC.Description = newName;
-
-                _agent?.Dispose();
-                _agent = new TapeAgentBase(_drive, _toc);
-                var tocResult = SaveTocCore(_agent);
-                ReportTocAnomalyOutcome(_agent);
-                if (!tocResult)
-                {
-                    LastError = tocResult.ErrorMessage;
-                    LogErr($"Failed to write TOC to media: {tocResult.ErrorMessage}");
-                    return false;
-                }
-
-                LogOk($"Backup set #{setIndex} renamed to: {newName}");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                LastError = ex.Message;
-                LogErr($"Exception renaming backup set: {ex.Message}");
-                return false;
-            }
-            finally
-            {
-                _agent?.Dispose();
-                _agent = null;
-                _operationLock.Release();
-                _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
-            }
-        });
-    }
-
-    /// <summary>
-    /// Asks the host for a new backup-set description
-    ///  <see cref="ITapeServiceHost.OnAskBackupSetName"/>, then renames the set if confirmed.
-    /// Returns <see langword="false"/> when the user cancelled or the rename failed.
-    /// </summary>
-    /// <param name="setIndex">Standard (1-based) index of the set to rename.</param>
-    public async Task<bool> RenameBackupSetAsync(int setIndex)
-    {
-        if (_toc is null)
-        {
-            LastError = "No media loaded";
-            return false;
-        }
-
-        var setTOC = _toc[setIndex];
-        int altIndex = _toc.SetIndexToAlt(setIndex);
-        var newName = _host.OnAskBackupSetName(setIndex, altIndex, setTOC.Description ?? string.Empty);
-        if (newName is null || newName == setTOC.Description)
-            return false;
-
-        return await RenameBackupSetAsync(setIndex, newName);
     }
 
     #endregion // TOC operations

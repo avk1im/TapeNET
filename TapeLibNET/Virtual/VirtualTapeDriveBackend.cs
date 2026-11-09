@@ -369,6 +369,9 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
     public override bool SupportsSetmarks => m_capabilities.SupportsSetmarks;
     public override bool SupportsSeqFilemarks => m_capabilities.SupportsSeqFilemarks;
 
+    /// <summary>True when the loaded content media records its mark profile (see <see cref="VirtualMarkSupport"/>).</summary>
+    public bool IsMarkProfileRecorded => m_contentMedia?.MarkSupport.IsRecorded() ?? false;
+
     /// <summary>The content partition media (for test diagnostics).</summary>
     internal VirtualTapeMedia? ContentMedia => m_contentMedia;
 
@@ -492,6 +495,7 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
             //  which may have been created with different limits than currently configured
             //  (e.g. a smaller MinBlockSize than the default capabilities provide).
             ReconcileBlockSizeCapabilities(m_contentMedia);
+            ReconcileMarkCapabilities(m_contentMedia);
         }
         else
         {
@@ -518,15 +522,16 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
                 metadataStream: m_contentMetadataStream,
                 ownsMetadataStream: false,
                 name: NameFromStream(m_contentStream),
-                loggerFactory: LoggerFactory);
+                loggerFactory: LoggerFactory,
+                markSupport: m_capabilities.ToMarkSupport());
 
             m_logger.LogTrace("{Prefix}: Created new content media (mode: {Mode})", LogPrefix, MediaMode);
         }
 
         // --- Initiator media ---
         // Note: SupportsInitiatorPartition means the drive CAN have an initiator partition,
-        // not that it MUST. If no initiator streams were provided, we simply don't create
-        // initiator media (HasInitiatorPartition will be false).
+        //  not that it MUST. If no initiator streams were provided, we simply don't create
+        //  initiator media (HasInitiatorPartition will be false).
 
         if (m_capabilities.SupportsInitiatorPartition && m_initiatorStream != null)
         {
@@ -590,7 +595,8 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
                     metadataStream: m_initiatorMetadataStream,
                     ownsMetadataStream: false,
                     name: NameFromStream(m_initiatorStream),
-                    loggerFactory: LoggerFactory);
+                    loggerFactory: LoggerFactory,
+                    markSupport: m_capabilities.ToMarkSupport());
 
                 m_logger.LogTrace("{Prefix}: Created new initiator media (mode: {Mode})", LogPrefix, MediaMode);
             }
@@ -626,10 +632,10 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
 
     /// <summary>
     /// Reconciles the drive's block-size capabilities with the block-size limits actually
-    /// enforced by loaded media state. Existing media may have been created with different
-    /// MinBlockSize/MaxBlockSize/DefaultBlockSize than the capabilities passed to this
-    /// backend at construction time, so the reported capabilities must reflect what the
-    /// loaded media will actually accept.
+    ///  enforced by loaded media state. Existing media may have been created with different
+    ///  MinBlockSize/MaxBlockSize/DefaultBlockSize than the capabilities passed to this
+    ///  backend at construction time, so the reported capabilities must reflect what the
+    ///  loaded media will actually accept.
     /// </summary>
     private void ReconcileBlockSizeCapabilities(VirtualTapeMedia media)
     {
@@ -651,8 +657,34 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
     }
 
     /// <summary>
+    /// Takes the mark profile from loaded media that records one: setmarks and sequential filemarks are properties of
+    ///  how the media was WRITTEN, so the media — not the opener's guess — decides how it is navigated. Media without a
+    ///  record keeps the opener's profile.
+    /// </summary>
+    private void ReconcileMarkCapabilities(VirtualTapeMedia media)
+    {
+        var reconciled = media.MarkSupport.ApplyTo(m_capabilities);
+        if (reconciled == m_capabilities)
+            return;
+
+        m_logger.LogTrace("{Prefix}: Mark profile from loaded media: {Profile}",
+            LogPrefix, media.MarkSupport.Describe());
+        m_capabilities = reconciled;
+    }
+
+    /// <summary>
+    /// Records the current profile on media that has none, at its first write: from that write on, its layout follows
+    ///  this profile. Reading never records.
+    /// </summary>
+    private void StampMarkSupport(VirtualTapeMedia media)
+    {
+        if (!media.MarkSupport.IsRecorded())
+            media.MarkSupport = m_capabilities.ToMarkSupport();
+    }
+
+    /// <summary>
     /// Truncates a stream to zero length (best effort).
-    /// Used when creating new media to discard any stale data from previous state.
+    ///  Used when creating new media to discard any stale data from previous state.
     /// </summary>
     private static void TruncateStream(Stream? stream)
     {
@@ -929,8 +961,12 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
             return false;
         }
 
-        // Reset content media
-        m_contentMedia?.Reset();
+        // A format lays the media out under the current profile: record it (Reset saves the state).
+        if (m_contentMedia != null)
+        {
+            m_contentMedia.MarkSupport = m_capabilities.ToMarkSupport();
+            m_contentMedia.Reset();
+        }
 
         // Handle initiator partition
         if (initiatorPartitionSize > 0 && m_capabilities.SupportsInitiatorPartition)
@@ -955,7 +991,8 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
                 metadataStream: m_initiatorMetadataStream,
                 ownsMetadataStream: false,
                 name: NameFromStream(m_initiatorStream),
-                loggerFactory: LoggerFactory);
+                loggerFactory: LoggerFactory,
+                markSupport: m_capabilities.ToMarkSupport());
 
 #if TEST_HOOKS
             ApplyFaultInjectorsToMedia();   // the fresh initiator medium needs its injectors too
@@ -1033,6 +1070,8 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
             SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
             return 0;
         }
+
+        StampMarkSupport(m_currentMedia);
 
         int bytesWritten = m_currentMedia.WriteBlocks(buffer, offset, count);
 
@@ -1274,6 +1313,8 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
             return false;
         }
 
+        StampMarkSupport(m_currentMedia);
+
         for (uint i = 0; i < count; i++)
         {
             if (!m_currentMedia.WriteMark(TapeMarkType.Filemark))
@@ -1303,6 +1344,8 @@ public partial class VirtualTapeDriveBackend : TapeDriveBackend
             SetError(WIN32_ERROR.ERROR_NO_MEDIA_IN_DRIVE);
             return false;
         }
+
+        StampMarkSupport(m_currentMedia);
 
         for (uint i = 0; i < count; i++)
         {

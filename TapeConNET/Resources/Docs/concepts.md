@@ -1,124 +1,158 @@
 # tapecon — Concepts
 
-`tapecon` is the .NET 8 command-line tape backup utility built on top of the
-`TapeLibNET` engine. It shares its core backup/restore engine
-(`TapeLibNET.Services.TapeServiceBase`) with the WPF GUI application
-**TapeWinNET**, so the two tools are functionally equivalent.
+tapecon is the .NET 8 command-line tape backup utility built on the TapeLibNET engine. It shares its backup and restore
+engine (TapeLibNET.Services) with the Windows application TapeWinNET: anything one writes, the other reads.
 
 ## Drives
 
-`tapecon` can talk to:
+tapecon can talk to:
 
-- **Physical Win32 tape drives** (`--drive N`, default `0`).
-- **File-backed virtual drives** (`--virtual PATH` plus optional
-  `--initiator PATH`).
-- **In-memory virtual drives** (`--in-memory`), useful for ad-hoc tests.
+- **Physical Win32 tape drives** — `--drive N`.
+- **File-backed virtual drives** — `--virtual PATH`, plus `--initiator PATH` for a separate TOC partition.
+- **In-memory virtual drives** — `--in-memory`, for ad-hoc tests.
 
-When no drive option is supplied, `tapecon` auto-opens **Win32 drive 0**.
+Without a drive option, tapecon opens **Win32 drive 0**. Size new virtual media with `--capacity` and `--init-capacity`.
 
-A virtual drive can be sized at format time with `--capacity` and
-`--init-capacity` (initiator partition for the TOC).
+## Media, backup sets and the table of contents (TOC)
 
-## Media and the table of contents (TOC)
+A formatted cartridge holds one or more **backup sets**. The **table of contents (TOC)** indexes them: each set's
+description, settings, and every file with its position on tape and its hash.
 
-A formatted tape (real or virtual) is the host of one or more
-**backup sets**. The on-tape **TOC** indexes every set: its description,
-file list, hash flags, and incremental-chain pointer.
+Every cartridge written by tapecon 2.x starts with a **media header** naming the cartridge (its media ID, volume number
+and name), and each set starts with a **set header**. tapecon checks them before it reads or writes: a wrong cartridge,
+or a set that is not the one the TOC expects, is reported — and a destructive write is refused (exit code 5) rather than
+risk the wrong data.
 
 Set indexes use a dual convention:
 
-- **Positive** values count up from the **oldest** set: `1`, `2`, …
-- **Zero** is the **latest** set; `-1` is the second-latest, and so on.
+- **Positive** values count up from the **oldest** set: 1, 2, …
+- **Zero** is the **latest** set; -1 the one before, and so on.
 
-Most CLI verbs accept this same convention (`restore 1`, `validate 0`,
-`rename-set -1 …`).
+## Where the TOC lives
+
+The TOC is written **twice** on every volume, so one damaged copy never loses it. Where depends on the drive:
+
+- **TOC partition** (`--initiator` for virtual drives; partition-capable drives): the TOC has its own partition, and
+  content may fill its partition to the very end.
+- **TOC in set** (all other drives): the TOC follows the content on the same partition. A backup therefore keeps room
+  free for it — the **TOC reserve**.
+
+### The TOC reserve and the TOC partition budget
+
+tapecon sizes the TOC's room **as the backup runs**: every file written adds its TOC entry, and the room grows with it.
+No fixed guess, so a backup of millions of small files cannot outgrow it, and a small backup does not waste space.
+
+- **TOC in set:** content stops early enough for both TOC copies to fit. At least 16 MiB is kept on LTO drives, 4 MiB
+  on others (less on very small media).
+- **TOC partition:** its size is fixed at format. When the next files' TOC entries would not fit it twice, the volume
+  ends early — "Volume #n ends early: its TOC partition is full" — and the backup continues on the next volume. Every
+  volume of a series holds the **whole series'** TOC, so continue on a cartridge formatted with a **larger** TOC
+  partition: one of the same size cannot take more files of that series, and the backup then ends with advice.
+
+`tapecon info` shows the current **TOC Reserve** and the space left for content (**Writable**).
+
+### When the TOC cannot be found where it should be
+
+Loading a TOC tries, in order: its usual place, the second copy, the position the series TOC records, a short search
+from a nearby landmark — and, only after asking, a **search of the whole medium**. Each deviation is reported, and the
+advice says what to do (for example: re-save the TOC so it is found directly again). Unattended runs search without
+asking, since a search only reads.
+
+## Multi-volume backups
+
+When a cartridge fills up, the backup asks for the next volume and continues there; the set spans volumes. Each volume
+carries its own media header and both TOC copies; the **last** volume's TOC describes the whole series.
+
+- **Restore** opens the last volume, then asks for each earlier volume it needs. A volume is identified by its media
+  header, its own TOC, or the first block of its set — and, as a last resort, by searching it whole. A volume nothing
+  identifies is rejected: insert it again (or another copy), skip it (its files are reported failed), or end.
+- **Ending a series early** (declining the next volume) leaves every volume written so far restorable. The backup then
+  reports as **failed**, naming how many files were not backed up.
+- `--no-multivolume` stops at the end of the first cartridge instead.
 
 ## Backup sets and incremental chains
 
-`tapecon backup` writes a single set, then updates the TOC. By default each
-new backup **replaces** all sets on the media; `--append` adds a new set
-after the existing ones, and `--append-after N` replaces everything after
-set `N`.
+`tapecon backup` writes one set, then the TOC. By default a new backup **replaces** all sets; `--append` adds a set
+after them, `--append-after N` replaces everything after set N.
 
-`--incremental` makes the new set a **delta** referencing the previous full
-set in the chain: only files newer than their previously-backed-up copy are
-written. Restoring an incremental set with the default `--incremental`
-behaviour rolls the chain back together so you receive the latest version
-of every file.
+`--incremental` writes only files changed since the previous set. Restoring an incremental set (default) rolls the
+chain together, so you receive the latest version of every file.
 
-## File selection — paths, wildcards, and FCL
+## Encryption
 
-Every verb that selects files (backup, restore, validate, verify, list)
-accepts the same shapes for its positional arguments and `--filter` /
-`--filter-file` options:
+`tapecon backup --encrypt` encrypts the new set with AES-256-GCM — its files **and** its TOC entry (names, sizes, times,
+file count). Only what navigation needs stays visible: that the set exists, where it is, and how large it is.
 
-1. A **path to an existing `.fcl` file** is loaded as an
-   FCL (File Conditions Language) expression.
-2. A string starting with an **FCL keyword** (`name`, `path`, `size`, `date`,
-   `attr`, `extension`, `(` …) is treated as **inline FCL**.
-3. An **existing file or folder path** is taken literally (recurse with
-   `--subdirs`).
-4. Otherwise the argument is treated as a **DOS wildcard pattern**
-   (e.g. `*.docx`).
+- **The password** comes from `--password-file FILE` (UTF-8, one trailing line break ignored) or
+  `--password-env VARIABLE`; otherwise it is asked, masked. A password on the command line (`--password`) is refused:
+  it would be visible in the shell history and the process list.
+- **Locked sets.** Without the password, an encrypted set is listed as `[Locked]` with its size — nothing else. It can
+  still be deleted or overwritten, and every other set stays fully usable. Restore, validate, verify and the file list
+  ask for the password; a set that stays locked is skipped (exit code 6).
+- **Incremental chains** stay in one encryption: an incremental on an encrypted set is encrypted with the same key, and
+  needs that set's password. A plain incremental on an encrypted set (or the reverse) is refused.
+- **Changing the password:** `tapecon rename-set N --change-password` (asked twice), or `--new-password-file` /
+  `--new-password-env`. Older TOC exports and other volumes' TOC copies keep the old password.
+- **Software encryption rules out hardware compression** — encrypted data does not compress. Use software compression
+  (`--compression low|medium|high`). Drive encryption (`--encryption hardware` or `drive`) is not supported yet.
+- **A lost password cannot be recovered.** And since an encrypted set's files are only findable through the TOC,
+  keep an exported TOC (`tapecon toc export`) of important cartridges.
 
-`--filter` (inline FCL) and `--filter-file` (load from disk) are explicit
-forms; bare positional arguments are auto-classified the same way.
+## File selection — paths, wildcards and FCL
 
-For backup, recognized **paths/patterns** become the **sources** to scan,
-while **FCL fragments** become the **selection filter** applied to the scan
-results. This lets you write things like:
+Every verb that selects files (backup, restore, validate, verify, list) accepts the same positional arguments and
+`--filter` / `--filter-file` options:
 
-```
-tapecon backup C:\MyDocs --hash xxhash3 --description "Daily docs"
-tapecon backup C:\MyDocs name matches "*.docx" or extension == ".pdf"
-tapecon backup --filter-file .\nightly.fcl --incremental
-```
+- A **path to an existing .fcl file** is loaded as an FCL (File Conditions Language) expression.
+- A string starting with an **FCL keyword** (name, path, size, date, attr, extension, `(` …) is **inline FCL**.
+- An **existing file or folder** is taken literally (recurse with `--subdirs`).
+- Anything else is a **DOS wildcard pattern** (e.g. `*.docx`).
 
-## Hashes
+For backup, paths and patterns are the **sources**; FCL fragments are the **selection filter**:
 
-`--hash` selects a per-file integrity hash recorded in the TOC. Choices:
-`None`, `Crc32` (default), `Crc64`, `XxHash32`, `XxHash3`, `XxHash64`,
-`XxHash128`. `validate` re-reads the tape and recomputes the hash; `verify`
-compares the on-tape file with the on-disk file byte-by-byte.
+    tapecon backup C:\MyDocs --hash xxhash3 --description "Daily docs"
+    tapecon backup C:\MyDocs name matches "*.docx" or extension == ".pdf"
+    tapecon backup --filter-file .\nightly.fcl --incremental
 
-## Exit codes
+## Hashes and compression
 
-Every verb returns one of:
+`--hash` selects the per-file integrity hash: None, Crc32 (default), Crc64, XxHash32, XxHash3, XxHash64, XxHash128.
+`validate` re-reads the tape and checks it; `verify` compares the tape with the files on disk, byte by byte.
 
-| Code | Name | Meaning |
-|------|------|---------|
-| 0    | `Ok`            | All operations succeeded. |
-| 1    | `UsageError`    | Bad/missing arguments — printed to stderr. |
-| 2    | `Cancelled`     | User cancelled or `Ctrl+C`. |
-| 3    | `OperationFailed` | Operation completed with file-level failures. |
-| 4    | `DriveNotFound` | Drive could not be opened. |
-| 5    | `MediaError`    | Media unloaded, format error, or unrecoverable I/O. |
-| 6    | `FatalError`    | Unhandled exception. |
+`--compression` selects off/none, hardware (or drive), low, medium (default), high, or a ZSTD level 1-19.
 
 ## Scan Media and TOC recovery
 
-`tapecon scan-media` reads the loaded media from start to end **without
-relying on its TOC** and reports everything it can identify: the media header,
-backup sets, table-of-contents copies and unrecognized data. It is read-only.
-By default it also recovers every TOC copy it finds; `--no-recover-toc` turns
-that off, `--export DIR` saves the scan map as a `.tapescan` file, and `--json`
-prints the map to stdout.
+`tapecon scan-media` reads the cartridge — every partition — from start to end **without relying on its TOC** and
+reports what it identifies: the media header, backup sets, TOC copies, damaged and unidentified data. It is read-only,
+and needs no password: encrypted sets are counted and named "(encrypted)", never revealed.
 
-`tapecon recover-toc --map FILE --fragment N` recovers the TOC from one TOC-copy
-fragment of a saved map. Add `--save FILE` to write it to a file and/or
-`--adopt` to use it for the session (like `toc import`). If the loaded cartridge
-is not the one that was scanned, recovery is refused with exit code 5.
+By default it also recovers every TOC copy it finds; `--no-recover-toc` turns that off, `--export DIR` saves the map
+as a `.tapescan` file, `--json` prints it.
+
+`tapecon recover-toc --map FILE --fragment N` recovers the TOC from one copy in a saved map; `--save FILE` writes it to a
+file, `--adopt` uses it for the session (like `toc import`). If the loaded cartridge is not the scanned one, recovery
+is refused.
+
+## Exit codes
+
+| Code | Name | Meaning |
+|---|---|---|
+| 0 | Ok | Everything succeeded. |
+| 1 | FatalError | An unexpected error. |
+| 2 | UsageError | Bad or missing arguments. |
+| 3 | OperationFailed | The operation failed, or completed with failed files. |
+| 4 | Cancelled | Cancelled by the user (Ctrl+C, or a declined prompt). |
+| 5 | WriteRefused | A destructive write was refused: the set on tape is not the expected one. The tape is unchanged. |
+| 6 | PasswordRequired | Encrypted sets stayed locked (no or wrong password), or an encrypted backup had no password. |
 
 ## Cancellation
 
-`Ctrl+C` is intercepted. The first press requests **cooperative cancellation**
-of the current operation (the file-in-flight finishes, the agent unwinds,
-the TOC is preserved); a second press performs a hard abort.
+Ctrl+C requests **cooperative cancellation**: the file in flight finishes, the TOC is preserved. A second press aborts
+hard.
 
 ## See also
 
-- `tapecon docs migration` — moving from `tapecon 1.x` to 2.0.
 - `tapecon docs faq` — common questions and troubleshooting.
-- `tapecon <verb> --help` — verb-specific options.
-- `docs/cli-reference.md` — auto-generated full reference.
-- `docs/TapeConNET-2.0-Architecture.md` — internal architecture.
+- `tapecon docs migration` — moving from tapecon 1.x.
+- `tapecon <verb> --help` — every option of a verb.

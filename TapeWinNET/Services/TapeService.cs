@@ -48,6 +48,11 @@ public partial class TapeService : TapeServiceBase
         //  InsertVirtualMedia and query drive capabilities without a circular
         //  type dependency. Safe: base ctor has completed before this runs.
         ((WpfServiceHost)_host).ServiceRef = this;
+
+        // Keys outlive a cartridge change for the session: the same cartridge reinserted,
+        //  or another volume of the series, opens without a prompt; Media ▸ Forget Passwords
+        //  drops them (Design-Encryption §11.1.7).
+        RetainKeysAcrossMedia = true;
     }
 
 

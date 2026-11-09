@@ -99,6 +99,7 @@ public abstract class ServiceTestBase : IDisposable
             if (!_promptChecked.Contains(host))
             {
                 Assert.Empty(host.MediaMismatchPrompts);   // happy-path hosts: provably silent
+                Assert.Empty(host.PasswordPrompts);
                 Assert.Empty(host.SetAnomalyPrompts);
                 Assert.Empty(host.VolumeErrorPrompts);
             }

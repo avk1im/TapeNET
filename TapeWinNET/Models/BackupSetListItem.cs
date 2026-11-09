@@ -1,55 +1,50 @@
-﻿using System.ComponentModel;
-using System.Windows.Media.Imaging;
+using System.ComponentModel;
+using System.Windows.Media;
 using TapeLibNET.Compression;
 using TapeLibNET.Toc;
 using Windows.Win32.System.SystemServices; // for Helpers
 
 namespace TapeWinNET.Models;
 
-
 /// <summary>
 /// Represents a backup set item for display in the backup sets ListView.
 ///  Filter and checked counts are externally managed and pushed in via
 ///  <see cref="FilteredFileCount"/> and <see cref="CheckedFileCount"/>.
 /// </summary>
-public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bool isOnCurrentVolume)
+/// <remarks>
+/// <b>Locked sets (Design-Encryption §11.1.1, §11.1.9).</b> An encrypted set without its key answers only its stub; every
+///  other member of <see cref="TapeSetTOC"/> throws. Each property here therefore asks <see cref="IsLocked"/> first and
+///  shows <see cref="TapeSetTOC.DisplayName"/>, a dash or zero instead — WPF evaluates every bound column, so one
+///  unguarded getter would take the whole list down. The set can unlock (or lock again) while the item lives:
+///  <see cref="Refresh"/> re-reads everything.
+/// </remarks>
+public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bool isOnCurrentVolume,
+    bool continuesOnNextVolume = false)
     : INotifyPropertyChanged
 {
-    private static BitmapSource? _backupSetIcon;
-    private static bool _iconLoaded;
+    private const string Dash = "\u2014";
 
     private readonly TapeSetTOC _setTOC = setTOC;
     private readonly int _setIndex = setIndex;
     private readonly int _altIndex = altIndex;
     private readonly bool _isOnCurrentVolume = isOnCurrentVolume;
+    private readonly bool _continuesOnNextVolume = continuesOnNextVolume;
 
-    static BackupSetListItem()
-    {
-        LoadIcon();
-    }
+    /// <summary>The icon by state: encryption, incremental, and the volume boundaries it crosses (§11.1.1).</summary>
+    public ImageSource? Icon => TapeIcons.GetBackupSetIcon(new BackupSetIconState(
+        Lock: !_setTOC.IsEncrypted ? SetLockState.None : _setTOC.IsLocked ? SetLockState.Locked : SetLockState.Unlocked,
+        Incremental: IsIncremental,
+        ContinuedFromPrevVolume: _setTOC.ContinuedFromPrevVolume,
+        ContinuesOnNextVolume: _continuesOnNextVolume));
 
-    private static void LoadIcon()
-    {
-        if (_iconLoaded)
-            return;
+    /// <summary>The set continues on the next volume.</summary>
+    public bool ContinuesOnNextVolume => _continuesOnNextVolume;
 
-        try
-        {
-            _backupSetIcon = TapeIcons.GetBackupSetIcon(large: false);
-            _backupSetIcon?.Freeze();
-        }
-        catch
-        {
-            // If icon loading fails, we'll just have no icon
-        }
+    /// <summary>Encrypted and without its key: only the stub is known.</summary>
+    public bool IsLocked => _setTOC.IsLocked;
 
-        _iconLoaded = true;
-    }
-
-    /// <summary>
-    /// Gets the icon for backup set items.
-    /// </summary>
-    public static BitmapSource? Icon => _backupSetIcon;
+    /// <summary>Encrypted, locked or not.</summary>
+    public bool IsEncrypted => _setTOC.IsEncrypted;
 
     /// <summary>
     /// Whether this backup set resides on the currently loaded volume.
@@ -57,30 +52,28 @@ public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bo
     /// </summary>
     public bool IsOnCurrentVolume => _isOnCurrentVolume;
 
-    /// <summary>
-    /// Standard set index (1-based, from oldest to newest)
-    /// </summary>
+    /// <summary>Standard set index (1-based, from oldest to newest)</summary>
     public int SetIndex => _setIndex;
 
-    /// <summary>
-    /// Alternative index (0 = latest, negative = older)
-    /// </summary>
+    /// <summary>Alternative index (0 = latest, negative = older)</summary>
     public int AltIndex => _altIndex;
 
-    /// <summary>
-    /// Display format: "1 | -2" for set 1 of 3
-    /// </summary>
+    /// <summary>Display format: "1 | -2" for set 1 of 3</summary>
     public string IndexDisplay => $"#{SetIndex} | {AltIndex}";
 
-    public string Description => _setTOC.Description ?? "(unnamed)";
+    /// <summary>The set's description, or the padlock placeholder while locked.</summary>
+    public string Description => IsLocked ? $"\U0001F512 {_setTOC.DisplayName}"
+        : string.IsNullOrEmpty(_setTOC.Description) ? "(unnamed)" : _setTOC.Description;
 
-    public int FileCount => _setTOC.Count;
+    /// <summary>File count; 0 while locked (the count is hidden — see <see cref="FileCountFormatted"/>).</summary>
+    public int FileCount => IsLocked ? 0 : _setTOC.Count;
+
+    private int? _filteredFileCount;
 
     /// <summary>
     /// Number of files after filtering, or <c>null</c> when no filter narrows results.
     ///  Set externally (e.g. by <c>RestoreViewModel</c>) after async filter computation.
     /// </summary>
-    private int? _filteredFileCount;
     public int? FilteredFileCount
     {
         get => _filteredFileCount;
@@ -89,25 +82,22 @@ public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bo
             if (_filteredFileCount != value)
             {
                 _filteredFileCount = value;
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FilteredFileCount)));
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FilteredFileCountFormatted)));
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(FileCountFormatted)));
+                Notify(nameof(FilteredFileCount));
+                Notify(nameof(FilteredFileCountFormatted));
+                Notify(nameof(FileCountFormatted));
             }
         }
     }
 
-    /// <summary>
-    /// Display format for the "Filtered" column: filtered count or "--" when no filter is active.
-    /// </summary>
-    public string FilteredFileCountFormatted => _filteredFileCount is int count
-        ? count.ToString("N0") : "\u2014";
+    /// <summary>Display format for the "Filtered" column: filtered count or "—" when no filter is active.</summary>
+    public string FilteredFileCountFormatted => _filteredFileCount is int count ? count.ToString("N0") : Dash;
+
+    private int? _checkedFileCount;
 
     /// <summary>
     /// Number of checked (selected) files, or <c>null</c> when nothing is checked.
-    ///  Set externally (e.g. by <c>MainViewModel.ToggleBackupSetChecked</c>)
-    ///  after checked-state changes.
+    ///  Set externally (e.g. by <c>MainViewModel.ToggleBackupSetChecked</c>) after checked-state changes.
     /// </summary>
-    private int? _checkedFileCount;
     public int? CheckedFileCount
     {
         get => _checkedFileCount;
@@ -116,76 +106,74 @@ public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bo
             if (_checkedFileCount != value)
             {
                 _checkedFileCount = value;
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CheckedFileCount)));
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SelectedFileCountFormatted)));
+                Notify(nameof(CheckedFileCount));
+                Notify(nameof(SelectedFileCountFormatted));
             }
         }
     }
 
-    /// <summary>
-    /// Display format for the "Selected" column: checked count or "--" when nothing is checked.
-    /// </summary>
-    public string SelectedFileCountFormatted => _checkedFileCount is int count and > 0
-        ? count.ToString("N0") : "\u2014";
+    /// <summary>Display format for the "Selected" column: checked count or "—" when nothing is checked.</summary>
+    public string SelectedFileCountFormatted => _checkedFileCount is int count and > 0 ? count.ToString("N0") : Dash;
+
+    /// <summary>Display format: plain count, "total → filtered" when a filter narrows results, "—" while locked.</summary>
+    public string FileCountFormatted => IsLocked ? Dash
+        : _filteredFileCount is int filtered && filtered != _setTOC.Count
+            ? $"{_setTOC.Count:N0} \u2192 {filtered:N0}"
+            : _setTOC.Count.ToString("N0");
 
     /// <summary>
-    /// Display format: plain count or "total → filtered" when a filter narrows results.
+    /// Bytes of the checked files of a PARTIALLY checked set; <see langword="null"/> when all or none are checked
+    ///  (then <see cref="TotalSize"/> or nothing applies). Set by <see cref="TOCView.BuildBackupSetItemList"/>.
     /// </summary>
-    public string FileCountFormatted => _filteredFileCount is int filtered && filtered != _setTOC.Count
-        ? $"{_setTOC.Count:N0} \u2192 {filtered:N0}" /* right arrow */
-        : _setTOC.Count.ToString("N0");
+    public long? CheckedBytes { get; set; }
 
-    public DateTime CreatedOn => _setTOC.CreationTime.ToLocalTime();
+    /// <summary>Creation time (local); <see cref="DateTime.MinValue"/> while locked.</summary>
+    public DateTime CreatedOn => IsLocked ? DateTime.MinValue : _setTOC.CreationTime.ToLocalTime();
 
-    public string CreatedOnFormatted => _setTOC.CreationTime.ToLocalTime().ToString("G");
+    public string CreatedOnFormatted => IsLocked ? Dash : _setTOC.CreationTime.ToLocalTime().ToString("G");
 
-    public bool IsIncremental => _setTOC.Incremental;
+    /// <summary>Whether the set is incremental; <see langword="false"/> while locked (unknown).</summary>
+    public bool IsIncremental => !IsLocked && _setTOC.Incremental;
 
-    public string IncrementalDisplay => _setTOC.Incremental ? "Yes" : "No";
+    public string IncrementalDisplay => IsLocked ? Dash : _setTOC.Incremental ? "Yes" : "No";
 
-    public string BlockSize => Helpers.BytesToString(_setTOC.BlockSize);
+    public string BlockSize => IsLocked ? Dash : Helpers.BytesToString(_setTOC.BlockSize);
 
-    public string HashAlgorithm => _setTOC.HashAlgorithm.ToString();
+    public string HashAlgorithm => IsLocked ? Dash : _setTOC.HashAlgorithm.ToString();
 
     /// <summary>Human-readable compression mode and level for this set.</summary>
-    public string Compression =>
-        CompressionPreset.DisplayName(_setTOC.Compression, _setTOC.CompressionLevel);
+    public string Compression => IsLocked ? Dash
+        : CompressionPreset.DisplayName(_setTOC.Compression, _setTOC.CompressionLevel);
 
     public int Volume => _setTOC.Volume;
 
     public bool ContinuedFromPrevVolume => _setTOC.ContinuedFromPrevVolume;
 
-    /// <summary>
-    /// Total logical file size for this backup set (sum of all file lengths).
-    /// </summary>
-    public long TotalSize => _setTOC.Sum(tfi => tfi.FileDescr.Length);
+    /// <summary>Total logical file size (sum of all file lengths); 0 while locked (hidden).</summary>
+    public long TotalSize => IsLocked ? 0L : _setTOC.TotalFileSize;
+
+    /// <summary>Total logical file size, formatted; "—" while locked.</summary>
+    public string TotalSizeFormatted => IsLocked ? Dash : Helpers.BytesToString(TotalSize);
 
     /// <summary>
-    /// Total logical file size for this backup set, formatted.
+    /// Total size occupied on tape — known from the stub even while locked.
     /// </summary>
-    public string TotalSizeFormatted => Helpers.BytesToString(TotalSize);
+    public long SizeOnTape => _setTOC.ComputeTotalFileSizeOnTape(IsLocked ? 0u : _setTOC.BlockSize);
 
-    /// <summary>
-    /// Total size occupied on tape (accounting for block alignment and compression).
-    /// </summary>
-    public long SizeOnTape => _setTOC.ComputeTotalFileSizeOnTape(_setTOC.BlockSize);
-
-    /// <summary>
-    /// Total size occupied on tape for this backup set, formatted.
-    /// </summary>
+    /// <summary>Total size occupied on tape, formatted.</summary>
     public string SizeOnTapeFormatted => Helpers.BytesToString(SizeOnTape);
 
     public TapeSetTOC SetTOC => _setTOC;
+
+    private bool? _isCheckedForRestore = false;
 
     /// <summary>
     /// Whether this backup set is checked for restore/validate/verify operations.
     /// Tri-state: <see langword="true"/> = all files checked, <see langword="false"/> = unchecked,
     ///  <c>null</c> = partially checked (some files selected). Sets that have never
     ///  been navigated to can only be <see langword="false"/> or <see langword="true"/>; the indeterminate
-    ///  state arises only when a <see cref="BackupSetView"/> with partial file
-    ///  selection exists.
+    ///  state arises only when a <see cref="BackupSetView"/> with partial file selection exists.
     /// </summary>
-    private bool? _isCheckedForRestore = false;
     public bool? IsCheckedForRestore
     {
         get => _isCheckedForRestore;
@@ -194,18 +182,21 @@ public class BackupSetListItem(TapeSetTOC setTOC, int setIndex, int altIndex, bo
             if (_isCheckedForRestore != value)
             {
                 _isCheckedForRestore = value;
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsCheckedForRestore)));
+                Notify(nameof(IsCheckedForRestore));
             }
         }
     }
 
     /// <summary>
     /// Whether this item has a partial file selection (some but not all files checked).
-    ///  Derived from <see cref="CheckedFileCount"/> vs <see cref="FileCount"/>.
-    ///  Used in RestoreWindow to enable 3-state checkbox cycling so the user can
-    ///  toggle between all files, no files, and the original partial selection.
+    ///  Never for a locked set: its files are unknown.
     /// </summary>
-    public bool HasPartialSelection => _checkedFileCount is > 0 and var c && c < FileCount;
+    public bool HasPartialSelection => !IsLocked && _checkedFileCount is > 0 and var c && c < FileCount;
+
+    /// <summary>The set was unlocked or locked: re-read every property.</summary>
+    public void Refresh() => Notify(string.Empty);
+
+    private void Notify(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 
     public event PropertyChangedEventHandler? PropertyChanged;
 }

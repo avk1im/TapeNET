@@ -58,6 +58,7 @@ public static class RootCommandFactory
         //  Lifecycle verbs (drive/media/TOC):
         root.Subcommands.Add(InfoCommand.Create(ux));
         root.Subcommands.Add(FormatCommand.Create(ux));
+        root.Subcommands.Add(CreateVirtualCommand.Create(ux));
         root.Subcommands.Add(EjectCommand.Create(ux));
         root.Subcommands.Add(TocCommand.Create(ux));
         //  Operation verbs:

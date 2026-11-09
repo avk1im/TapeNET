@@ -6,7 +6,6 @@ using Windows.Win32.System.SystemServices; // for Helpers
 
 namespace TapeWinNET.ViewModels;
 
-
 /// <summary>
 /// Abstract base that encapsulates the shared "Create new virtual media" configuration surface:
 /// preset, block sizes, capacity (content + optional initiator partition), setmark features,
@@ -14,6 +13,11 @@ namespace TapeWinNET.ViewModels;
 /// <para>
 /// Used by both <see cref="OpenVirtualDriveViewModel"/> (local) and
 ///  <see cref="OpenRemoteVirtualDriveViewModel"/> (remote).
+/// </para>
+/// <para>
+/// Preset ↔ features: selecting a preset applies its drive capabilities at once (marks, initiator partition, block
+///  sizes — not the capacities the user may have typed); changing a feature by hand moves the preset selection to the
+///  preset that matches, if any. Derived classes gate the former through <see cref="CanApplyPreset"/>.
 /// </para>
 /// </summary>
 public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
@@ -34,8 +38,10 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
     protected bool _supportsSeqFilemarks;
 
     protected PresetOption _selectedPreset = PresetOption.All[1]; // WithSetmarks
-
     protected string _mediaName = $"Virtual media created {DateTime.Now:yyyy-MM-dd HH:mm}";
+
+    // True while ApplyPreset writes the fields: suppresses the feature → preset back-sync.
+    private bool _applyingPreset;
 
     // End-of-media emulation: the EW zone plus the two INDEPENDENT over-report anchors
     //  (see docs/Design-RemainingAndEw.md §5.1).
@@ -51,7 +57,7 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
 
     // ── Commands ──────────────────────────────────────────────────────────────
 
-    /// <summary>Applies the selected preset to all configuration fields.</summary>
+    /// <summary>Applies the selected preset to all configuration fields, capacities included.</summary>
     public ICommand ApplyPresetCommand { get; }
 
     protected VirtualDriveConfigViewModelBase()
@@ -63,11 +69,25 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
 
     public ObservableCollection<PresetOption> Presets { get; } = new(PresetOption.All);
 
+    /// <summary>
+    /// The selected preset. Selecting one applies its capabilities right away (when <see cref="CanApplyPreset"/>);
+    ///  before, the selection changed nothing until the Apply button — so the features kept their old values.
+    /// </summary>
     public PresetOption SelectedPreset
     {
         get => _selectedPreset;
-        set => SetProperty(ref _selectedPreset, value);
+        set
+        {
+            if (SetProperty(ref _selectedPreset, value) && !_applyingPreset && CanApplyPreset)
+                ApplyPreset(includeCapacity: false);
+        }
     }
+
+    /// <summary>
+    /// Whether a preset selection may write the capability fields. False when they are read-only — open-existing
+    ///  mode, or capabilities locked to the current drive for a volume swap.
+    /// </summary>
+    protected virtual bool CanApplyPreset => true;
 
     // ── Block Sizes ───────────────────────────────────────────────────────────
 
@@ -78,6 +98,7 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
         get => _minBlockSize;
         set
         {
+            EnsureListed(value);
             if (SetProperty(ref _minBlockSize, value))
             {
                 // Auto-adjust: ensure min <= default <= max
@@ -92,6 +113,7 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
         get => _defaultBlockSize;
         set
         {
+            EnsureListed(value);
             if (SetProperty(ref _defaultBlockSize, value))
             {
                 if (MinBlockSize.Bytes > value.Bytes) MinBlockSize = value;
@@ -105,12 +127,27 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
         get => _maxBlockSize;
         set
         {
+            EnsureListed(value);
             if (SetProperty(ref _maxBlockSize, value))
             {
                 if (DefaultBlockSize.Bytes > value.Bytes) DefaultBlockSize = value;
                 if (MinBlockSize.Bytes > value.Bytes)     MinBlockSize     = value;
             }
         }
+    }
+
+    /// <summary>
+    /// Adds a block size outside the standard list (e.g. 1 B of the LTO preset, or any size created by the CLI) to
+    ///  <see cref="BlockSizeOptions"/>, in order, so the ComboBox can show it instead of an empty selection.
+    /// </summary>
+    private void EnsureListed(BlockSizeOption option)
+    {
+        if (BlockSizeOptions.Any(o => o.Bytes == option.Bytes))
+            return;
+        int index = 0;
+        while (index < BlockSizeOptions.Count && BlockSizeOptions[index].Bytes < option.Bytes)
+            index++;
+        BlockSizeOptions.Insert(index, option);
     }
 
     // ── Capacity ──────────────────────────────────────────────────────────────
@@ -306,7 +343,9 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
     public long OverreportBytes => _overreportUnit.ToBytes(_overreportValue, ContentCapacityBytes);
 
     public string EwZoneBytesDisplay => FormatEwBytes(EwZoneUnit, EwZoneBytes);
+
     public string PhantomFreeBytesDisplay => FormatEwBytes(PhantomFreeUnit, PhantomFreeBytes);
+
     public string OverreportBytesDisplay => FormatEwBytes(OverreportUnit, OverreportBytes);
 
     /// <summary>Shared "= 31.2 GB" / "= 33,554,432 bytes" hint shown beside each EW input.</summary>
@@ -358,6 +397,7 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
             {
                 OnPropertyChanged(nameof(IsInitiatorCapacityEnabled));
                 OnPropertyChanged(nameof(CanExecute));
+                SyncPresetToFeatures();
             }
         }
     }
@@ -374,13 +414,41 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
     public bool SupportsSetmarks
     {
         get => _supportsSetmarks;
-        set => SetProperty(ref _supportsSetmarks, value);
+        set
+        {
+            if (SetProperty(ref _supportsSetmarks, value))
+                SyncPresetToFeatures();
+        }
     }
 
     public bool SupportsSeqFilemarks
     {
         get => _supportsSeqFilemarks;
-        set => SetProperty(ref _supportsSeqFilemarks, value);
+        set
+        {
+            if (SetProperty(ref _supportsSeqFilemarks, value))
+                SyncPresetToFeatures();
+        }
+    }
+
+    /// <summary>
+    /// After a hand-made feature change (or a probe filling the features in), selects the preset whose marks and
+    ///  partition match — WITHOUT applying it, so block sizes stay as they are. No match: the selection stays.
+    /// </summary>
+    private void SyncPresetToFeatures()
+    {
+        if (_applyingPreset)
+            return;
+
+        var match = Presets.FirstOrDefault(p =>
+            p.Capabilities.SupportsSetmarks == _supportsSetmarks
+            && p.Capabilities.SupportsSeqFilemarks == _supportsSeqFilemarks
+            && p.Capabilities.SupportsInitiatorPartition == _enableInitiatorPartition);
+        if (match is null || match == _selectedPreset)
+            return;
+
+        _selectedPreset = match;
+        OnPropertyChanged(nameof(SelectedPreset));
     }
 
     // ── Media Description ─────────────────────────────────────────────────────
@@ -399,27 +467,42 @@ public abstract class VirtualDriveConfigViewModelBase : ViewModelBase
     // ── Preset application ────────────────────────────────────────────────────
 
     /// <summary>
-    /// Applies the currently selected preset to block sizes, capacity, and feature checkboxes.
+    /// Applies the currently selected preset to block sizes, feature checkboxes and the initiator partition —
+    ///  and, with <paramref name="includeCapacity"/>, to the capacities too.
     /// </summary>
-    public void ApplyPreset()
+    /// <param name="includeCapacity">
+    /// Also set the content (and, when the preset defines one, initiator) capacity. A plain preset selection passes
+    ///  <see langword="false"/>, so capacities the user typed survive picking a drive profile.
+    /// </param>
+    public void ApplyPreset(bool includeCapacity = true)
     {
-        var caps = SelectedPreset.Capabilities;
+        _applyingPreset = true;
+        try
+        {
+            var caps = SelectedPreset.Capabilities;
+            MinBlockSize     = BlockSizeOption.FromBytes(caps.MinBlockSize);
+            DefaultBlockSize = BlockSizeOption.FromBytes(caps.DefaultBlockSize);
+            MaxBlockSize     = BlockSizeOption.FromBytes(caps.MaxBlockSize);
+            SupportsSetmarks      = caps.SupportsSetmarks;
+            SupportsSeqFilemarks  = caps.SupportsSeqFilemarks;
+            EnableInitiatorPartition = caps.SupportsInitiatorPartition;
 
-        MinBlockSize     = BlockSizeOption.FromBytes(caps.MinBlockSize);
-        DefaultBlockSize = BlockSizeOption.FromBytes(caps.DefaultBlockSize);
-        MaxBlockSize     = BlockSizeOption.FromBytes(caps.MaxBlockSize);
+            if (!includeCapacity)
+                return;
 
-        SupportsSetmarks      = caps.SupportsSetmarks;
-        SupportsSeqFilemarks  = caps.SupportsSeqFilemarks;
-        EnableInitiatorPartition = caps.SupportsInitiatorPartition;
+            SetCapacityFromBytes(SelectedPreset.ContentCapacity,
+                v => ContentCapacityValue = v, u => ContentCapacityUnit = u);
 
-        SetCapacityFromBytes(SelectedPreset.ContentCapacity,
-            v => ContentCapacityValue = v, u => ContentCapacityUnit = u);
-        // Only update initiator capacity when the preset defines one; otherwise keep the existing
-        //  default so the field doesn't reset to "0 B" for non-partition presets.
-        if (SelectedPreset.InitiatorPartitionCapacity > 0)
-            SetCapacityFromBytes(SelectedPreset.InitiatorPartitionCapacity,
-                v => InitiatorCapacityValue = v, u => InitiatorCapacityUnit = u);
+            // Only update initiator capacity when the preset defines one; otherwise keep the existing
+            //  default so the field doesn't reset to "0 B" for non-partition presets.
+            if (SelectedPreset.InitiatorPartitionCapacity > 0)
+                SetCapacityFromBytes(SelectedPreset.InitiatorPartitionCapacity,
+                    v => InitiatorCapacityValue = v, u => InitiatorCapacityUnit = u);
+        }
+        finally
+        {
+            _applyingPreset = false;
+        }
     }
 
     // ── Capacity helper ───────────────────────────────────────────────────────

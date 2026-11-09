@@ -103,7 +103,7 @@ public struct TapeSetStatistics
 /// Cumulative file-operation statistics maintained by the tape agent.
 /// A snapshot is passed to every <see cref="ITapeFileNotifiable"/> callback so
 /// the caller never needs to track its own counters.
-/// <para>Invariant: <c>FilesProcessed == FilesSucceeded + FilesFailed + FilesSkipped</c></para>
+/// <para>Invariant: <c>FilesProcessed == FilesSucceeded + FilesFailed + FilesSkipped + FilesUpToDate</c></para>
 /// </summary>
 public struct TapeFileStatistics
 {
@@ -118,7 +118,7 @@ public struct TapeFileStatistics
     /// </summary>
     public long BytesTotal;
 
-    /// <summary>Files finished (succeeded + failed + skipped). Retried files are counted once.</summary>
+    /// <summary>Files finished (succeeded + failed + skipped + up to date). Retried files are counted once.</summary>
     public int FilesProcessed;
 
     /// <summary>Files completed without error.</summary>
@@ -127,8 +127,14 @@ public struct TapeFileStatistics
     /// <summary>Files that hit an error and were not retried.</summary>
     public int FilesFailed;
 
-    /// <summary>Files skipped (by pre-processor, incremental, or user choice).</summary>
+    /// <summary>Files skipped (by pre-processor, filter, or user choice) — NOT the unchanged files of an incremental.</summary>
     public int FilesSkipped;
+
+    /// <summary>
+    /// Files an incremental found up to date in its chain — handled, and rightly not written. Counted in
+    ///  <see cref="FilesProcessed"/>, never in <see cref="FilesSkipped"/>: no reason for concern.
+    /// </summary>
+    public int FilesUpToDate;
 
     /// <summary>
     /// Total logical (actual file-length) bytes of succeeded files. Comparable to
@@ -172,6 +178,7 @@ public struct TapeFileStatistics
         FilesSucceeded = FilesSucceeded - baseline.FilesSucceeded,
         FilesFailed = FilesFailed - baseline.FilesFailed,
         FilesSkipped = FilesSkipped - baseline.FilesSkipped,
+        FilesUpToDate = FilesUpToDate - baseline.FilesUpToDate,
         FileBytesProcessed = FileBytesProcessed - baseline.FileBytesProcessed,
         BytesOnTapeProcessed = BytesOnTapeProcessed - baseline.BytesOnTapeProcessed,
         SetStats = SetStats.Delta(baseline.SetStats),

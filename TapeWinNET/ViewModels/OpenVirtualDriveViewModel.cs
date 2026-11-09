@@ -33,10 +33,20 @@ public record BlockSizeOption(uint Bytes, string Display)
         new(1024 * 1024, "1 MB"), // the max supported by LTO-5+ drives
     ];
 
-    public static readonly BlockSizeOption Default = new(64 * 1024, "64 KB");
+    //public static readonly BlockSizeOption Default = new(64 * 1024, "64 KB");
 
+    /// <summary>
+    /// The listed option for <paramref name="bytes"/>, or a new one for sizes outside the list
+    ///  (e.g. 1 B, or any size created by the CLI) — never another size.
+    ///  The view model adds such an option to its ComboBox list.
+    /// </summary>
     public static BlockSizeOption FromBytes(uint bytes) =>
-        All.FirstOrDefault(b => b.Bytes == bytes) ?? Default;
+        All.FirstOrDefault(b => b.Bytes == bytes) ?? new(bytes, Describe(bytes));
+
+    private static string Describe(uint bytes) =>
+        bytes >= 1024 * 1024 && bytes % (1024 * 1024) == 0 ? $"{bytes / (1024 * 1024)} MB"
+        : bytes >= 1024 && bytes % 1024 == 0 ? $"{bytes / 1024} KB"
+        : $"{bytes:N0} B";
 }
 
 /// <summary>
@@ -255,8 +265,8 @@ public record VirtualDriveOpenRequest(
 
 /// <summary>
 /// ViewModel for the Open Virtual Drive dialog.
-/// Supports both opening existing virtual media and creating new virtual media.
-/// Extends <see cref="VirtualDriveConfigViewModelBase"/> for the shared "create new" configuration surface.
+///  Supports both opening existing virtual media and creating new virtual media.
+///  Extends <see cref="VirtualDriveConfigViewModelBase"/> for the shared "create new" configuration surface.
 /// </summary>
 public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
 {
@@ -264,91 +274,46 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
 
     /// <summary>
     /// Builds the metadata file path for the content partition.
-    /// Example: "mymedia.vt" → "mymedia.vt.vrt"
+    ///  Example: "mymedia.vt" → "mymedia.vt.vrt"
     /// </summary>
     public static string BuildContentMetadataFilePath(string contentFilePath)
-        => contentFilePath + VirtualTapeDriveBackend.MetadataExtension;
+        => VirtualMediaPaths.GetMetadataPath(contentFilePath);
 
     /// <summary>
     /// Checks the specified content file path and removes the initiator suffix if present, returning the modified path.
-    /// Example: "mymedia_init.vt" → "mymedia.vt"
+    ///  Example: "mymedia_init.vt" → "mymedia.vt"
     /// </summary>
     public static string CheckContentFilePath(string contentFilePath)
-    {
-        // Remove initiator suffix if present
-        var nameWithoutExt = Path.GetFileNameWithoutExtension(contentFilePath);
-        if (nameWithoutExt.EndsWith(VirtualTapeDriveBackend.InitiatorSuffix))
-        {
-            var baseName = nameWithoutExt[..^VirtualTapeDriveBackend.InitiatorSuffix.Length];
-            var dir = Path.GetDirectoryName(contentFilePath) ?? string.Empty;
-            var ext = Path.GetExtension(contentFilePath);
-            return Path.Combine(dir, $"{baseName}{ext}");
-        }
-        return contentFilePath;
-    }
+        => VirtualMediaPaths.CheckContentFilePath(contentFilePath);
 
     /// <summary>
     /// Builds the initiator partition file path from content file path.
-    /// Example: "mymedia.vt" → "mymedia_init.vt"
+    ///  Example: "mymedia.vt" → "mymedia_init.vt"
     /// </summary>
     public static string BuildInitiatorFilePath(string contentFilePath)
-    {
-        var nameWithoutExt = Path.GetFileNameWithoutExtension(contentFilePath);
-        // Check if the file name already ends with the initiator suffix to avoid double-appending it
-        if (nameWithoutExt.EndsWith(VirtualTapeDriveBackend.InitiatorSuffix))
-            return contentFilePath; // Already has the suffix, return as is
-        var dir = Path.GetDirectoryName(contentFilePath) ?? string.Empty;
-        var ext = Path.GetExtension(contentFilePath);
-        return Path.Combine(dir, $"{nameWithoutExt}{VirtualTapeDriveBackend.InitiatorSuffix}{ext}");
-    }
+        => VirtualMediaPaths.BuildInitiatorFilePath(contentFilePath);
 
     /// <summary>
     /// Builds the metadata file path for the initiator partition.
-    /// Example: "mymedia.vt" → "mymedia_init.vt.vrt"
+    ///  Example: "mymedia.vt" → "mymedia_init.vt.vrt"
     /// </summary>
     public static string BuildInitiatorMetadataFilePath(string contentFilePath)
-        => BuildInitiatorFilePath(contentFilePath) + VirtualTapeDriveBackend.MetadataExtension;
+        => VirtualMediaPaths.BuildInitiatorMetadataFilePath(contentFilePath);
 
     /// <summary>
     /// Checks if initiator partition files exist for the given content file path.
     /// </summary>
     public static bool InitiatorFilesExist(string contentFilePath)
-    {
-        if (string.IsNullOrWhiteSpace(contentFilePath))
-            return false;
-
-        var initiatorPath = BuildInitiatorFilePath(contentFilePath);
-        var initiatorMetadataPath = BuildInitiatorMetadataFilePath(contentFilePath);
-
-        // Both the data file and metadata file must exist
-        return File.Exists(initiatorPath) && File.Exists(initiatorMetadataPath);
-    }
+        => VirtualMediaPaths.InitiatorFilesExist(contentFilePath);
 
     /// <summary>
     /// Decorates a file path with a volume suffix.
-    /// Strips any existing volume suffix before applying the new one.
-    /// Example: "myvtape.vt" + volume 2 → "myvtape_vol02.vt"
-    /// Example: "myvtape_vol01.vt" + volume 2 → "myvtape_vol02.vt"
+    ///  Strips any existing volume suffix before applying the new one.
+    ///  Example: "myvtape.vt" + volume 2 → "myvtape_vol02.vt"
+    ///  Example: "myvtape_vol01.vt" + volume 2 → "myvtape_vol02.vt"
     /// </summary>
     public static string BuildVolumeFilePath(string path, int volume)
-    {
-        var dir = Path.GetDirectoryName(path) ?? string.Empty;
-        var ext = Path.GetExtension(path);
-        var name = Path.GetFileNameWithoutExtension(path);
-
-        // Strip existing volume suffix (e.g. "_vol01", "_vol12")
-        var volSuffix = VirtualTapeDriveBackend.VolumeSuffix;
-        int volIdx = name.LastIndexOf(volSuffix, StringComparison.OrdinalIgnoreCase);
-        if (volIdx >= 0)
-        {
-            // Verify that everything after the suffix is digits
-            var afterSuffix = name[(volIdx + volSuffix.Length)..];
-            if (afterSuffix.Length > 0 && afterSuffix.All(char.IsDigit))
-                name = name[..volIdx];
-        }
-
-        return Path.Combine(dir, $"{name}{volSuffix}{volume:D2}{ext}");
-    }
+        => VirtualMediaPaths.BuildVolumeFilePath(path, volume);
 
     #endregion
 
@@ -506,8 +471,18 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
     /// <summary>Whether the preset controls are enabled (disabled in restricted modes and in Open existing mode).</summary>
     public bool IsPresetsEnabled => !_newMediaOnly && !_existingMediaOnly && IsCreateNewMode;
 
-    /// <summary>Whether the features controls are enabled (disabled in restricted modes and in Open existing mode).</summary>
-    public bool IsFeaturesEnabled => !_newMediaOnly && !_existingMediaOnly && IsCreateNewMode;
+    /// <summary>
+    /// Whether the features controls are enabled: in Create new mode, and in Open existing mode for legacy media whose
+    ///  mark profile the probe had to infer (the user may correct it). Never in the restricted (volume-swap) modes.
+    /// </summary>
+    public bool IsFeaturesEnabled => !_newMediaOnly && !_existingMediaOnly && (IsCreateNewMode || IsProfileInferred);
+
+    /// <summary>Open existing on legacy media: the probe inferred the mark profile — the media does not record one.</summary>
+    public bool IsProfileInferred =>
+        IsOpenExistingMode && _lastProbeResult is { Success: true, ProfileRecorded: false };
+
+    /// <inheritdoc/>
+    protected override bool CanApplyPreset => IsPresetsEnabled;
 
     public bool IsOpenExistingMode
     {
@@ -523,6 +498,7 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
                 OnPropertyChanged(nameof(ActionButtonText));
                 OnPropertyChanged(nameof(WarningLevel));
                 OnPropertyChanged(nameof(WarningMessage));
+                OnPropertyChanged(nameof(IsProfileInferred));
                 CommandManager.InvalidateRequerySuggested();
             }
         }
@@ -557,12 +533,15 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
 
     /// <summary>
     /// Gets the computed initiator file path for display purposes.
-    /// Read-only - derived from content file path using naming convention.
+    ///  Read-only - derived from content file path using naming convention.
     /// </summary>
     public string InitiatorFilePathDisplay =>
         string.IsNullOrWhiteSpace(ContentFilePath)
             ? "(auto-generated from content path)"
-            : BuildInitiatorFilePath(ContentFilePath);
+            : BuildInitiatorFilePath(
+                IsCreateNewMode
+                    ? VirtualMediaPaths.WithDefaultExtension(ContentFilePath)
+                    : VirtualMediaPaths.ResolveExisting(ContentFilePath));
 
     /// <summary>Override: initiator capacity is only editable when creating new media.</summary>
     public override bool IsInitiatorCapacityEnabled => EnableInitiatorPartition && IsCreateNewMode;
@@ -602,6 +581,8 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
                 OnPropertyChanged(nameof(ProbeStatusIcon));
                 OnPropertyChanged(nameof(IsProbing));
                 OnPropertyChanged(nameof(CanExecute));
+                OnPropertyChanged(nameof(IsFeaturesEnabled));
+                OnPropertyChanged(nameof(IsProfileInferred));
             }
         }
     }
@@ -622,14 +603,20 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
     {
         VirtualDriveProbeStatus.BackupFound =>
             $"Existing backup media found: {_lastProbeResult?.MediaName ?? "unnamed"} ({_lastProbeResult?.BackupSetCount ?? 0} sets)" +
-            (EnableInitiatorPartition ? " [with initiator partition]" : string.Empty),
+            (EnableInitiatorPartition ? " [with initiator partition]" : string.Empty) + InferredProfileNote,
         VirtualDriveProbeStatus.CalibrationFound =>
-            $"Existing calibration found: >{_lastProbeResult?.CalibrationHeader?.ProfileKey ?? "unknown profile"}<",
+            $"Existing calibration found: >{_lastProbeResult?.CalibrationHeader?.ProfileKey ?? "unknown profile"}<" +
+            InferredProfileNote,
         VirtualDriveProbeStatus.NewMedia => "New media location",
         VirtualDriveProbeStatus.Probing => "Checking...",
         VirtualDriveProbeStatus.Error => _lastProbeResult?.ErrorMessage ?? "Error",
         _ => string.Empty
     };
+
+    private string InferredProfileNote =>
+    _lastProbeResult is { Success: true, ProfileRecorded: false }
+        ? " — legacy media: mark profile inferred, check Features"
+        : string.Empty;
 
     #endregion
 
@@ -645,13 +632,23 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
 
     public string ActionButtonText => IsOpenExistingMode ? "Open" : "Create";
 
-    public WarningLevel WarningLevel =>
-        _isInMemory
-            ? WarningLevel.Info
-            : IsCreateNewMode &&
-              !string.IsNullOrWhiteSpace(ContentFilePath) &&
-              (File.Exists(ContentFilePath) || File.Exists(BuildContentMetadataFilePath(ContentFilePath)))
-                ? WarningLevel.Warning : WarningLevel.None;
+    public WarningLevel WarningLevel
+    {
+        get
+        {
+            if (_isInMemory)
+                return WarningLevel.Info;
+            if (!IsCreateNewMode || string.IsNullOrWhiteSpace(ContentFilePath))
+                return WarningLevel.None;
+
+            // Check the path that would actually be created, that is, the file Create would write.
+            //  E.g. "weekly" becomes "weekly.vt".
+            string target = VirtualMediaPaths.WithDefaultExtension(ContentFilePath);
+            return File.Exists(target) || File.Exists(BuildContentMetadataFilePath(target))
+                ? WarningLevel.Warning
+                : WarningLevel.None;
+        }
+    }
 
     public string WarningMessage => _isInMemory
         ? "The content of in-memory virtual media cannot be saved."
@@ -677,7 +674,9 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
         var dialog = new OpenFileDialog
         {
             Title = "Select Content Partition File",
-            Filter = "Virtual Media Files (*.vt)|*.vt|All Files (*.*)|*.*",
+            Filter = $"Virtual Media Files (*{VirtualMediaPaths.ContentExtension})|*{VirtualMediaPaths.ContentExtension}" +
+                     "|All Files (*.*)|*.*",
+            DefaultExt = VirtualMediaPaths.ContentExtension,
             CheckFileExists = false
         };
 
@@ -687,16 +686,22 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
 
     private void ExecuteOpen(object? _)
     {
+        // Same rule as tapecon: new media without an extension gets the default one; existing media is found
+        //  with or without it.
+        string contentPath = IsCreateNewMode
+            ? VirtualMediaPaths.WithDefaultExtension(ContentFilePath)
+            : VirtualMediaPaths.ResolveExisting(ContentFilePath);
+
         // Use computed initiator path from naming convention
         //  For in-memory: use a placeholder path to signal initiator partition presence
         string? initiatorPath = EnableInitiatorPartition
-            ? (_isInMemory ? "(in-memory)" : BuildInitiatorFilePath(ContentFilePath))
+            ? (_isInMemory ? VirtualMediaPaths.InMemoryPlaceholder : BuildInitiatorFilePath(contentPath))
             : null;
 
         var request = new VirtualDriveOpenRequest(
             Capabilities: BuildCapabilities(),
             Media: new VirtualMediaDescriptor(
-                _isInMemory ? "(in-memory)" : ContentFilePath,
+                _isInMemory ? VirtualMediaPaths.InMemoryPlaceholder : contentPath,
                 ContentCapacityBytes,
                 initiatorPath,
                 EnableInitiatorPartition ? InitiatorCapacityBytes : 0,
@@ -767,6 +772,10 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
             return;
         }
 
+        // Same rule as opening: "weekly" finds "weekly.vt" when that is where the media is.
+        // A local, so the probe task keeps the path it started with even if the user types on.
+        string probePath = VirtualMediaPaths.ResolveExisting(ContentFilePath);
+
         // Check if content metadata file exists (quick check before full probe)
         var contentMetadataPath = BuildContentMetadataFilePath(ContentFilePath);
         if (!File.Exists(contentMetadataPath))
@@ -784,7 +793,7 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
         }
 
         // Auto-detect initiator partition files using naming convention
-        bool hasInitiatorFiles = InitiatorFilesExist(ContentFilePath);
+        bool hasInitiatorFiles = InitiatorFilesExist(probePath);
 
         // Auto-check the initiator partition checkbox if files exist
         EnableInitiatorPartition = hasInitiatorFiles;
@@ -801,12 +810,12 @@ public class OpenVirtualDriveViewModel : VirtualDriveConfigViewModelBase
             {
                 // Determine initiator path based on auto-detection
                 string? initiatorPath = hasInitiatorFiles
-                    ? BuildInitiatorFilePath(ContentFilePath)
+                    ? BuildInitiatorFilePath(probePath)
                     : null;
 
                 // Probe the virtual drive via the shared library helper
                 var result = await VirtualDriveProber.ProbeAsync(
-                    ContentFilePath,
+                    probePath,
                     initiatorPath,
                     token);
 

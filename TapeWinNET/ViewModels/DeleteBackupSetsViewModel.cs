@@ -121,59 +121,53 @@ public class DeleteBackupSetsViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Warning level for styling — always destructive.</summary>
-    public WarningLevel WarningLevel
+    /// <summary>
+    /// The warning pane's lines (W6), each only while its condition holds. Reads only stub members — a locked set never
+    ///  throws here (Design-Encryption §11.1.8).
+    /// </summary>
+    private IEnumerable<(WarningLevel Level, string Text)> WarningLines()
     {
-        get
+        var toc = _tapeService.TOC;
+        if (toc == null || SelectedOption == null)
+            yield break;
+
+        if (IsDeleteBlocked)
         {
-            var toc = _tapeService.TOC;
-            if (toc == null || SelectedOption == null)
-                return WarningLevel.Warning;
-
-            if (IsDeleteBlocked)
-                return WarningLevel.Info; // just explain why "Delete" is disabled
-
-            // Deleting all sets is more severe
-            if (SelectedOption.SetIndex == toc.FirstSetOnVolume)
-                return WarningLevel.Error;
-
-            return WarningLevel.Warning;
+            yield return (WarningLevel.Info, "Cannot delete all backup sets on media. Format media instead.");
+            yield break;
         }
+
+        int count = SetsToDeleteCount;
+        int firstStd = SelectedOption.SetIndex;
+        int lastStd = toc.LastSetOnVolume;
+        bool all = firstStd == toc.FirstSetOnVolume;
+        yield return (all ? WarningLevel.Error : WarningLevel.Warning, count == 1
+            ? $"1 backup set will be deleted: #{firstStd} | {SelectedOption.AltIndex}"
+            : $"{count} backup set(s) will be deleted: from #{firstStd} | {SelectedOption.AltIndex} " +
+              $"to #{lastStd} | {toc.SetIndexToAlt(lastStd)}");
+        if (all)
+            yield return (WarningLevel.Error, "This will remove ALL backup sets from the media!");
+        if (toc.ContinuedOnNextVolume)
+            yield return (WarningLevel.Warning, "Deleting from this media may invalidate a multi-volume backup.");
+
+        int encrypted = 0;
+        for (int i = firstStd; i <= lastStd; i++)
+            if (toc[i].IsEncrypted)
+                encrypted++;
+        if (encrypted > 0)
+            yield return (WarningLevel.Info, encrypted == 1
+                ? "1 of them is encrypted — deleting needs no password."
+                : $"{encrypted} of them are encrypted — deleting needs no password.");
     }
+
+    /// <summary>Warning level for styling: the most severe line — always destructive unless blocked.</summary>
+    public WarningLevel WarningLevel => WarningLines()
+        .Select(l => l.Level)
+        .DefaultIfEmpty(WarningLevel.Warning)
+        .Max();     // ServiceReportLevel is ordered by severity: None < Info < … < Error
 
     /// <summary>Warning message describing what will be deleted.</summary>
-    public string WarningMessage
-    {
-        get
-        {
-            var toc = _tapeService.TOC;
-            if (toc == null || SelectedOption == null)
-                return string.Empty;
-
-            int count = SetsToDeleteCount;
-            int firstStd = SelectedOption.SetIndex;
-            int firstAlt = SelectedOption.AltIndex;
-            int lastStd = toc.LastSetOnVolume;
-            int lastAlt = toc.SetIndexToAlt(lastStd);
-
-            string message = (count == 1)
-                ? $"1 backup set will be deleted: #{firstStd} | {firstAlt}"
-                : $"{count} backup set(s) will be deleted: from #{firstStd} | {firstAlt} to #{lastStd} | {lastAlt}";
-
-            if (toc.ContinuedOnNextVolume)
-                message += "\r\nNote: Deleting from this media may invalidate a multi-volume backup";
-            
-            if (firstStd == toc.FirstSetOnVolume)
-            {
-                if (_tapeService.HasInitiatorPartition)
-                    message = "Cannot delete all backup sets on media. Format media instead.";
-                else
-                    message += "\r\nThis will remove ALL backup sets from the media!";
-            }
-
-            return message;
-        }
-    }
+    public string WarningMessage => string.Join("\r\n", WarningLines().Select(l => l.Text));
 
     // ═════════════════════════════════════════════════
     //  Statistics
@@ -198,8 +192,25 @@ public class DeleteBackupSetsViewModel : ViewModelBase
                 return 0;
             int total = 0;
             for (int i = SelectedOption.SetIndex; i <= toc.LastSetOnVolume; i++)
-                total += toc[i].Count;
+                if (!toc[i].IsLocked)
+                    total += toc[i].Count;
             return total;
+        }
+    }
+
+    /// <summary>Locked sets among those to delete — their file counts are hidden.</summary>
+    public int DeleteLockedSetsCount
+    {
+        get
+        {
+            var toc = _tapeService.TOC;
+            if (toc == null || SelectedOption == null)
+                return 0;
+            int locked = 0;
+            for (int i = SelectedOption.SetIndex; i <= toc.LastSetOnVolume; i++)
+                if (toc[i].IsLocked)
+                    locked++;
+            return locked;
         }
     }
 
@@ -211,9 +222,12 @@ public class DeleteBackupSetsViewModel : ViewModelBase
             long size = ComputeDeleteSize();
             if (size <= 0)
                 return "\u2014";
+
             int files = DeleteFileCount;
+            int locked = DeleteLockedSetsCount;
             string filesPart = files > 0 ? $", {files:N0} file(s)" : string.Empty;
-            return $"~{Helpers.BytesToStringLong(size)}{filesPart}";
+            string lockedPart = locked > 0 ? $" + {locked} locked set(s)" : string.Empty;
+            return $"~{Helpers.BytesToStringLong(size)}{filesPart}{lockedPart}";
         }
     }
 

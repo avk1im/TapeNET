@@ -100,6 +100,8 @@ public partial class TapeServiceBase
                 // ── Compact backup-sets table (SetTable only, no FileDetails) ─
                 if (depth.HasFlag(ListDepth.SetTable) && !depth.HasFlag(ListDepth.FileDetails))
                 {
+                    // Design-Encryption §11.2 — the supplied password opens what it fits; an overview never prompts.
+                    UnlockForOverview(toc, options.Password);
                     LogBackupSetsTable();
                     return ListResult.Ok(toc.Count, 0, 0);
                 }
@@ -126,6 +128,16 @@ public partial class TapeServiceBase
                 {
                     toc.CurrentSetIndex = setIndex;
                     LogInfo($"Backup set #{setIndex} | {toc.SetIndexToAlt(setIndex)}:");
+
+                    // Design-Encryption §10.6 — open a locked set first; one that stays locked is named, not listed.
+                    if (toc.CurrentSetTOC.IsLocked
+                        && !EnsureSetUnlocked(toc, setIndex, options.Password, PasswordPurpose.Unlock))
+                    {
+                        LogCurrentSetInfo();
+                        LogInfoSub("Encrypted and locked — files not listed");
+                        setIndex--;
+                        continue;
+                    }
                     LogCurrentSetInfo();
 
                     bool incremental = toc.CurrentSetTOC.Incremental;
@@ -192,6 +204,8 @@ public partial class TapeServiceBase
             }
             finally
             {
+                if (options.Password is { } password)
+                    Array.Clear(password);
                 _operationLock.Release();
                 _host.OnServiceStateChanged(ServiceStateChange.OperationEnded);
             }
@@ -294,18 +308,21 @@ public partial class TapeServiceBase
             int setIndex = toc.SetIndexToStd(alt); // convert alt (0/-1/-2...) → std (1..N)
             toc.CurrentSetIndex = setIndex;
             var setTOC = toc.CurrentSetTOC;
-
             var size = Helpers.BytesToStringLong(setTOC.ComputeTotalFileSizeOnTape(_drive.DefaultBlockSize));
             var flags = new System.Text.StringBuilder();
-            if (setTOC.Incremental) flags.Append(" [Inc]");
-            if (toc.IsCurrentSetContFromPrevVolume || toc.IsCurrentSetContFromPrevVolumeInc)
+            if (setTOC.IsLocked) flags.Append(" [Locked]");
+            else if (setTOC.IsEncrypted) flags.Append(" [Encrypted]");
+            if (!setTOC.IsLocked && setTOC.Incremental) flags.Append(" [Inc]");
+            if (toc.IsCurrentSetContFromPrevVolume || (!setTOC.IsLocked && toc.IsCurrentSetContFromPrevVolumeInc))
                 flags.Append(" [<Vol]");
             if (toc.IsCurrentSetContOnNextVolume)
                 flags.Append(" [Vol>]");
             if (setTOC.DataFormat == TapeDataFormat.Legacy)
                 flags.Append(" [Legacy]");
+            string created = setTOC.IsLocked ? string.Empty : setTOC.CreationTime.ToLocalTime().ToString("G");
 
-            LogInfoSub($"#{setIndex,3} | {alt,3}  {setTOC.CreationTime.ToLocalTime(),20:G}  {setTOC.Count,6:N0} files  {size,14}  Vol #{setTOC.Volume}  {setTOC.Description}{flags}");
+            LogInfoSub($"#{setIndex,3} | {alt,3}  {created,20}  {setTOC.DisplayCount,6} files  {size,14}  " +
+                       $"Vol #{setTOC.Volume}  {setTOC.DisplayName}{flags}");
         }
     }
 
