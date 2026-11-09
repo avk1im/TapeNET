@@ -186,8 +186,6 @@ internal sealed class ProbingCompressionStream : Stream
         /// <summary>The fastest codec — for the remainder of a file whose probe did not compress (§6.2).</summary>
         internal ZstdCodec FastCodec => _fastCodec ??= new ZstdCodec(ZstdLevel.Min);
 
-
-
         /// <summary>
         /// Returns the session-scoped <see cref="ZstdCodec"/>, re-creating it only if
         ///  <paramref name="level"/> differs from the current level.
