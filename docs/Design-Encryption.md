@@ -1,105 +1,683 @@
 # Design — Set Encryption (AES-256-GCM) for TapeNET
 
-**Status:** v1.3 · Phases 0–6 implemented; Phase 7 (WPF, §11.1 / Design-Encryption-11.1-WPF) in progress — Steps 1–3
-done, Step 4 next. Revised after the MultiVolume, TocLocation and TocReserve work (§20.4).
+**Status:** v2.0 · **as implemented** — Phases 0–7 done (library, service, scan, CLI, WPF). Hardware (drive) encryption
+is v2, prepared by the hooks of §19.
 **Scope:** password-based encryption of whole backup sets — content AND metadata — as a pure add-on to on-tape format
-2.1. Plain sets and plain tapes stay byte-identical (the 2.1 goldens keep passing unchanged). v1 ships **software**
-encryption; **hardware** (LTO drive) encryption is v2, prepared by the hooks of §19.
+2.1. Plain sets and plain tapes stay byte-identical (the 2.1 goldens pass unchanged). v1 ships **software** encryption.
+**Companion:** Design-TapeWinEncryption.md — the WPF application (former §11.1, its section numbers kept in brackets).
 **Supersedes:** Design-Encryption-pre-v2.md and Design-FormatV21 §13 (the "critical Sealed field" sketch).
-**Depends on:** Design-FormatV21, Design-SetHeader, Design-SetHeader-VerifiedWrite, Design-ScanMedia,
-Design-Compression, Design-TocLocation, Design-TocReserve, Design-MultiVolume.
-**Rule references.** This document adds the **E-rules** (§13). F-, G-, SH-, SM-, TL- and TR-rules keep their meaning.
+**Depends on:** Design-FormatV21, Design-SetHeader, Design-SetHeader-VerifiedWrite, Design-ScanMedia (§4.8),
+Design-Compression, Design-TocLocation, Design-TocReserve, Design-MultiVolume (§5.5 series TOC).
+**Rule references.** This document adds the **E-rules** (§13). F-, G-, SH-, SM-, TL- and TR-rules keep their meaning; the
+W-rules of the WPF app live in the companion.
 
 ## 1. Summary
 
 A backup set may be **encrypted** with a password chosen when the set is created — a per-set option like hashing and
 compression. Like compression, it comes in two flavours sharing one model:
 
-| `TapeEncryption` | File records encrypted by | Set metadata sealed by | Release |
+| TapeEncryption | File records encrypted by | Set metadata sealed by | Release |
 |---|---|---|---|
-| `None` | — | — | today |
-| `Software` | the host: chunked AES-256-GCM per file | the host | **v1** |
-| `Hardware` | the drive: LTO-4+ AES-256-GCM per block, key loaded by SECURITY PROTOCOL OUT | the host (always) | **v2** (§19) |
+| None | — | — | — |
+| Software | the host: chunked AES-256-GCM per file | the host | **v1** |
+| Hardware | the drive: LTO-4+ AES-256-GCM per block | the host (always) | **v2** (§19) |
 
 Everything of an encrypted set beyond the plaintext set header and a minimal TOC stub is ciphertext:
-- **File records** — in Software mode every file's whole on-tape record `[0x0201 frame][codec][body]` is one chunked
-  AES-256-GCM stream. No file name, no file boundary, no codec byte is visible on tape.
+- **File records** — every file's whole on-tape record `[0x0201 frame][codec][body]` is one chunked AES-256-GCM stream.
+  No file name, file boundary or codec byte is visible on tape.
 - **Set metadata** — the set's TOC entry (description, times, settings, file count, every file entry) is sealed into a
-  padded, chunked AES-256-GCM blob inside the TOC stream. **Always by the host, in both modes** — a TOC must be
-  readable before any key is known.
+  padded, chunked AES-256-GCM blob inside the TOC stream — **always by the host**: a TOC must be readable before any key
+  is known.
 - **What stays plain** is what navigation, capacity accounting, deletion and TOC location need: SetId, Volume, data
-  format, encryption kind, size on tape, the closed-by-EOM and continued-from-previous-volume traits, the first block
-  after the set, the key envelope, and the set header's positional fields.
+  format, encryption kind, size on tape, closed-by-EOM, continued-from-previous-volume, first block after the set, the
+  key envelope, and the set header's positional fields.
 
-A set whose password has not been supplied is **locked**: the library knows it exists, where it is, and how big it is
-— nothing else. A locked set can be listed (as locked), deleted, overwritten, and carried across TOC rewrites byte for
-byte, all without a password. Opening it — restore, validate, verify, browse, rename, an incremental on top of it —
-needs the password once per session.
+A set whose password has not been supplied is **locked**: the library knows it exists, where it is and how big it is —
+nothing else. A locked set can be listed (as locked), deleted, overwritten and carried across TOC rewrites byte for byte,
+without a password. Opening it — restore, validate, verify, browse, rename, an incremental on top of it — needs the
+password once per session; **one password opens every set it fits** (§10.9).
 
-**Envelope keys.** Each encrypted *chain* (a base set, its continuation sets, its incremental sets) owns one random
-256-bit data key (DEK). A password never touches data: it only unwraps the DEK. File keys, the drive key and the
-metadata key are derived from the DEK. Hence a **password change is a TOC rewrite**, not a data rewrite — offered as
-part of the set-rename verb — in both modes.
+**Envelope keys.** Each encrypted _chain_ (a base set, its continuation sets, its incremental sets) owns one random 256-bit
+data key (DEK). A password only unwraps the DEK; file and metadata keys are derived from it. A **password change is a TOC
+rewrite**, not a data rewrite — part of the set-rename verb.
 
-**Zero new packages.** `AesGcm`, `HKDF`, `Rfc2898DeriveBytes.Pbkdf2`, `RandomNumberGenerator`,
-`CryptographicOperations` — all .NET 8 BCL.
+**Zero new packages.** AesGcm, HKDF, Rfc2898DeriveBytes.Pbkdf2, RandomNumberGenerator, CryptographicOperations — .NET 8
+BCL.
 
 ## 2. Goals, non-goals, threat model
 
-### 2.1 What we protect
+## 2.1 What we protect
 
-An attacker who physically obtains the cartridge (or a `.tapetoc` export, or a `.tapescan` map) must not be able to
-browse or read encrypted sets. They may still erase or overwrite them — that is out of scope.
+An attacker who physically obtains the cartridge (or a .tapetoc export, or a .tapescan map) must not be able to browse
+or read encrypted sets. They may still erase or overwrite them — out of scope.
 
 | Hidden (encrypted set) | Still visible |
 |---|---|
 | file names, paths, attributes, times, lengths, hashes, codecs | the number and order of sets on the cartridge |
 | **file count, file boundaries** | SetId (random), volume, set-header indices |
-| set description, creation and last-save time | that the set is encrypted (and how), its total size on tape, and where it ends (`FirstBlockAfterSet`) |
-| hash algorithm, compression mode / level, logical block size | whether it continues a set of the previous volume (already implied by the shared SetId) |
-| incremental flag, **membership in an incremental chain** | approximate size of the sealed metadata, padded to 64 KiB (§5.4) |
-| file content | the physical block lengths a variable-block read reports |
-| | the media name and TOC-level save time (media encryption is a separate, future feature) |
+| set description, creation and last-save time | that the set is encrypted (and how), its size on tape, where it ends |
+| hash algorithm, compression mode / level, block size | whether it continues a set of the previous volume |
+| incremental flag, **membership in an incremental chain** | approximate size of the sealed metadata (64 KiB granules, §5.4) |
+| file content | physical block lengths |
+| | the media name and TOC-level save time |
 
-`FirstBlockAfterSet` reveals nothing the size on tape does not already.
+**Integrity comes with it.** Every chunk is authenticated (AEAD): tampering, truncation, reordering and swapping are
+_detected_, not prevented.
 
-**Integrity comes with it.** Every chunk (software) or block (hardware) is authenticated (AEAD). Tampering,
-truncation, reordering and swapping of file records or metadata chunks are *detected*, not prevented.
-
-### 2.2 What we do not protect
-
-- **The running process.** No special measures protect decrypted content, the DEK or the password in memory (no
-  SecureString). Key material is zeroed on release as ordinary hygiene, nothing more.
-- **Persistence.** Passwords and keys are never persisted — not in settings, logs, `.tapetoc` or `.tapescan` files.
-- **Host-side logs.** A log mirrored to file while a set is unlocked contains file names. That is the user's file.
-- **Weak passwords.** PBKDF2 slows each guess; an offline brute force against a weak password remains possible.
+## 2.2 What we do not protect
+- **The running process.** No SecureString; key material and password arrays are zeroed on release as hygiene only.
+- **Persistence.** Passwords and keys are never persisted — not in settings, logs, .tapetoc or .tapescan files.
+- **Host-side logs.** A log written while a set is unlocked contains its file names and description. That is the user's
+  file.
+- **Weak passwords.** PBKDF2 slows each guess; the wrong-password delay (§10.8) slows casual guessing at the console;
+  neither stops an offline attack on a copy of the tape.
 - **Old copies after a password change** (§9.7).
-- **The wire (hardware mode, v2).** The drive key travels in clear over SAS/FC — and over gRPC to a remote drive.
+- **The wire (hardware mode, v2).**
 
-### 2.3 Accepted cost: no TOC-less recovery of encrypted sets
+## 2.3 Accepted cost: no TOC-less recovery of encrypted sets
 
-Hiding file boundaries means a damaged or lost TOC cannot be compensated by walking the set's files — not even with the
-password. The two on-tape TOC copies, the TOC location ladder (Design-TocLocation — it finds sealed sets through their
-plain stub), Scan Media's TOC harvest, and `.tapetoc` exports are the safety net. Both apps state this when encryption
-is selected (§11).
+Hiding file boundaries means a lost TOC cannot be compensated by walking the set's files — not even with the password.
+The two TOC copies, the TOC location ladder (it finds sealed sets through their plain stub), Scan Media's TOC harvest and
+.tapetoc exports are the safety net. Both apps and the help say so (*"keep an exported TOC"*).
 
 ## 3. Design principles
 
 | | |
 |---|---|
-| **Pure add-on** | Plain records are untouched; encryption adds two TOC record kinds and one optional set-header field. A plain TOC is byte-identical to today's (2.1 goldens). |
-| **Everything past the stub is ciphertext** | No per-file plaintext prefix, no salt, no length. The TOC stub carries the minimum navigation needs (§5.3). |
-| **Locked is a state, not a sentinel** | `TapeSetTOC.IsLocked`: the hidden properties throw rather than return a plausible 0 (§6). |
-| **A password unwraps; it never encrypts** | One DEK per chain; passwords wrap it. A password change rewraps (§9.7). |
-| **Keys are derived, never reused** | One key per file (SetId ‖ FileId), one drive key per set, one key per seal; nonces are counters under a unique key (E3). |
-| **One scheme seam** | Agents talk to an `ITapeSetCipher` chosen per set; None, Software and (v2) Hardware differ only behind it (§9.1). |
-| **Forward-compatible by value** | An encryption kind this build cannot open loads as *locked forever*, never refuses the TOC (E15). |
-| **The agent never prompts** | Keys reach the agent inside the unlocked `TapeSetTOC`. Prompting and policy live in the service (§10). |
-| **Fail before moving** | A missing key — or a drive that cannot use it — fails the set before any tape movement (E9). |
+| **Pure add-on** | Plain records are untouched; encryption adds two TOC record kinds and one optional set-header field. |
+| **Everything past the stub is ciphertext** | No per-file plaintext prefix, salt or length. |
+| **Locked is a state, not a sentinel** | TapeSetTOC.IsLocked: hidden members throw rather than return a plausible 0 (§6). |
+| **A password unwraps; it never encrypts** | One DEK per chain; passwords wrap it; a change rewraps (§9.7). |
+| **Keys are derived, never reused** | One key per file, per seal; nonces are counters under a unique key (E3). |
+| **One scheme seam** | Agents talk to an ITapeSetCipher chosen per set (§9.1). |
+| **Forward-compatible by value** | An encryption kind this build cannot open loads _locked forever_ (E15). |
+| **The agent never prompts** | Keys reach the agent inside the unlocked TapeSetTOC; prompting and policy live in the service (§10). |
+| **Fail before moving** | A missing key fails the set before any tape movement (E9). |
+| **One password, every chain** | A correct password, whichever verb carries it, opens every locked chain it fits (E19). |
 
 ## 4. Cryptography
 
-### 4.1 Primitives
+## 4.1 Primitives
+
+| Purpose | Primitive | Parameters |
+|---|---|---|
+| password → KEK | PBKDF2-HMAC-SHA256 | 600,000 iterations at creation, 16-byte salt, 32-byte output |
+| DEK wrap | AES-256-GCM | 12-byte random nonce, 16-byte tag |
+| file / drive / metadata key | HKDF-SHA256 (span overload) | IKM = DEK, salt and info per §4.2 |
+| file record and metadata chunks | AES-256-GCM | counter nonce (§4.3) |
+| randomness | TapeCrypto.Fill → RandomNumberGenerator.Fill | scoped test override |
+| hygiene | CryptographicOperations.ZeroMemory | every key buffer at release |
+
+**Password normalization.** NFC, then strict UTF-8, before the KDF; the encoded buffer is zeroed afterwards.
+**KDF agility.** The envelope records KDF id and iteration count (§5.5). Readers refuse envelopes above
+TapeCrypto.MaxIterations (50 million).
+**Tests.** Under TEST_HOOKS the creation-time iteration count is scoped (TapeCrypto.UseIterations, AsyncLocal).
+
+## 4.2 Key hierarchy
+```
+password ──NFC/UTF-8──PBKDF2(salt_env, iters)──► KEK ──AES-GCM unwrap──► DEK      (one DEK per chain)
+   K_meta  = HKDF(DEK, salt = SetId, info = "TapeNET set meta v1")      seals one set's TOC entry
+   K_file  = HKDF(DEK, salt = SetId, info = "TapeNET file v1" ‖ FileId) one key per file record
+   K_drive = HKDF(DEK, salt = SetId, info = "TapeNET drive v1")         reserved for v2
+```
+- **Exact layouts** are pinned by KeyDerivationTests (SetId in Guid.TryWriteBytes layout; FileId as u64 big-endian).
+- **DEK per chain.** Minted for every new non-incremental encrypted set — also when the password of an existing set is
+  reused (§10.2): the sets then share a password, not a key.
+- **One envelope per set.** A new incremental gets a _fresh_ envelope around the same DEK (the chain cannot be linked
+  from the TOC); a continuation copies its predecessor's envelope verbatim.
+- **No plaintext key id** — the ring identifies keys by trial authentication (§7.2).
+
+## 4.3 Chunked AEAD stream (shared construction)
+```
+plaintext  = P_0 ‖ … ‖ P_n          |P_i| = C for i < n,  0 ≤ |P_n| < C   (final chunk ALWAYS present, ALWAYS short)
+nonce_i    = prefix(7) ‖ i (u32 BE) ‖ final(1)
+```
+The index blocks reordering, the final flag truncation; a chunk's plaintext is released only after its tag verified.
+
+| Stream | Key | C | Nonce prefix | AAD |
+|---|---|---|---|---|
+| File record | K_file | 64 KiB | 7 zero bytes | empty |
+| Sealed metadata | K_meta | 1 MiB | 7 random bytes per seal | SetId ‖ Volume (u32 LE) |
+
+Implementation: Encryption/TapeAeadStream.cs (EncryptingStream / DecryptingStream over a reusable TapeAeadSession).
+Disposing an encrypting stream does nothing while it is open; only Complete() or Abandon() end a record.
+
+## 5. On-tape format
+
+## 5.1 Registry additions
+
+| Kind | Record | Carrier |
+|---|---|---|
+| **0x0105** | TOC sealed set | TOC stream |
+| **0x0106** | TOC sealed chunk | TOC stream |
+
+Both **non-skippable**: a build that skipped them would delete sealed sets on its next TOC write (E1). The format stays
+**2.1**; the _encryption kind_ is forward-compatible by value (E15).
+
+## 5.2 TOC stream grammar
+```
+TocHeader  ( TocSet TocFileBatch*  |  TocSealedSet TocSealedChunk+ )*  TocEnd  ‖ CRC-64
+```
+SetCount counts both kinds; TotalFileCount counts plain sets only; exactly ChunkCount chunks follow a stub, in order, the
+last Final (else CrossCheck). Re-emission re-serializes the stub and re-emits the stored chunks.
+
+## 5.3 TocSealedSet (0x0105) — the plaintext stub
+
+| # | Field | Type | Flags |
+|---|---|---|---|
+| 1 | SetId | guid | R |
+| 2 | Volume | varuint | R |
+| 3 | DataFormat | varuint | Critical, default V2; must be V2 |
+| 4 | Encryption | varuint | R — Software = 1, Hardware = 2; by value, not validated (E15) |
+| 5 | SizeOnTapeTotal | varuint | R — files on tape, without the set header |
+| 6 | ClosedByEom | bool | F32 |
+| 7 | ContinuedFromPrevVolume | bool | continuation walks |
+| 8 | ChunkCount | varuint | R, ≥ 1 |
+| 9 | FirstBlockAfterSet | varuint | elided at −1 — Design-TocLocation §6 |
+| 32 | SealNoncePrefix | bytes | R — 7 bytes |
+| 48 | KeyEnvelope | group | required by the validator (§5.5) |
+
+FirstBlockAfterSet is authoritative in the stub and not cross-checked against the sealed content (a trailing delete
+restamps it on a locked set).
+
+## 5.4 TocSealedChunk (0x0106) and the sealed payload
+
+| # | Field | Type | Flags |
+|---|---|---|---|
+| 1 | Index | varuint | R |
+| 2 | Final | bool | |
+| 48 | Ciphertext | bytes | R — ≤ 1 MiB + 16 |
+
+Payload: `PayloadLength ‖ TocSet ‖ TocFileBatch* ‖ zero padding` — today's records, unchanged. Padding to 64 KiB
+granules (TEST_HOOKS may lower TapeTOC.SealPadUnit). The TOC's room on tape counts a locked set at its stored size, an
+unlocked one at content + one pad unit (EstimateSerializedSize; Design-TocReserve §1, §9.4).
+
+## 5.5 KeyEnvelope (group, field 48)
+
+| # | Field | Type | Flags |
+|---|---|---|---|
+| 1 | Kdf | varuint | Pbkdf2Sha256 = 1; by value, not critical |
+| 2 | Iterations | varuint | R |
+| 32 | Salt | bytes | 16 |
+| 33 | WrapNonce | bytes | 12 |
+| 34 | WrappedDek | bytes | 32 + 16 |
+
+AAD = `"TapeNET env v1" ‖ Kdf ‖ Iterations (u32 BE) ‖ Salt`. **A failed unwrap is the password check** →
+ERROR_INVALID_PASSWORD. An unknown KDF leaves the set locked (ERROR_NOT_SUPPORTED).
+
+## 5.6 Set header (0x0302) of an encrypted set
+
+| # | Field | Plain set | Encrypted set |
+|---|---|---|---|
+| 2 | CreatedUtc | set creation | **MinUtc** |
+| 3 | BlockSize | set block size | **0** |
+| 4–7 | Volume, indices, SetId | as today | as today |
+| **8** | **Encryption** | absent | the TapeEncryption value |
+| 32 | Description | snapshot | **absent** |
+
+Always plain (SH-13, Scan Media, resume identification work on locked sets). Built by TapeTOC.CreateSetHeader from stub
+fields only.
+
+## 5.7 File record of an encrypted set
+```
+Software set:   ChunkedAead(K_file, [0x0201 frame][codec u8][body])     (64 KiB chunks)
+```
+SizeOnTape counts ciphertext and must be > 0 (no estimate fallback). Hash stays over the plaintext body.
+EstimateFileOverhead adds `16 + 16 × ⌈record / 64 KiB⌉`. A header-less encrypted set's first block classifies as Foreign.
+
+## 5.8 Format-level rules
+
+Encrypted sets require DataFormat = V2; the legacy test emitter refuses encryption.
+
+## 6. The domain model — a locked state for TapeSetTOC
+
+## 6.1 Shape
+
+Toc/TapeTOC.Encryption.cs (the partial of TapeSetTOC, plus KeyEnvelopeWire, TocSealedSetWire, TocSealedChunkWire):
+```csharp
+public TapeEncryption Encryption { get; }   public bool IsEncrypted { get; }   public bool IsLocked { get; }
+public bool IsUnlockable { get; }           public bool IsVacant { get; }      public long SizeOnTapeTotal { get; }
+public string DisplayName { get; }          // description, or LockedDisplayName "[encrypted set]"
+public string DisplayCount { get; }         // the count, or LockedDisplayCount "locked"
+internal TapeSetKey? Key; internal TapeKeyEnvelope? Envelope; internal TapeSealedPayload? Sealed; internal bool AcceptsFiles;
+internal void EnableEncryption(...); internal bool TryUnlock(TapeSetKey key); internal void Lock();
+internal void ReplaceEnvelope(TapeKeyEnvelope envelope);   // password change (§9.7)
+```
+**While locked, hidden members throw TapeSetLockedException** (getters and setters of Description, CreationTime,
+LastSaveTime, BlockSize, HashAlgorithm, Compression, CompressionLevel, Incremental, NextFileId; Count, Capacity, the
+indexer, enumeration, IndexOf, SelectFiles*, TotalFileSize, ToParams; Append, GenerateFileId, MarkIncremental).
+**Fail fast, not 0.** Non-throwing: the stub, ComputeTotalFileSizeOnTape, IsVacant, DisplayName, DisplayCount,
+EstimateSerializedSize. Internals use the backing fields.
+
+## 6.2 Sites that change — as built
+
+**TOC model:**
+
+| Site | With locked sets |
+|---|---|
+| IsEmpty, AddNewSetTOC, RemoveLastEmptySet | IsVacant |
+| MarkIncremental | refused |
+| copy constructor, CopyFrom, ToParams | backing fields; Encryption, Envelope, Key, Sealed, AcceptsFiles carried |
+| ChainStartInternal (was LastNonIncSetInternal) | a locked set is its own chain start (E13 keeps chains whole) |
+| IsIncrementalBaseLocked | refuses an incremental whose chain is locked |
+| IsSetContFromPrevVolume(i), …Inc(i), IsSetContOnNextVolume(i) | stub fields — work locked (§10.6) |
+| CreateSetHeader | stub fields only |
+| FirstSetOnVolume / LastSetOnVolume, FirstBlockAfterContentOnVolume | by volume, never by cursor; stub fields |
+| EstimateSerializedSize, EstimateEntryGrowth | sealed-set aware |
+| PersistedState / IsModified / MarkSaved | locked → never modified |
+
+**Agents:** ClassifySetHeader (!IsVacant), HandleSetHeaderVerdict (no block-size advisory for encrypted headers),
+BuildSetAnomaly (DisplayName), restore trace (DisplayCount), E9 checks, resume identification (§9.5), cipher hooks.
+
+## 6.3 Persistence and save stamping
+Locked: never modified, re-emitted verbatim. Unlocked & unmodified: re-emitted from Sealed. Modified (files, rename, new
+envelope, restamp): re-sealed with a fresh nonce prefix. New: sealed on first save.
+
+## 6.4 Loading
+TocSealedSet builds a locked set (CreateLocked); chunks collect into Sealed — **no decryption on load**. Unlocking opens
+the seal, parses with today's readers, cross-checks against the stub, adopts files and hidden metadata.
+
+## 7. Keys at runtime
+
+## 7.1 Types (TapeLibNET/Encryption/)
+
+| Type | File | Role |
+|---|---|---|
+| TapeSetKey | TapeSetKey.cs | the DEK of one chain, pinned, zeroed on Dispose; derivations; SameKeyAs |
+| TapeKeyEnvelope, TapeSetEncryption | TapeKeyEnvelope.cs | envelope; CreateChain, Wrap, TryUnwrap |
+| TapeKeyRing | TapeKeyRing.cs | session keys: UnlockAll, Unlock, Add (one instance per DEK), Withdraw, Clear, **LockHeld** |
+| TapeCrypto | TapeCrypto.cs | randomness and iterations, scoped test overrides |
+| TapeSealedPayload | TapeSealedPayload.cs | seal / open / pad |
+| TapeSetLockedException, EncryptionPreset, TapeKdf | TapeEncryption.cs | exception; parse / display helpers |
+
+## 7.2 Unlocking
+```
+UnlockAll(toc):      every locked, unlockable set × every held key: S.TryUnlock(K)
+Unlock(toc, i, pw):  trial first; still locked → unwrap set i's envelope; Add; UnlockAll
+```
+A new key is tried on every locked set at once (E13): one KDF per chain, one prompt per chain. The service applies
+passwords through its own helpers (§10.9), which build on Add / UnlockAll.
+
+## 7.3 Withdrawing a key — it locks back
+Withdraw(key, toc) locks every set the key opened, then zeroes it (a set with unsaved changes throws — E12).
+Clear(toc) locks and drops all keys; **LockHeld(toc)** locks but keeps them (retention, §10.1).
+
+## 8. Chains: base, continuation, incremental
+
+## 8.1 The inheritance rule
+
+| New set | Previous set (incremental base) | Allowed | Key |
+|---|---|---|---|
+| non-incremental, plain | anything | yes | — |
+| non-incremental, encrypted | anything | yes, password (new, or reused from a set) | **new chain** |
+| incremental, plain | plain | yes | — |
+| incremental, plain (explicit) | encrypted | encryption **implied** from the base | same DEK |
+| incremental, encrypted | encrypted, same scheme | yes, base set's password | **same DEK**, fresh envelope |
+| incremental, encrypted | plain, or another scheme | **refused** (ERROR_INVALID_PARAMETER) | — |
+| continuation | — | automatic | same DEK, **same envelope** |
+
+E8 is enforced by the library.
+
+## 8.2 Creating an incremental on an encrypted base
+The base's password (supplied, else asked — PasswordPurpose.Incremental) must open the base's **envelope** (even if a
+held key opened the chain); it unlocks the chain and wraps the same DEK in a fresh envelope for the new set
+(ConfigureBackupEncryption → JoinChain).
+
+## 8.3 Continuation sets
+TapeSetTOCParams carries Encryption, Envelope, Key; one prompt per logical set, however many volumes.
+
+## 8.4 Key uniqueness (E3)
+Every attempt gets a fresh FileId; NextFileId survives the EOM rollback; new / replaced sets get a fresh SetId. The one
+gap — appending to an encrypted set loaded from tape — is closed by E14.
+
+## 9. Agents and pipelines
+
+## 9.1 The scheme seam — ITapeSetCipher
+Encryption/TapeSetCipher.cs; helpers in Agents/TapeAgentBase.Encryption.cs. PlainSetCipher (identity),
+SoftwareSetCipher (EncryptingStream / DecryptingStream + VerifyToEnd), UnsupportedSetCipher (ERROR_NOT_SUPPORTED);
+TapeSetCipherProvider per agent. Software: AllowsEstimatedSize = false, AllowsHardwareCompression = false,
+RecordOverhead 16 + 16 per 64 KiB.
+
+## 9.2 Early checks (E9)
+Backup (EnsureSetFormat): key present, V2 emitter, no HW compression, AcceptsFiles, incremental base unlocked. Restore:
+a locked selection fails before moving.
+
+## 9.3 Backup — BackupFile
+`source → hash → ProbingCompressionStream → [frame][codec][body] → OpenWrite(sink)`; CompleteWrite explicit;
+AbandonWrite on failure.
+
+## 9.4 Restore — RestoreNextFile
+`OpenRead(rstream) → CheckFileHeader · ReadBodyCodec → decompressor → RestoreFileCore → CompleteRead` (E5).
+
+## 9.5 Restore across volumes
+Encrypted volumes identify by media header, a locked TOC compared by stub fields, the plain set header, or S4.
+
+## 9.6 Delete
+Locked sets are verified by their plain set header and deleted; kept locked sets are re-emitted verbatim.
+
+## 9.7 Password change (part of rename)
+RenameBackupSetAsync(set, newName, password, newPassword): the current password is **always proven against the envelope**
+for a change (VerifyCurrentPassword), every set of the chain present in this TOC is rewrapped (RewrapChain — one envelope
+per logical set), the TOC saved, the key withdrawn — the chain locks back. Older .tapetoc exports and other volumes' TOC
+copies keep the old password; the DEK is unchanged.
+
+## 10. Service layer — as implemented
+
+## 10.1 Key ring ownership and retention
+TapeServiceBase owns one TapeKeyRing. **ClearKeys()** runs at every TOC replacement or cartridge change, **before** the
+old TOC is dropped:
+
+| Site | Where |
+|---|---|
+| eject, media load / reload | EjectMediaCore → ClearTocState, LoadMediaAsync |
+| TOC read, identify, import | RestoreTOCAsync, IdentifyMediaAsync, ImportTOCFromFileAsync |
+| format, initial TOC, overwrite | FormatMediaAsync, CreateInitialTOCAsync, ExecuteBackupCore (ResetMediaId) |
+| recovered TOC adoption | AdoptRecoveredToc |
+| remote drive / volume change | OpenRemoteDriveAsync, CreateRemoteVirtualDriveAsync, OpenRemoteVirtualFileAsync, CloseRemoteConnectionAsync |
+| reset, close, drive open, dispose | Reset, CloseAsync, OpenDriveAsync / OpenVirtualDriveAsync, Dispose |
+
+**RetainKeysAcrossMedia** (default false; TapeWin true): ClearKeys only locks the old TOC's sets (LockHeld) and keeps the
+keys; **ReapplyKeys()** after every TOC load offers them to the new TOC (key trial, no KDF) — the same cartridge, or
+another volume of the series, opens silently; an unrelated one matches nothing. ForgetPasswordsAsync drops the keys
+always (ClearKeys(forget: true)). A multi-volume operation keeps its keys across swaps.
+
+## 10.2 Requests and backup configuration
+```csharp
+// BackupRequest
+public TapeEncryption Encryption { get; init; }     // None | Software (v1)
+public char[]? Password { get; init; }              // new password, a reused set's, or the incremental base's
+// RestoreRequest, ListRequest
+public char[]? Password { get; init; }              // tried before prompting
+```
+The service clears every array it receives. **ConfigureBackupEncryption** (before any tape movement):
+
+| Situation | Action |
+|---|---|
+| new chain | StartChain: CreateChain(password or AskNewPassword NewSet + Confirm); EnableEncryption; the password then opens every chain it fits (E19) |
+| incremental on an encrypted base | JoinChain (§8.2) — implied when Encryption = None |
+| incremental, scheme ≠ base's | ERROR_INVALID_PARAMETER |
+| Software + Hardware compression | ERROR_INVALID_PARAMETER |
+| Hardware | ERROR_NOT_SUPPORTED (v1) |
+| no password | ERROR_INVALID_PASSWORD, before moving |
+
+**Reusing an existing set's password** is a UI feature (Design-TapeWinEncryption §4): the window proves the password
+against that set's envelope, then passes it as an ordinary new-chain password.
+
+## 10.3 Pre-flight unlock for read operations
+**UnlockSelection** runs in ExecuteRestoreCore before the filter pass, the selection and the counts: held keys first,
+then newest set first EnsureSetUnlocked (request password, else prompt PasswordPurpose.Unlock). A declined set — and the
+rest of its chain — is dropped, logged "Set #n | k is locked — skipped" and counted in RestoreResult.SetsLocked. The
+agent's E9 check stays the safety net.
+
+## 10.4 Host callback
+```csharp
+char[]? OnAskPassword(in PasswordRequest request) => null;     // default: skip
+public readonly record struct PasswordRequest(PasswordPurpose Purpose, int SetIndex, int AltIndex,
+    string SetDisplay, int Attempt, TapeResult? LastFailure, bool PartOfSeries = false);
+```
+PasswordPurpose: NewSet, NewSetConfirm, Unlock, Incremental, Rename, NewPassword, NewPasswordConfirm.
+**Threading — critical.** Called on the service's worker thread **while the operation holds the service lock**. A host
+may block for the answer but must not call a lock-taking verb (VerifyPasswordAsync, UnlockWithPasswordAsync,
+UnlockSetsAsync, …) — deadlock. Lock-free reads (PasswordRetryDelay) are fine. Non-interactive hosts return null and
+log. The service checks the answer and asks again (Attempt, LastFailure), at most MaxPasswordAttempts (public, 3).
+
+## 10.5 Verbs
+
+| Verb | Behaviour |
+|---|---|
+| UnlockSetsAsync(setIndexes, password?) | EnsureSetUnlocked per set; no tape I/O |
+| UnlockWithPasswordAsync(password) | one password on every locked chain; UnlockOutcome(Sets, Chains, Result); refused during the delay |
+| VerifyPasswordAsync(set, password, unlock) | against the set's **envelope**, never a held key; unlock: false = pure check; unlock: true = TryPassword (§10.9); refused during the delay (ERROR_ACCOUNT_LOCKED_OUT) |
+| ForgetPasswordsAsync() | ClearKeys(forget: true) |
+| RenameBackupSetAsync(set) | unlock first (the name is hidden), then OnAskBackupSetName |
+| RenameBackupSetAsync(set, newName, password?, newPassword?) | §9.7; refused on a series TOC |
+| PasswordRetryDelay, HasPasswords, RetainKeysAcrossMedia | §10.8, lock-free, §10.1 |
+| DeleteBackupSetsExAsync, RenameMediaAsync, ExportTOCToFileAsync, ScanMediaAsync, RecoverTocAsync | no password |
+
+## 10.6 Property sheets, listings, progress text
+
+| Site | Locked |
+|---|---|
+| DescribeSet | Description [encrypted set], Set Index, Encryption row ("— locked"), Size on Media, Data Format, Volume, Continued from/on (by index, cursor untouched) |
+| LogBackupSetsTable (info, list --sets-only) | [Locked], DisplayName, size; **UnlockForOverview** first when a password is given (E18) |
+| ListContentsAsync (files) | pre-flight per set; declined: "locked — files not listed" |
+| LogTOCInfo, restore per-set log | DisplayName, DisplayCount, [Encrypted] |
+| DescribeFragment (scan) | DisplayName + "(encrypted)" |
+
+## 10.7 Outcome
+
+| Code | Meaning |
+|---|---|
+| ERROR_INVALID_PASSWORD (86) | wrong password, or none supplied where needed |
+| ERROR_ACCOUNT_LOCKED_OUT (1909) | the wrong-password delay runs — nothing tried |
+| ERROR_INVALID_DATA | authentication failure after a good unwrap — tampering |
+| ERROR_INVALID_PARAMETER | a refused combination |
+| ERROR_INVALID_STATE | appending to an encrypted set loaded from tape (E14) |
+| ERROR_NOT_SUPPORTED | a scheme this build or drive cannot use |
+| ERROR_CANCELLED | the user declined a prompt, or the wait was cancelled |
+
+## 10.8 The wrong-password delay (W8)
+One counter per service session, shared by every caller. Only ERROR_INVALID_PASSWORD counts.
+
+| Consecutive wrong passwords | Next attempt after |
+|---|---|
+| 1–3 | at once |
+| 4 | 5 s |
+| 5, 6, … | doubling, capped at 60 s |
+
+A success resets it. **PasswordRetryDelay** is lock-free (hosts poll it for a countdown). Interactive verbs refuse
+during the delay; prompt loops **ask first, then wait** before trying (cancellable) — a host's prompt can show the
+countdown. Not persisted: the real protection is PBKDF2 and the cartridge's custody. Test clock: UtcNowOverride
+(TEST_HOOKS).
+
+## 10.9 Applying passwords — three building blocks
+All of TapeServiceBase.Encryption.cs routes through:
+
+| Block | Role |
+|---|---|
+| **TryPassword(toc, set, pw, out held)** | the one way a password is applied: checked against the set's envelope (counts W8), its key held and applied (E13), then **OpenOtherChainsWith** — every other locked chain it fits (E19) |
+| **WithPassword(toc, set, purpose, supplied, declined, tryPassword)** | the one prompt loop: supplied password, then up to 3 asked; W8 waited before each try; asked arrays cleared |
+| **TryPasswordOnAllChains(toc, pw)** | one password on every locked chain (one KDF per foreign locked set); used by UnlockAllChainsCounted (UnlockWithPasswordAsync, UnlockForOverview) and OpenOtherChainsWith |
+
+EnsureSetUnlocked, JoinChain and VerifyCurrentPassword are guards plus one WithPassword call. StartChain calls
+OpenOtherChainsWith after minting (a reused password opens the sets it fits).
+
+## 11. Applications
+
+## 11.1 WPF (TapeWinNET)
+See **Design-TapeWinEncryption.md** (the former §11.1, with its section numbers kept in brackets).
+
+## 11.2 CLI (TapeConNET)
+```
+tapecon backup D:\Data --encrypt --password-file key.txt
+tapecon backup D:\Data --encryption software --password-env TAPE_PW
+tapecon restore --password-env TAPE_PW
+tapecon info --password-file key.txt
+tapecon rename-set 3 --name "Q3" --password-file old.txt --new-password-file new.txt
+tapecon rename-set 3 --change-password
+```
+- **Password sources** (Cli/PasswordOptions.cs): `--password-file` (UTF-8, exactly one trailing line break stripped) and
+  `--password-env`; resolved before the drive opens (a bad source is a usage error). `--password` / `--new-password`
+  exist only to refuse themselves with advice (shell history, process list). An unset variable's message names the
+  PowerShell (`$env:`) and cmd forms.
+- **Scheme:** `--encrypt` (flag = software) and `--encryption none|software|hardware|drive` (hardware/drive refused in
+  v1; must agree with `--encrypt`). `--compression drive` is a synonym of hardware; with software encryption it is a usage
+  error.
+- **Verbs with password options:** backup, restore, validate, verify, list, info, rename-set (with `--new-password-*`,
+  `--change-password` — asked twice, masked).
+- **Prompts** (ConsoleUxServiceHost.OnAskPassword): masked via IConsoleUx.AskSecret; non-interactive / quiet: skipped and
+  logged with the unattended advice.
+- **Exit code 6 PasswordRequired:** sets stayed locked, or an encrypted backup had no password.
+- **Overviews never prompt** (E18). RetainKeysAcrossMedia stays off (one process per command); the W8 delay applies
+  within one command.
+
+## 12. Scan Media
+Scanner side: Design-ScanMedia §4.8. Encrypted set headers → SetHeader fragments with Encryption, no description
+("🔒 encrypted (Software (AES-256-GCM))" in TapeWin); header-less sets → Unknown, no diagnosis; harvested TOCs load
+sealed sets locked; VerbalizeScan adds "N encrypted set(s) — their content cannot be inspected without the password".
+No password is ever needed.
+
+## 13. Invariants
+
+| | |
+|---|---|
+| **E1** | Sealed sets travel in non-skippable kinds 0x0105 / 0x0106; no build drops a sealed set. |
+| **E2** | Plain sets, headers and TOCs are byte-identical to 2.1 without encryption. |
+| **E3** | Every AEAD key encrypts at most one stream; nonces within a stream are counters. |
+| **E4** | No plaintext of an encrypted set reaches tape beyond §5.6 and §5.3. |
+| **E5** | Every chunk is authenticated before release; every stream to its final chunk. |
+| **E6** | A locked set's hidden members throw; internals never call them. |
+| **E7** | Locked sets are re-emitted verbatim; saving a TOC never needs a password. |
+| **E8** | An incremental chain is entirely plain, or entirely encrypted under one DEK and scheme. |
+| **E9** | A missing key or unusable scheme fails a set before any tape movement. |
+| **E10** | Agents never prompt or see a password; they take keys from the unlocked TapeSetTOC. |
+| **E11** | Passwords and keys are never persisted, logged or exported. |
+| **E12** | A withdrawal locks every set the key opened; modified sets are saved first. |
+| **E13** | A key entering the ring is tried on every locked set at once. |
+| **E14** | An encrypted set loaded from tape never accepts files. |
+| **E15** | An unknown encryption kind loads as a permanently locked set. |
+| **E16** | (v2) A drive key applies only to one set's content. |
+| **E17** | Every TOC replacement or cartridge change locks the old TOC's sets; keys are dropped too — unless RetainKeysAcrossMedia keeps them for the session, offering them to every newly loaded TOC. ForgetPasswords always drops them. |
+| **E18** | An overview uses the password it is given, on every locked chain, but never prompts. |
+| **E19** | A password the user enters, once proven correct, is tried on every locked chain of the TOC — whichever verb carries it (unlock, restore, rename, incremental, a new chain, the in-window check with unlock). Only a correct password spreads; a wrong one counts once (W8). |
+
+## 14. Performance
+AES-256-GCM runs at several GB/s per core — far above LTO speeds. One PBKDF2 (~0.25 s) per chain per session; E19 adds
+one per locked set of a foreign chain after a correct password. Software encryption rules out hardware compression;
+software compression (with the probe choosing the level, Design-Compression §6.2) keeps the pace.
+
+## 15. Tests
+
+| Suite | Pins |
+|---|---|
+| AeadStreamTests, KeyDerivationTests, KeyEnvelopeTests, KeyRingTests, EncryptionBasicsTests | §4, §7 |
+| SealedTocTests, LockedSetTests | §5, §6, E1, E2, E6, E7, E15 |
+| EncryptionAgentTests (× profiles × header modes), EncryptionFailureTests, MultiVolumeEncryptionTests | §9, E3–E5, E9, E14 |
+| TapeScannerEncryptionTests, ServiceScanEncryptionTests | §12 |
+| **EncryptionServiceTestBase** | shared helpers: Pw / OtherPw / Wrong, SeedEncryptedAsync, SeedAsync(media, params passwords), RestoreSets, TakePasswordPrompts, TestClock |
+| ServiceEncryptionTests | operations on encrypted sets: backup rules (§8.1), restore, list, rename + password change, Clear sites |
+| ServiceUnlockTests | verbs (§10.5), one password every chain (E19, incl. restore / rename / prompt), the delay (§10.8, test clock), retention (§10.1), overviews (E18) |
+| ServiceSeriesTocTests, ServiceDescribeSetTests, TapeTOCCursorTests | series TOC refusals; DescribeSet / volume queries cursor-free |
+| TapeConNET.Tests: EncryptionCliTests | password sources, refusals, round trip, exit code 6, rename-set |
+
+Helpers: TestTapeServiceHost (PasswordAnswers, PasswordPrompts — empty in the teardown sweep), TapeCrypto.UseIterations,
+UseDeterministicRandom, TapeSetCiphers.UseCipher.
+
+## 16. Implementation plan — completed
+
+| Phase | Content | State |
+|---|---|---|
+| 0 | crypto, envelope, ring | done |
+| 1 | format, stub / chunk / envelope, set-header field 8 | done |
+| 2 | domain: locked state | done |
+| 3 | agents: cipher seam, E9, resume | done |
+| — | MultiVolume, TocLocation, TocReserve (§20.4) | done |
+| 4 | service | done |
+| 5 | Scan Media | done |
+| 6 | CLI + `tapecon docs` | done |
+| 7 | WPF (Design-TapeWinEncryption, Steps 1–7) and help | done |
+| 8 | Design-FormatV21 §4.3 / §13 pointers | open |
+| v2 | §19 | open — hardware probe first |
+
+## 17. File map
+
+| File | Role |
+|---|---|
+| Encryption/TapeEncryption.cs, TapeSetKey.cs, TapeKeyEnvelope.cs, TapeKeyRing.cs, TapeAeadStream.cs, TapeSealedPayload.cs, TapeCrypto.cs, TapeSetCipher.cs | §4, §7, §9.1 |
+| Format/TapeRecordKind.cs | 0x0105, 0x0106 |
+| Toc/TapeTOC.cs, TapeTOC.Format.cs, TapeTOC.Encryption.cs | §5, §6 |
+| Headers/TapeSetHeader.cs | field 8 |
+| Agents/TapeAgentBase.Encryption.cs and call sites | §9 |
+| Services/ServiceOperationRequest.cs, ServiceOperationResult.cs (SetsLocked), ITapeServiceHost.cs, PasswordPrompt.cs | §10.2, §10.4 |
+| Services/TapeServiceBase.Encryption.cs | §10.1, §10.2, §10.3, §10.5, §10.8, §10.9 |
+| Services/TapeServiceBase.cs, .Remote.cs, .Scan.cs, .Restore.cs, .Backup.cs, .List.cs, .Properties.cs | Clear / Reapply sites, pre-flight, configuration, overviews, sheets |
+| TapeConNET: Cli/PasswordOptions.cs, BackupCommand, RestoreCommand, ListCommand, InfoCommand, RenameCommand; Ux/ConsoleUxServiceHost.cs; Infrastructure/TapeConExitCode.cs | §11.2 |
+| TapeWinNET | Design-TapeWinEncryption §13 |
+
+## 18. Open items
+
+| Item | Note |
+|---|---|
+| Whole-media encryption | a separate feature on this key hierarchy |
+| Password policy | advisory length hint only (≥ 12 recommended) |
+| Argon2id | reserved KDF id |
+| Verify's early stop on the plain path | separate fix |
+| Hardware encryption | §19 |
+
+## 19. Hardware (drive) encryption — v2 outline and the hooks v1 leaves for it
+
+## 19.1 What changes, what does not
+Password, envelope, DEK, chain rules, sealed TOC, stub, locked state and plain set headers stay. File records are plain
+on the host; the drive encrypts each block with K_drive; hardware compression is allowed; no record overhead. A v1 build
+meeting a v2 set loads it locked (E15, UnsupportedSetCipher).
+
+## 19.2 Drive-tier API (v2)
+SupportsHardwareEncryption (SECURITY PROTOCOL IN), SetDataEncryption / ClearDataEncryption (SPOUT page 0010h, CKOD = 1,
+decryption mode Mixed); virtual emulation for CI; a remote gRPC verb pair.
+
+## 19.3 Write path
+Set header plain → BeginSet loads K_drive → content → closing setmark → EndSet clears (finally) → TOC plain.
+
+## 19.4 Read path
+Key set via SPTI, reads via ReadFile; EndSet after Manager.EndReadWrite (BindsDrive).
+
+## 19.5 Scanner
+A header-less Hardware set fails the identification read → Unknown, no damage diagnosis.
+
+## 19.6 Invariants and tests v2 adds
+E16; the agent matrix gains encryption {Software, Hardware} × compression {None, Software, Hardware}.
+
+## 19.7 v2 entry gate
+SECURITY PROTOCOL IN through \\.\TAPEn; key via SPTI applies to WRITE(6) and ReadFile; the wrong-key error; CKOD and bus
+reset clear the key — verified on real drives before any code.
+
+## 20. Implementation history
+
+## 20.0 Phase 0
+File split by responsibility; byte layouts pinned; the 50-million-iteration bound; inert Dispose while open; one key
+object per DEK.
+
+## 20.1 Phase 1
+Stub DataFormat critical with default V2; envelope group required by the validator; Kdf not critical, by value.
+
+## 20.2 Phase 2
+Setters and mutators throw on a locked set; DisplayCount; a locked set is its own chain start.
+
+## 20.3 Phase 3
+Padding granule 64 KiB; ITapeSetCipher as built; EndSet in the backup finally and both restore loops; CompleteRead inside
+the decompressor's using.
+
+## 20.4 The MultiVolume, TocLocation and TocReserve work
+Stub field 9 FirstBlockAfterSet; the live TOC reserve and partition budget count sealed sets; four-step resume
+identification; the pre-flight moved before the restore's filter pass; OnAskPassword got its default.
+
+## 20.5 Phases 4–7 (service, scan, CLI, WPF)
+- **Service:** Clear sites extended to remote volume changes; **RetainKeysAcrossMedia** + ReapplyKeys +
+  TapeKeyRing.LockHeld; **VerifyPasswordAsync**, **UnlockWithPasswordAsync**, **PasswordRetryDelay** (W8, ask first then
+  wait), HasPasswords; MaxPasswordAttempts public; PasswordRequest.PartOfSeries; the password change always proves the
+  current password against the envelope.
+- **E19** (one password, every chain) — first only the explicit unlock; equalized for restore, rename, incremental, new
+  chains and the in-window check.
+- **Consolidation:** the encryption partial reduced to three building blocks (§10.9) — one prompt loop instead of three,
+  one all-chains trial instead of two.
+- **Overviews (E18):** info and list --sets-only unlock with a given password, never prompting.
+- **Series TOC** (Design-MultiVolume §5.5): rename refused on it.
+- **Volume queries cursor-free** (Design-MultiVolume §1.1, D17): DescribeSet and the continuation queries take an index.
+- **CLI:** password sources, `--password` refusal with advice, `--encrypt` / `--encryption`, exit code 6, rename-set with
+  password change, info with passwords.
+- **Incremental "unchanged" files** (FilesUpToDate) no longer count as skipped — not encryption, found in the same tests.
+
+---
+
+## 21. Appendix
+
+The original §4–§9 of Design-Encryption (cryptography, format, domain model, keys, chains, agents). Those sections were
+already accurate, so the final version above trimmed their detail, for example the full table of cipher call sites in §9.1.
+For the full details, §4–§9 from the original design document follow. The section numbers match.
+
+## 4. Cryptography [ORIGINAL]
+
+### 4.1 Primitives [ORIGINAL]
 
 | Purpose | Primitive | Parameters |
 |---|---|---|
@@ -121,7 +699,7 @@ later without a format change; old sets unlock with the parameters they recorded
 of tests stay fast. Readers accept whatever the envelope records: lowering the count in a tampered envelope gains
 nothing, because the wrap's associated data covers the parameters (§5.5).
 
-### 4.2 Key hierarchy
+### 4.2 Key hierarchy [ORIGINAL]
 
 ```
 password ──NFC/UTF-8──PBKDF2(salt_env, iters)──► KEK ──AES-GCM unwrap──► DEK      (one DEK per chain)
@@ -144,7 +722,7 @@ password ──NFC/UTF-8──PBKDF2(salt_env, iters)──► KEK ──AES-GCM
   prefix and the Volume in the associated data (§4.3).
 - **K_drive is reserved now**, so v2 adds no new key material.
 
-### 4.3 Chunked AEAD stream (shared construction)
+### 4.3 Chunked AEAD stream (shared construction) [ORIGINAL]
 
 One construction serves file records (Software) and sealed metadata (both modes); only the key, the chunk size and the
 nonce prefix differ.
@@ -171,9 +749,9 @@ nonce_i    = prefix(7) ‖ i (u32 big-endian) ‖ final(1)     final = 0x01 on c
 `TapeAeadSession` chunk buffer, processed in place. **Disposing an encrypting stream does nothing while it is open** — a
 wrapping codec may dispose its inner stream; only `Complete()` (final chunk) or `Abandon()` (none) end a record.
 
-## 5. On-tape format
+## 5. On-tape format [ORIGINAL]
 
-### 5.1 Registry additions (Design-FormatV21 §4.3)
+### 5.1 Registry additions (Design-FormatV21 §4.3) [ORIGINAL]
 
 | Kind | Record | Carrier |
 |---|---|---|
@@ -185,7 +763,7 @@ next TOC write would silently delete them. Refusing the whole TOC (`UnknownKind`
 is not yet released, so every 2.1 build knows them; the format stays **2.1**. Within that, the *encryption kind* is
 forward-compatible by value (E15).
 
-### 5.2 TOC stream grammar
+### 5.2 TOC stream grammar [ORIGINAL]
 
 ```
 TocHeader  ( TocSet TocFileBatch*  |  TocSealedSet TocSealedChunk+ )*  TocEnd  ‖ CRC-64
@@ -200,7 +778,7 @@ TocHeader  ( TocSet TocFileBatch*  |  TocSealedSet TocSealedChunk+ )*  TocEnd  �
 - **Re-emission "verbatim"** re-serializes the stub from its stored values and re-emits the stored chunks unchanged. An
   unknown non-critical stub field from a future build is dropped on a rewrite — as for `TocSet`.
 
-### 5.3 TocSealedSet (0x0105) — the plaintext stub
+### 5.3 TocSealedSet (0x0105) — the plaintext stub [ORIGINAL]
 
 | # | Field | Type | Flags |
 |---|---|---|---|
@@ -228,7 +806,7 @@ Validate (G10): SetId non-empty, V2, Encryption ≥ 1, prefix length 7, ChunkCou
   TOC around it and *delete* it is in this stub, independent of the scheme. A build that meets an unknown scheme keeps
   the TOC, shows the set as locked ("encrypted with an unsupported method"), and never loses it on a rewrite.
 
-### 5.4 TocSealedChunk (0x0106) and the sealed payload
+### 5.4 TocSealedChunk (0x0106) and the sealed payload [ORIGINAL]
 
 | # | Field | Type | Flags |
 |---|---|---|---|
@@ -254,7 +832,7 @@ PayloadLength:varuint  ‖  TocSet record  ‖  TocFileBatch record*  ‖  zero 
 - **Chunk structure** is checked at load (CrossCheck): middle chunks exactly 1 MiB + 16, the final one 16 … 1 MiB + 15.
 - **Identical in both modes** — the sealed payload never depends on who encrypted the file records.
 
-### 5.5 KeyEnvelope (group, field 48 of 0x0105)
+### 5.5 KeyEnvelope (group, field 48 of 0x0105) [ORIGINAL]
 
 | # | Field | Type | Flags |
 |---|---|---|---|
@@ -273,7 +851,7 @@ PayloadLength:varuint  ‖  TocSet record  ‖  TocFileBatch record*  ‖  zero 
   password.
 - No hint field, no key id (§4.2). Identical in both modes.
 
-### 5.6 Set header (0x0302) of an encrypted set
+### 5.6 Set header (0x0302) of an encrypted set [ORIGINAL]
 
 One new optional, **non-critical** field; everything else keeps its tag:
 
@@ -293,7 +871,7 @@ One new optional, **non-critical** field; everything else keeps its tag:
 - `TapeSetHeader.DisplayName` for an encrypted header: "Set #n · vol v (encrypted)".
 - Built by `TapeTOC.CreateSetHeader` — the sole factory — from the plain stub fields only (§6.2).
 
-### 5.7 File record of an encrypted set
+### 5.7 File record of an encrypted set [ORIGINAL]
 
 ```
 plain set:      [0x0201 frame][codec u8][body]                                         (unchanged)
@@ -312,13 +890,13 @@ Hardware set:   [0x0201 frame][codec u8][body] as the host writes it; every bloc
 - **Not identifiable on tape.** A header-less Software set starts with ciphertext: the block classifier identifies it as
   `Foreign`, never as a file header or as damage (Design-TocLocation §3.2).
 
-### 5.8 Format-level rules
+### 5.8 Format-level rules [ORIGINAL]
 
 Encrypted sets require `DataFormat = V2` (F4). The legacy test emitter (`WritesCodecPrefix == false`) refuses encryption.
 
-## 6. The domain model — a locked state for TapeSetTOC
+## 6. The domain model — a locked state for TapeSetTOC [ORIGINAL]
 
-### 6.1 Shape
+### 6.1 Shape [ORIGINAL]
 
 `Toc/TapeTOC.Encryption.cs` (the encryption partial of `TapeSetTOC`, plus the three wire types):
 
@@ -361,7 +939,7 @@ FirstBlockAfterSet), plus:
 **Internals use the backing fields**: `CopyFrom`, the copy constructor, `CaptureState` / `IsModified` / `MarkSaved`,
 `Wire.From`.
 
-### 6.2 Sites that change — as built (Phases 2–3) and to come (Phase 4)
+### 6.2 Sites that change — as built (Phases 2–3) and to come (Phase 4) [ORIGINAL]
 
 **TOC model** (`TapeTOC.cs`, `TapeTOC.Format.cs`) — done in Phase 2:
 
@@ -397,7 +975,7 @@ FirstBlockAfterSet), plus:
 
 **Service** — Phase 4, §10.6.
 
-### 6.3 Persistence and save stamping
+### 6.3 Persistence and save stamping [ORIGINAL]
 
 - `PersistedState` of an encrypted set includes Encryption and the envelope.
 - `IsModified`: a **locked** set returns false without capturing. `MarkSaved` on a locked set is a no-op, and runs after
@@ -408,7 +986,7 @@ FirstBlockAfterSet), plus:
 - A **new** encrypted set (never sealed) is sealed on its first save.
 - All copies of one TOC save carry one save time (Design-TocLocation §6).
 
-### 6.4 Loading
+### 6.4 Loading [ORIGINAL]
 
 `ReadRecords` gains two arms: `TocSealedSet` builds a locked `TapeSetTOC` from the stub (`CreateLocked`) and collects the
 following `TocSealedChunk` records into `Sealed` — **no decryption on load**, so loading a TOC never needs a password and
@@ -418,9 +996,9 @@ following `TocSealedChunk` records into `Sealed` — **no decryption on load**, 
 DataFormat, ClosedByEom, ContinuedFromPrevVolume — not FirstBlockAfterSet, §5.3), and adopts files and hidden metadata.
 A parse failure after authentication returns false (the ring reports `ERROR_INVALID_DATA`).
 
-## 7. Keys at runtime
+## 7. Keys at runtime [ORIGINAL]
 
-### 7.1 Types (`TapeLibNET/Encryption/`)
+### 7.1 Types (`TapeLibNET/Encryption/`) [ORIGINAL]
 
 | Type | File | Role |
 |---|---|---|
@@ -435,7 +1013,7 @@ A parse failure after authentication returns false (the ring reports `ERROR_INVA
 The ring works on the internal `ITapeLockableSet` (implemented by `TapeSetTOC`); its public overloads take a `TapeTOC`.
 All three key derivations live on `TapeSetKey`, so agents and ciphers never touch the raw DEK.
 
-### 7.2 Unlocking
+### 7.2 Unlocking [ORIGINAL]
 
 ```
 UnlockAll(toc):  for each locked, unlockable set S, for each key K in the ring: S.TryUnlock(K)
@@ -453,7 +1031,7 @@ Unlock(toc, i, pw): trial first (UnlockAll); still locked → unwrap set i's env
   `orgTOC` in the resume) reference — never clone — the key; the ring disposes keys only between operations (under
   `_operationLock`).
 
-### 7.3 Withdrawing a key — it locks back
+### 7.3 Withdrawing a key — it locks back [ORIGINAL]
 
 - `Withdraw(key, toc)` calls `Lock()` on every set whose Key is that key, then zeroes the key.
 - `Lock()` on a set with **unsaved changes** throws (`InvalidOperationException`, a programming error); every verb that
@@ -465,9 +1043,9 @@ Used by the password change (§9.7), **Media ▸ Forget Passwords**, and implici
 **What withdrawal is, and is not.** Session hygiene and honest UX — after a password change the user must prove the
 *new* password. Not cryptographic revocation: the DEK is unchanged (§9.7).
 
-## 8. Chains: base, continuation, incremental
+## 8. Chains: base, continuation, incremental [ORIGINAL]
 
-### 8.1 The inheritance rule
+### 8.1 The inheritance rule [ORIGINAL]
 
 | New set | Previous set (the incremental base) | Allowed | Key |
 |---|---|---|---|
@@ -482,7 +1060,7 @@ Used by the password change (§9.7), **Media ▸ Forget Passwords**, and implici
 An incremental chain is all plain, or all encrypted under one DEK **and one scheme** (E8) — enforced in the library, not
 only in the UI: a plain incremental on an encrypted base would reveal which files changed.
 
-### 8.2 Creating an incremental on an encrypted base
+### 8.2 Creating an incremental on an encrypted base [ORIGINAL]
 
 `IsFileUptodateInc` reads the chain's file names and times, so the chain must be unlocked:
 - The service unlocks the **previous set** with the supplied password (or the ring) — this proves the password and,
@@ -491,14 +1069,14 @@ only in the UI: a plain incremental on an encrypted base would reveal which file
   mint the fresh envelope, which is exactly the rule "password needed to create an incremental".
 - The agent refuses an incremental whose chain is still locked before the tape moves (`IsIncrementalBaseLocked`).
 
-### 8.3 Continuation sets
+### 8.3 Continuation sets [ORIGINAL]
 
 `TapeSetTOCParams` carries Encryption, Envelope and Key; `ToParams()` fills them and `AddContinuationSetTOC` applies
 them (refusing an encrypted params record without envelope or key). `ResumeBackupToNextVolume` builds the continuation
 from `continuationSetParams` captured at EOM — one prompt per logical set, however many volumes. `ToParams` does not
 carry `FirstBlockAfterSet`: the continuation part gets its own on its own volume.
 
-### 8.4 Key uniqueness — verified (E3)
+### 8.4 Key uniqueness — verified (E3) [ORIGINAL]
 
 With `K_file = f(DEK, SetId, FileId)` and counter nonces, E3 holds iff no (SetId, FileId) pair is ever used for two file
 records:
@@ -520,9 +1098,9 @@ is unaffected.
 
 **Hardware mode** reuses K_drive for every block of a set by design — the drive generates a unique IV per block.
 
-## 9. Agents and pipelines
+## 9. Agents and pipelines [ORIGINAL]
 
-### 9.1 The scheme seam — ITapeSetCipher
+### 9.1 The scheme seam — ITapeSetCipher [ORIGINAL]
 
 `Encryption/TapeSetCipher.cs`; agent helpers in `Agents/TapeAgentBase.Encryption.cs`.
 
@@ -577,7 +1155,7 @@ session. Agents touch encryption only through `CipherFor`, `ValidateSetEncryptio
 key must apply from the next block on, never to the set header. `EndSet` in `finally` guarantees the following TOC write
 and the next set's header are written in plain.
 
-### 9.2 Early checks (E9)
+### 9.2 Early checks (E9) [ORIGINAL]
 
 **Backup — `EnsureSetFormat`** validates the scheme first, then refuses an incremental whose chain is locked
 (`IsIncrementalBaseLocked`):
@@ -595,7 +1173,7 @@ and the next set's header are written in plain.
 (`TrySelectFiles`); the per-set check catches a pre-selected null entry: `SetError`, `LatchFailure`,
 `overallSuccess = false`, and the `ignoreFailures` logic carries on with the next set. Tape unmoved.
 
-### 9.3 Backup — TapeFileBackupAgent.BackupFile
+### 9.3 Backup — TapeFileBackupAgent.BackupFile [ORIGINAL]
 
 ```
 TapeBackupSourceStream (BackupRead) → HashingStream (plaintext hash)
@@ -613,7 +1191,7 @@ sink = ActiveSetCipher.OpenWrite(wstream, set, template)   — EncryptingStream 
   set's overhead for the reserve.
 - Packer, `PackedCommitTracker`, `HandleEom`, `HandleWriteFault`, `DiscardOpenFile`: unchanged — ciphertext is bytes.
 
-### 9.4 Restore / validate / verify — RestoreNextFile
+### 9.4 Restore / validate / verify — RestoreNextFile [ORIGINAL]
 
 ```
 rstream (TapeReadStreamFacade, bounded to SizeOnTape)
@@ -632,7 +1210,7 @@ rstream (TapeReadStreamFacade, bounded to SizeOnTape)
 - **Errors**: tag mismatch or truncation → `TapeIOException(ERROR_INVALID_DATA)`, re-wrapped with the file name, through
   the existing `NotifyFileFailed` — Skip / Retry / Abort intact.
 
-### 9.5 Restore across volumes — identifying an encrypted volume
+### 9.5 Restore across volumes — identifying an encrypted volume [ORIGINAL]
 
 `CheckVolumeToResumeFrom` identifies the cartridge in four steps (Design-TocLocation §7, Design-MultiVolume §5.2). For
 encrypted series:
@@ -647,13 +1225,13 @@ encrypted series:
 Hence a header-less encrypted volume whose own TOC is beyond S0–S3 needs S4. The series TOC is put back whatever the
 outcome (`finally`); its sets keep their keys by reference.
 
-### 9.6 Delete — TapeSetAgent
+### 9.6 Delete — TapeSetAgent [ORIGINAL]
 
 No change beyond `ClassifySetHeader` (`!IsVacant`): locked sets are verified by their set header's plain fields and
 deleted; retained locked sets are re-emitted verbatim (E7); a trailing delete restamps the retained set's
 `FirstBlockAfterSet` in its stub. Scheme-independent — no cipher involved.
 
-### 9.7 Password change (part of rename)
+### 9.7 Password change (part of rename) [ORIGINAL]
 
 `RenameBackupSetAsync(setIndex, newName, password?, newPassword?)`:
 1. Unlock the set (ring or password) — through E13 the whole chain opens.
@@ -666,433 +1244,3 @@ deleted; retained locked sets are re-emitted verbatim (E7); a trailing delete re
 **Honest limits, stated in the UI:** older `.tapetoc` exports and other volumes' TOC copies still open with the old
 password; the DEK is unchanged — replacing it means a new backup.
 
-## 10. Service layer
-
-### 10.1 Key ring ownership
-
-`TapeServiceBase` owns one `TapeKeyRing` per service instance (`_keyRing`). Keys are **dropped, and their sets locked,
-whenever the service's TOC is replaced or the cartridge leaves**:
-
-| Site | Where |
-|---|---|
-| eject | `EjectMediaCore` → `ClearTocState` |
-| media load / reload | `LoadMediaAsync` |
-| TOC read from tape | `RestoreTOCAsync`, `IdentifyMediaAsync` — the new TOC loads locked |
-| format, initial TOC | `FormatMediaAsync`, `CreateInitialTOCAsync` |
-| overwrite backup | the `ResetMediaId` branch of `ExecuteBackupCore` |
-| TOC import | `ImportTOCFromFileAsync` |
-| recovered TOC adoption | `AdoptRecoveredToc` (Scan Media) |
-| reset, close, drive open, dispose | `Reset`, `CloseAsync`, `OpenDriveAsync` / `OpenVirtualDriveAsync`, `Dispose` |
-
-`Clear(toc)` runs **before** the old TOC is dropped, so the old TOC's sets lock (E12 — they are saved by then); a
-multi-volume operation keeps its keys across volume swaps (the swaps do not go through these sites).
-
-### 10.2 Requests
-
-```csharp
-// BackupRequest
-public TapeEncryption Encryption { get; init; } = TapeEncryption.None;   // v1 accepts None | Software
-public char[]? Password { get; init; }        // new chain, or the chain of the previous set (incremental)
-// RestoreRequest, ListRequest
-public char[]? Password { get; init; }        // tried before prompting — unattended use (CLI --password-file)
-```
-
-The service clears every `char[]` it receives after use (`Array.Clear`) — hygiene, not protection (§2.2).
-
-**Backup configuration** — in `ExecuteBackupCore`, where `HashAlgorithm` and `Compression` are applied after
-`AddNewSetTOC` / `ReplaceCurrentSetTOC`, before the agent runs:
-
-| Situation | Action |
-|---|---|
-| `None`, previous set plain or none | as today |
-| `None`, incremental on an encrypted previous set | encryption implied (base's scheme); Password (or prompt, `PasswordPurpose.Incremental`) required → §8.2; none → `ERROR_INVALID_PASSWORD` before any tape movement |
-| `Software`, non-incremental | `CreateChain(Password)` (or prompt `NewSet` + `NewSetConfirm`); `EnableEncryption`; the key joins the ring |
-| incremental, `Encryption` ≠ base's | refused, `ERROR_INVALID_PARAMETER` |
-| `Software` + `Compression = Hardware` | refused, `ERROR_INVALID_PARAMETER` |
-| `Hardware` | v1: refused, `ERROR_NOT_SUPPORTED`. v2: requires `SupportsHardwareEncryption` |
-
-- **Append after a set** (`AppendAfterSetIndex`, `ReplaceCurrentSetTOC`) writes a fresh set — the same rules as a new
-  set; E14 is not involved.
-- **Overwrite** clears the ring first (§10.1) — the old series' keys never leak into the new one.
-- **Rollback interplay.** `toc.CopyFrom(backupTOC)` restores the previous sets with their lock state; a key minted for
-  the abandoned new set simply stays unused in the ring.
-- **Multi-volume.** Continuations need no service action (§8.3); the TOC saved between volumes seals the encrypted set
-  of each volume.
-
-**Capability for the UI.** `TapeServiceBase.SupportsHardwareEncryption` — false in v1.
-
-### 10.3 Pre-flight unlock for read operations
-
-Restore, validate, verify, file listing and set rename call `EnsureSetsUnlocked(toc, sets, password, purpose)` **before
-any tape movement and before any read of a hidden member**. In `ExecuteRestoreCore` that is right after the identity
-checkpoint (§10.6 of Design-MediaHeader), **before** the filter pass (`toc[stdIdx].SelectFiles(filter)`), the selection
-(`SelectFilesFromSets`), the counts (`GetFileCounts`) and the per-set log loop:
-
-1. Expand the selection to the chains it needs (an incremental restore walks to its base).
-2. `ring.UnlockAll(toc)`; for each set still locked and unlockable: the request's password; else prompt
-   (`OnAskPassword`, `PasswordPurpose.Unlock`), up to 3 attempts. Not unlockable (E15) → skipped with "encrypted with an
-   unsupported method".
-3. A declined prompt (`null`) drops that set **and the rest of its chain** from the selection, reported as "N set(s)
-   skipped — locked". `RestoreResult.SetsLocked` counts them; their files are unknown and appear in no file counter.
-
-The agent's E9 check stays as the safety net. A restore whose every selected set stayed locked reports
-`NothingProcessed` with the locked count as its reason.
-
-### 10.4 Host callback
-
-```csharp
-// ITapeServiceHost — a default implementation: hosts that do not ask skip the set
-char[]? OnAskPassword(in PasswordRequest request) => null;
-
-public readonly record struct PasswordRequest(
-    PasswordPurpose Purpose,       // NewSet, NewSetConfirm, Unlock, Incremental, Rename, NewPassword, NewPasswordConfirm
-    int SetIndex, int AltIndex,
-    string SetDisplay,             // DisplayName — never the hidden description
-    int Attempt,                   // 1-based
-    TapeResult? LastFailure);
-```
-
-HOST GUIDANCE: a non-interactive host returns `null` and logs the auto-decision — an unattended run must not stall. The
-default implementation does exactly that (minus the log), so every host compiles unchanged; WPF and CLI override it.
-
-### 10.5 New and changed verbs
-
-| Verb | Behaviour |
-|---|---|
-| `UnlockSetsAsync(setIndexes, password?)` | explicit unlock (UI "Unlock…"); no tape I/O |
-| `ForgetPasswordsAsync()` | `ring.Clear(toc)`; no tape I/O |
-| `RenameBackupSetAsync(setIndex)` | pre-flight unlock **before** `OnAskBackupSetName` (it reads Description) |
-| `RenameBackupSetAsync(setIndex, newName, password?, newPassword?)` | §9.7 |
-| `DeleteBackupSetsExAsync`, `RenameMediaAsync`, `ExportTOCToFileAsync` | unchanged — no password (locked sets carried verbatim) |
-| `ScanMediaAsync`, `RecoverTocAsync` | unchanged — a harvested TOC loads its sealed sets locked |
-| `VerifyPasswordAsync(setIndex, password, unlock)` | checks against the set's envelope, never a held key; the in-dialog check |
-| `UnlockWithPasswordAsync(password)` | one password tried on every locked chain; `UnlockOutcome(Sets, Chains, Result)` |
-| `PasswordRetryDelay` | session-wide wrong-password delay: 3 free, then 5 s doubling to 60 s; a success resets |
-
-### 10.6 Property sheets, listings, progress text — the sites
-
-Every service site that reads a hidden member must branch on `IsLocked` (or use `DisplayName` / `DisplayCount`):
-
-| Site | File | Reads today | Locked |
-|---|---|---|---|
-| `DescribeSet` | `TapeServiceBase.Properties.cs` | Description, Count, `set.Sum(…)`, times, BlockSize, HashAlgorithm, Compression, Incremental | Description `[encrypted set]`, Set Index, **Encryption** row (`EncryptionPreset.DisplayName(…) — locked`), Size on Media, Data Format, Volume, Continued from/on. Unlocked: today's rows plus the Encryption row |
-| `LogBackupSetsTable` | `TapeServiceBase.List.cs` | CreationTime, Count, Incremental, Description | `[Locked]`, `DisplayName`, size — no count, no time |
-| `ListContentsAsync` (FileDetails) | same | `CurrentSetTOC.Incremental`, `SelectFiles` | pre-flight unlock; a declined set prints "locked — files not listed" and steps `setIndex--` |
-| `LogTOCInfo` | `TapeServiceBase.cs` | Description, Count, Incremental | `DisplayName`, `DisplayCount`, `[Encrypted]` |
-| `RenameBackupSetAsync(int)` | same | Description | pre-flight unlock first |
-| `ExecuteRestoreCore` per-set log loop | `TapeServiceBase.Restore.cs` | `CurrentSetTOC.Description` | after the pre-flight; `DisplayName` |
-| `ExecuteBackupCore` | `TapeServiceBase.Backup.cs` | sets the new set's Description, HashAlgorithm, … | the new set is never locked; `IsFileUptodateInc` needs the chain unlocked (§10.2) |
-| `ServiceOperationProgressHandler.OnSetAnomaly` | `ServiceOperationProgressHandler.cs` | names from `TapeSetAnomaly` | no change — the agent fills them from `DisplayName` |
-| `ServiceScanProgressHandler.DescribeFragment` | same | `>{f.Description}<` for set headers | `f.DisplayName` + "(encrypted)" (§12) |
-| TOC anomaly / volume-space advice, TOC reserve | `TapeServiceBase.Toc.cs`, `.Outcome.cs`, `.cs` | stub fields, `EstimateSerializedSize` | no change |
-
-### 10.7 Outcome
-
-| Code | Meaning |
-|---|---|
-| `ERROR_INVALID_PASSWORD` | wrong password, or a key needed and none supplied |
-| `ERROR_INVALID_DATA` | authentication failure after a good unwrap — tampering or corruption |
-| `ERROR_INVALID_PARAMETER` | a refused combination (§10.2) |
-| `ERROR_INVALID_STATE` | appending to an encrypted set loaded from tape (E14) |
-| `ERROR_NOT_SUPPORTED` | a scheme this build or this drive cannot use (E9, E15) |
-
-`FileOperationVerdict` is unchanged.
-
-## 11. Applications
-
-### 11.1 WPF (TapeWinNET)
-
-- **Backup dialog — Options:** an *Encryption* selector beside compression: *None* / *Software* / *Drive* (disabled in
-  v1); *Password* + *Confirm*; a length hint (≥ 12 recommended, advisory). *Software* disables *Hardware* compression.
-  For an incremental on an encrypted base the selector shows the base's scheme read-only with one *Password* field.
-  A non-dismissable note: *a lost password cannot be recovered*, and *encrypted sets cannot be recovered without their
-  table of contents — keep the TOC exported*.
-- **Tree / sets list:** lock glyph on encrypted sets (closed / open); a locked set shows `DisplayName` and size; the file
-  pane shows a placeholder with an **Unlock…** button.
-- **PasswordDialog** for `OnAskPassword`: names the set, "wrong password (attempt 2 of 3)".
-- **Rename set dialog:** for encrypted sets a *Change password* expander, with the §9.7 limits as text.
-- **Media ▸ Forget Passwords.**
-- `TOCView` / `BackupSetView`: no `FilteredFileList` for a locked set; "Apply filter to all sets" skips locked sets;
-  restore selection of a locked set is whole-set only, resolved after the pre-flight unlock.
-
-### 11.2 CLI (TapeConNET)
-
-```
-tapecon backup D:\Data --encrypt                           # = software; masked prompt, twice
-tapecon backup D:\Data --encrypt software --password-file key.txt
-tapecon restore --set 0 --password-env TAPECON_PASSWORD
-tapecon rename-set 0 "Q3" --password-file old.txt --new-password-file new.txt
-```
-
-- `--encrypt [software|drive]` (`drive` rejected in v1), `--password-file`, `--password-env`, `--new-password-file`,
-  `--new-password-env`, parsed by `EncryptionPreset.TryParse`.
-- **No `--password <text>`** — it would land in shell history and the process list.
-- Unattended with no password source: locked sets are skipped; exit code `PasswordRequired` when nothing at all could be
-  processed.
-- `list` / `info`: an Enc column. `--compression hardware` with `--encrypt software` → usage error.
-
-## 12. Scan Media
-
-How the scanner implements it: s. Design-ScanMedia §4.8.
-
-- **Set headers** with `Encryption ≠ 0` map to `FragmentKind.SetHeader` with a new `TapeMediaFragment.Encryption`
-  (JSON-appended). `ServiceScanProgressHandler.DescribeFragment` uses `f.DisplayName` + "(encrypted)" instead of the
-  (empty) description.
-- **Header-less Software sets** start with ciphertext: the classifier identifies the block as `Foreign` → an `Unknown`
-  fragment with a fingerprint and **no** diagnosis (not damage). `ClosingMarkOf` closes it by the nearest mark.
-- **Header-less Hardware sets (v2)** fail the identification *read* itself — §19.5.
-- **TOC harvest and the TOC ladder's walks** (`TapeScanner.WalkFrom`) load sealed sets locked — no password.
-- `VerbalizeScan` adds: "N encrypted set(s) — their content cannot be inspected without the password".
-- `UnclosedLastSetEndsAtEom` reads Volume and ClosedByEom — both plain.
-
-## 13. Invariants
-
-| | |
-|---|---|
-| **E1** | A sealed set is carried by TOC kinds 0x0105 / 0x0106, which are non-skippable. A build that cannot read them refuses the whole TOC; no build drops a sealed set it cannot read. |
-| **E2** | Plain sets, plain set headers and plain TOCs are byte-identical to format 2.1 without encryption (the 2.1 goldens). |
-| **E3** | Every AEAD key encrypts at most one stream: K_file is unique per SetId ‖ FileId (§8.4), and every seal uses a fresh random nonce prefix. Nonces within a stream are counters. (Hardware: the drive's per-block IVs.) |
-| **E4** | No plaintext of an encrypted set reaches tape beyond the set-header fields of §5.6 and the stub of §5.3. |
-| **E5** | Every chunk is authenticated before its plaintext is released, and every stream is authenticated to its final chunk — even when the consumer stops early. |
-| **E6** | A locked set's hidden members throw; only the stub fields, SizeOnTapeTotal, IsVacant, DisplayName, DisplayCount, EstimateSerializedSize and ComputeTotalFileSizeOnTape answer. Library internals never call the throwing members. |
-| **E7** | A locked set is re-emitted from its sealed bytes verbatim; an unlocked set is re-sealed only when modified. Saving a TOC never needs a password. |
-| **E8** | An incremental chain is entirely plain, or entirely encrypted under one DEK and one scheme. Enforced by the library. |
-| **E9** | A missing key, or a scheme the build or the drive cannot use, fails a set before any tape movement. |
-| **E10** | Agents never prompt, never see a password, take keys only from the unlocked TapeSetTOC, and touch encryption only through ITapeSetCipher. |
-| **E11** | Passwords and keys are never persisted, logged or exported. |
-| **E12** | A key withdrawal locks every set the key opened; a set with unsaved changes is saved before it can be locked. |
-| **E13** | A key entering the ring is tried on every locked set of the TOC at once: chains are never half-unlocked. |
-| **E14** | An encrypted set accepts files only during the operation that created it (and its continuations); an encrypted set loaded from tape never accepts files. |
-| **E15** | An encryption kind this build does not implement loads as a permanently locked set — carried, navigated, listed and deletable — never refusing the TOC. |
-| **E16** | (v2) A drive key is loaded only for the content of one set and cleared when that set's content session ends, on every path; set headers, tapemarks and TOC copies are always written with drive encryption off. |
-| **E17** | Every TOC replacement or cartridge change locks the old TOC's sets (§10.1). The keys are dropped too — unless `RetainKeysAcrossMedia` keeps them for the session (`TapeWin`), offering them to every newly loaded TOC; `ForgetPasswords` always drops them. |
-| **E18** | An overview uses the password it is GIVEN — tried on every locked chain, like TapeWin's "Unlock Encrypted Sets…" — but never prompts: a glance at the cartridge must not stop for input. Without a password, locked sets stay `[Locked]` in the table. The per-file `list` keeps prompting per set. |
-
-## 14. Performance
-
-AES-256-GCM on AES-NI / VAES runs at several GB/s per core — an order of magnitude above LTO-9's native rate. It adds one
-in-memory pass after compression. The slowest layer — software compression — keeps setting the pace. The real
-throughput cost of *software* encryption is that it rules out *hardware* compression; the UI says so — the first reason
-to offer *drive* encryption in v2.
-
-Built in: pooled, in-place chunk buffers; one `AesGcm` and one stream object per file; allocation-free HKDF; one PBKDF2
-per chain per session; the identity cipher for plain sets. A `[Trait("Category", "Perf")]` pipeline benchmark measures
-it on the actual machines; excluded from routine runs.
-
-## 15. Tests
-
-### 15.1 Unit — crypto (Phase 0, done)
-
-`AeadStreamTests`, `KeyDerivationTests`, `KeyEnvelopeTests`, `KeyRingTests`, `EncryptionBasicsTests`: chunk boundaries,
-tamper / swap / truncate / extend, short reads, `CompleteRead`, label separation, envelope round trip and parameter
-tampering, NFC/NFD, ring trial unlock, withdrawal, one instance per DEK.
-
-### 15.2 Format (Phase 1, done)
-
-`SealedTocTests`: schemas and refusals (missing / extra / reordered chunks, no Final, non-zero padding, inner ≠ outer);
-E15 (Encryption = 2 and 99 load locked, re-emit byte for byte, delete, restore skips before moving); E2 (the 2.1
-goldens); E1. Goldens: `toc-sealed`, encrypted set header, encrypted file record.
-
-### 15.3 TOC and domain (Phase 2, done)
-
-`LockedSetTests`: every hidden member throws; internals never throw on a mixed TOC; vacant / non-vacant trailing locked
-sets; chain starts; save stamping; params; `AcceptsFiles`.
-
-### 15.4 Agents (Phase 3, done)
-
-`EncryptionAgentTests` (× drive profiles × header modes), `EncryptionFailureTests`, `MultiVolumeEncryptionTests` (×
-header modes): round trip × hash × compression; no plaintext on tape (`PlaintextProbe`); retry → fresh FileId; failure
-after header → no final chunk; validate and verify; ZSTD early stop with the final chunk verified; tampered block;
-E9 on restore and backup; Hardware in v1 refused before moving; E14; set-header verification and delete on locked sets;
-cipher bracketing with a recording fake (E16 shape); multi-volume continuation (shared envelope, one unlock, fresh
-FileIds across the rollback, both TOC copies per volume); resume identification of encrypted volumes, incl. S4.
-
-### 15.5 Service — `ServiceEncryptionTests` (Phase 4)
-
-Canned passwords; skip (null) drops the chain and counts `SetsLocked`; wrong-then-right; request `Password` used before
-prompting; incremental rules of §8.1 (incl. scheme mismatch, implied encryption); rename with password change locks the
-chain back, the old password then fails and the new one opens; `ForgetPasswordsAsync`; ring cleared at every §10.1 site;
-`DescribeSet`, `LogBackupSetsTable`, `LogTOCInfo` of a locked set show no hidden value; `Encryption = Hardware` refused
-before any tape I/O; the pre-flight runs before the filter pass; a multi-volume encrypted backup and restore through the
-service; a damaged encrypted volume identified by S4 at service level.
-
-### 15.6 Scan (Phase 5)
-
-Encrypted set header → `SetHeader` + `Encryption`, no description, `DescribeFragment` without `><`; header-less Software
-set → `Unknown`, no diagnosis; harvested TOC with sealed sets loads locked.
-
-### 15.7 Test helpers
-
-| Helper | State |
-|---|---|
-| `VirtualTapeFixture.BackupFiles`, `MultiVolumeVirtualTapeFixture.BackupFiles` | `password`, `encryption` (done) |
-| fixtures' `UnlockAll(password)` with a fixture-owned ring | done |
-| `TapeCrypto.UseDeterministicRandom`, `UseIterations` | done (AsyncLocal-scoped) |
-| `TapeSetCiphers.UseCipher` | done (TEST_HOOKS) |
-| `TestTapeServiceHost` | Phase 4: overrides `OnAskPassword` — `Queue<char[]?> PasswordAnswers` (empty → null = skip), `List<PasswordRequest> PasswordPrompts`; both cleared by `Reset()` |
-| `ServiceTestBase` teardown sweep | Phase 4: `PasswordPrompts` joins the "must be empty unless checked" sweep |
-| `TestTapeService` | Phase 4: none needed (`OnAgentReady` hooks suffice) |
-
-## 16. Implementation plan
-
-| Phase | Content | Exit criterion | State |
-|---|---|---|---|
-| 0 | crypto, envelope, ring | crypto tests green | done |
-| 1 | format, stub / chunk / envelope schemas, sealed payload, set-header field 8 | 2.1 goldens unchanged; new goldens frozen | done |
-| 2 | domain: locked state, all TOC-model sites | full suite green | done |
-| 3 | agents: cipher seam, call sites, E9, resume, verification | agent matrix green | done |
-| — | MultiVolume, TocLocation, TocReserve (§20.4) | | done |
-| 4 | service: ring ownership and Clear sites, requests, backup configuration, pre-flight, `OnAskPassword` (default), new verbs, rename + password change, sheets and listings; test host | service tests green | done |
-| 5 | Scan Media additions | scan tests green | done |
-| 6 | CLI + docs | TapeConNET.Tests round trips | done |
-| 7 | WPF -- S. Design-Encryption-11.1 | manual acceptance | **in progress (Steps 1–3 of 7 done)** |
-| 8 | Design-FormatV21 §4.3 / §13 point here; Help revamp | docs merged | |
-| v2 | §19 | hardware probe on real drives first | |
-
-## 17. File map
-
-| File | Role |
-|---|---|
-| `TapeLibNET/Encryption/TapeEncryption.cs` | `TapeEncryption`, `TapeKdf`, `TapeSetLockedException`, `EncryptionPreset` |
-| `TapeLibNET/Encryption/TapeSetKey.cs` | DEK and derivations |
-| `TapeLibNET/Encryption/TapeKeyEnvelope.cs` | `TapeKeyEnvelope`, `TapeSetEncryption` |
-| `TapeLibNET/Encryption/TapeKeyRing.cs` | `TapeKeyRing`, `ITapeLockableSet` |
-| `TapeLibNET/Encryption/TapeAeadStream.cs` | `TapeAead`, `TapeAeadSession`, `EncryptingStream`, `DecryptingStream` |
-| `TapeLibNET/Encryption/TapeSealedPayload.cs` | seal / open / pad |
-| `TapeLibNET/Encryption/TapeCrypto.cs` | RNG and iteration indirection |
-| `TapeLibNET/Encryption/TapeSetCipher.cs` | the seam, `PlainSetCipher`, `SoftwareSetCipher`, `UnsupportedSetCipher`, `TapeSetCipherProvider`, `TapeSetCiphers` |
-| `TapeLibNET/Format/TapeRecordKind.cs` | `TocSealedSet = 0x0105`, `TocSealedChunk = 0x0106` |
-| `TapeLibNET/Toc/TapeTOC.cs`, `TapeTOC.Format.cs` | locked-state sites, loader / writer arms, estimates |
-| `TapeLibNET/Toc/TapeTOC.Encryption.cs` | wire types (stub field 9), encryption partial of `TapeSetTOC` |
-| `TapeLibNET/Headers/TapeSetHeader.cs` | field 8, `DisplayName` variant |
-| `TapeLibNET/Agents/TapeAgentBase.Encryption.cs` | agent helpers (E9, E16 bracket) |
-| `TapeLibNET/Agents/TapeFileBackupAgent.cs`, `TapeFileRestoreAgent.cs`, `TapeAgentBase.SetVerification.cs`, `TapeAgentBase.cs` | call sites (§9) |
-| `TapeLibNET/Services/ServiceOperationRequest.cs`, `ServiceOperationResult.cs`, `ITapeServiceHost.cs` | Phase 4: `Encryption`, `Password`, `SetsLocked`, `OnAskPassword`, `PasswordRequest`, `PasswordPurpose` |
-| `TapeLibNET/Services/TapeServiceBase*.cs` | Phase 4: ring, Clear sites, backup configuration, pre-flight, verbs, sheets, listings |
-| `TapeLibNET/Services/ServiceOperationProgressHandler.cs` | Phase 5: `DescribeFragment` |
-| `TapeLibNET/Scan/TapeScanner.Identify.cs`, `TapeMediaFragment.cs` | Phase 5: `Encryption` on set-header fragments |
-| `TapeLibNET/Drive/TapeDriveBackend.cs`, `TapeDrive.cs` | v2: `SupportsHardwareEncryption` (v1: false) |
-| `TapeLibNET.Tests/Encryption/*`, `Services/ServiceEncryptionTests.cs` | §15 |
-
-## 18. Open items
-
-| Item | Note |
-|---|---|
-| Whole-media encryption | hides set count, sizes, media name, TOC metadata — a separate feature on this key hierarchy |
-| Password policy | advisory length hint only in v1 |
-| Argon2id | reserved KDF id; needs a vetted implementation outside the BCL |
-| Verify's early stop on the plain path | `StreamHelpers.CompareTo` stops when the disk file ends; encrypted sets are covered by `CompleteRead`; the plain path is a separate fix |
-| Hardware encryption (v2) | §19 |
-
-## 19. Hardware (drive) encryption — v2 outline and the hooks v1 leaves for it
-
-### 19.1 What changes, what does not
-
-| Concern | v1 Software | v2 Hardware | Prepared in v1 by |
-|---|---|---|---|
-| Password, envelope, DEK, chain rules | host | **same** | §4.2, §8 |
-| Sealed TOC metadata (K_meta) | host | **same** | §5.4 |
-| TOC stub, locked state, E7 | — | **same** | §5.3, §6 |
-| Set header | plain | **plain** (written before the key is loaded) | §5.6, §9.1 |
-| File records | `EncryptingStream` | plain on the host; the drive encrypts each block | identity paths |
-| Content key | K_file per file | K_drive per set | §4.2 |
-| HW compression | refused | **allowed** | `AllowsHardwareCompression` |
-| Overhead / exact size | +16 per 64 KiB; exact size | none; estimate allowed | `RecordOverhead`, `AllowsEstimatedSize` |
-| End-to-end authentication | `CompleteRead` | the drive, per block | `CompleteRead` no-op |
-| v1 build meeting a v2 set | — | loads locked, carries, deletes, skips before moving | E15, `UnsupportedSetCipher` |
-
-### 19.2 Drive-tier API (v2)
-
-```csharp
-// TapeDriveBackend (virtual defaults: not supported)
-public virtual bool SupportsHardwareEncryption => false;     // SECURITY PROTOCOL IN 20h / 0001h at Open
-public virtual bool SetDataEncryption(ReadOnlySpan<byte> key32, bool encrypt, bool decrypt);   // SPOUT 20h / 0010h
-public virtual bool ClearDataEncryption();
-```
-
-- **Win32**: SPTD with B5h/A2h; page 0010h with SCOPE = Local, LOCK = 1, **CKOD = 1** (key cleared on unload),
-  ENCRYPTION MODE = Encrypt on write sets / Disable on read sets, DECRYPTION MODE = **Mixed**.
-- **Virtual backend**: an emulation (stored key, marked and scrambled blocks, the same read error on a wrong key) — v2 is
-  otherwise untestable in CI.
-- **Remote backend**: a gRPC verb pair; documented as sending the key over the session channel.
-
-### 19.3 Write path
-
-```
-WriteSetHeader()                        ← plain
-cipher.BeginSet → Drive.SetDataEncryption(K_drive, encrypt: true, decrypt: true)
-Manager.BeginWriteContent → packer → WRITE(6)          ← drive encrypts every block
-Manager.EndWriteContent (closing setmark)
-finally: cipher.EndSet → Drive.ClearDataEncryption()
-BackupTOC                               ← plain
-```
-
-### 19.4 Read path
-
-Set the key with SPTI, then keep reading with `ReadFile`: the key is drive state for our I_T nexus. Prefetch stays inside
-the set (`TapeFilePipelinedReader` bounds it to the open file); `EndSet` runs after `Manager.EndReadWrite()`
-(`BindsDrive`). Errors through `ReadFile` are blunt; an SPTD READ(6) path may give a precise diagnosis. **Mixed**, not
-Decrypt, so set headers and TOC reads around the set need no key juggling.
-
-### 19.5 Scanner
-
-With set headers, nothing changes. For a header-less Hardware set the identification read fails in the drive; the
-backend reports that condition, and `ReadFragmentAt` maps it to `Unknown` without a damage diagnosis,
-`Encryption = Hardware`.
-
-### 19.6 Invariants and tests v2 adds
-
-E16; the cipher-contract table gains the Hardware cipher over the emulation; the agent matrix gains encryption ∈
-{Software, Hardware} × compression {None, Software, Hardware}.
-
-### 19.7 v2 entry gate (on real hardware, before any code)
-
-SECURITY PROTOCOL IN through `\\.\TAPEn`; application-managed mode; a key set via SPTI applies to the next WRITE(6) and to
-`ReadFile` on the same handle; the exact error for "wrong or no key"; CKOD and bus reset clear the key.
-
-## 20. Implementation history
-
-### 20.0 Phase 0
-- File split by responsibility (§17).
-- Byte layouts exact and pinned (§4.2, §5.5); the 50-million-iteration reader bound.
-- The encrypting stream's `Dispose` is inert while open (§4.3).
-- The ring works on `ITapeLockableSet`; `Add` keeps one key object per DEK.
-- Per file: one `AesGcm` and one small stream object.
-
-### 20.1 Phase 1
-- §5.3: DataFormat Critical with default V2; the envelope group optional in the schema, required by the validator;
-  Encryption validated 1 … int.MaxValue.
-- §5.4: Ciphertext at field 48; chunk structure checked at load, plaintext framing on unlock.
-- §5.5: **Kdf not critical, by value** (was critical); sizes not validated on load.
-- §6: `IsLocked`, `IsUnlockable`, `SizeOnTapeTotal` as built; `PersistedState` gains Encryption and Envelope.
-- §5.2: re-emission re-serializes the stub, re-emits the chunks.
-
-### 20.2 Phase 2
-- §6.1: setters and mutators throw on a locked set; `DisplayCount` and the locked constants; a vacant locked set sizes 0.
-- §6.2: a locked set is its own chain start.
-- §7.1: the ring's public TOC overloads; `Clear(null)` drops keys only.
-- §8.3: `AddContinuationSetTOC` refuses an encrypted params record without envelope or key.
-
-### 20.3 Phase 3
-- §5.4: padding granule 64 KiB in production; `TapeTOC.SealPadUnit` under TEST_HOOKS.
-- §9.1: the interface as built (`Validate(set, drive, writesCodecPrefix, forWrite)`, `BindsDrive`);
-  `UnsupportedSetCipher`; helpers in `TapeAgentBase.Encryption.cs`.
-- §9.1 call sites: `EndSet` in the backup `finally` and on a failed `BeginWriteContent`; at the end of both restore loops.
-- §9.2: scheme first, then the locked-chain refusal; locked selections fail before moving (`TrySelectFiles`).
-- §9.4: `CompleteRead` inside the decompressor's `using`; failures re-wrapped with the file name.
-- §5.7: `EstimateFileOverhead` adds `RecordOverhead`.
-
-### 20.4 The MultiVolume, TocLocation and TocReserve work
-- **Stub field 9 `FirstBlockAfterSet`** (§5.3): plain, authoritative, not cross-checked against the sealed content;
-  restamped by a trailing delete on a locked set; not carried into a continuation.
-- **TOC room** (§5.4): the fixed ≥ 32 MiB reserve that was to absorb the padding is gone. The live reserve (TOC in set)
-  and the partition budget count sealed sets through `EstimateSerializedSize` / `EstimateEntryGrowth`.
-- **Resume identification** (§9.5): four steps; step 3 identifies encrypted sets only by their plain set header; S4
-  finds a header-less encrypted volume's TOC through the plain stub. Rejection means "unidentifiable".
-- **Block classification** (§5.7, §12): a header-less encrypted set's first block identifies as `Foreign`; the ladder's
-  walks load sealed sets locked.
-- **Multi-volume boundaries** (§8.4): a final flush full with every file committed sets up no continuation — no FileId
-  is reissued; the TOC structure check after every fixture backup covers encrypted series.
-- **Service** (§10): the Clear sites extended to TOC reads, recovered-TOC adoption and drive open (E17); the pre-flight
-  moved before the restore's filter pass; `OnAskPassword` gets a default implementation (`null` = skip); the site list
-  of §10.6 verified against the current service.
