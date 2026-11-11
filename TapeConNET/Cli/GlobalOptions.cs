@@ -1,5 +1,6 @@
 using System.CommandLine;
 using Microsoft.Extensions.Logging;
+using TapeConNET.Cli.Help;
 using TapeLibNET.Virtual;
 
 namespace TapeConNET.Cli;
@@ -13,9 +14,10 @@ namespace TapeConNET.Cli;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Recursive options are not yet a first-class System.CommandLine 2.0.7
-///  concept; we emulate the effect by attaching the same <see cref="Option{T}"/>
-///  instances to every verb. Each verb reads them via <c>parseResult.GetValue</c>.
+/// The drive options are attached verb by verb (<see cref="Attach"/>), not made <see cref="Option.Recursive"/>: not
+///  every verb opens a drive (<c>docs</c>, <c>create-virtual</c>), and a recursive option would appear in their help and
+///  parse there without effect. Only <see cref="Quiet"/> and <see cref="NoColor"/> — meaningful everywhere — are
+///  recursive, attached once to the root (Design-CliPresentation §4.6).
 /// </para>
 /// <para>
 /// Drive selection — at most one of: <c>--drive N</c> (physical), <c>--virtual-open PATH</c> (alias <c>--virtual</c>),
@@ -26,6 +28,11 @@ namespace TapeConNET.Cli;
 /// Two overwrite permissions, deliberately separate: <c>--overwrite-virtual</c> (here, every drive verb) replaces
 ///  existing virtual media FILES under <c>--virtual-create</c>; <c>--overwrite-media</c> (backup only) replaces the
 ///  SETS on the loaded media without a prompt.
+/// </para>
+/// <para>
+/// Help groups (§4.3): the selectors and <c>--initiator</c> form <i>Drive selection</i>; the capacities join
+///  <see cref="VirtualMediaOptions"/>' <i>New virtual media</i>; logging, <c>--quiet</c> and <c>--no-color</c> form
+///  <i>Output and diagnostics</i>. Registered in the static constructor, so any option instance in use is registered.
 /// </para>
 /// </remarks>
 public static class GlobalOptions
@@ -47,10 +54,12 @@ public static class GlobalOptions
         HelpName = "PATH",
     };
 
+    // Two descriptions, one per role (§4.3): the home text here serves opening media — Drive selection; the reference
+    //  text in the static constructor serves creating media — New virtual media.
     public static readonly Option<string?> Initiator = new("--initiator", "-I")
     {
-        Description = "Initiator (TOC) partition file. New virtual media: the file to create (default PATH_init.ext " +
-                      "when only --init-capacity is given). Existing media: overrides the PATH_init.ext convention.",
+        Description = "Initiator (TOC) partition file of file-backed virtual media. Default: PATH_init.ext beside the " +
+                      "content file, when it exists. With --virtual-create: the file to create.",
         HelpName = "PATH",
     };
 
@@ -76,19 +85,53 @@ public static class GlobalOptions
         DefaultValueFactory = _ => Microsoft.Extensions.Logging.LogLevel.None,
     };
 
+    // ─── Root options (recursive) ────────────────────────────────────────────
+    //  Program pre-scans the arguments for both, so the banner honours them before parsing; being recursive, they
+    //   also PARSE on every verb (`tapecon backup --quiet …`) instead of failing as unknown tokens.
+
+    public static readonly Option<bool> Quiet = new("--quiet", "-q")
+    {
+        Description = "Suppress informational output and auto-confirm prompts.",
+        Recursive = true,
+    };
+
+    public static readonly Option<bool> NoColor = new("--no-color")
+    {
+        Description = "Disable ANSI color output.",
+        Recursive = true,
+    };
+
+    static GlobalOptions()
+    {
+        HelpGroups.Assign(HelpGroups.Drive, Drive, Virtual, Initiator, InMemory);
+        HelpGroups.Assign(HelpGroups.VirtualNew, Capacity, InitCapacity);
+        HelpGroups.Assign(HelpGroups.Diagnostics, LogLevel, Quiet, NoColor);
+
+        // --initiator lives in Drive selection (it serves --virtual-open, too); New virtual media shows it again for
+        //  its create-time role (§4.3)
+        HelpGroups.Reference(HelpGroups.VirtualNew, Initiator,
+            "Initiator (TOC) partition file to create; giving it adds the partition. " +
+            "Default with only --init-capacity: PATH_init.ext.");
+    }
+
     /// <summary>
     /// Attach all global options to <paramref name="cmd"/>. Call from each
     /// verb's <c>Create</c> factory before adding verb-specific options.
     /// </summary>
+    /// <remarks>
+    /// Attaching first is fine for the help: it orders groups by <see cref="HelpGroup.Order"/>, not by attachment. Within
+    ///  a group, though, attachment order rules — hence <c>--initiator</c> after <c>--init-capacity</c>: last of the
+    ///  selectors in <i>Drive selection</i>, next to the capacities in <i>New virtual media</i>.
+    /// </remarks>
     public static void Attach(Command cmd)
     {
         cmd.Options.Add(Drive);
         cmd.Options.Add(Virtual);
         cmd.Options.Add(VirtualMediaOptions.VirtualCreate);
-        cmd.Options.Add(Initiator);
         cmd.Options.Add(InMemory);
         cmd.Options.Add(Capacity);
         cmd.Options.Add(InitCapacity);
+        cmd.Options.Add(Initiator);
         VirtualMediaOptions.AttachProfile(cmd);
         cmd.Options.Add(VirtualMediaOptions.OverwriteVirtual);
         cmd.Options.Add(LogLevel);

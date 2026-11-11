@@ -8,6 +8,7 @@ namespace TapeConNET.Ux;
 /// <remarks>
 /// Phase 2 surface: logging, banner, prompts, and a bounded progress scope.
 /// Higher-level features (tables, live status spinners) are added on demand.
+/// Presentation (Design-CliPresentation §3.4): <see cref="Write"/> outputs whole documents — docs topics, help.
 /// </remarks>
 public interface IConsoleUx
 {
@@ -29,6 +30,18 @@ public interface IConsoleUx
 
     /// <summary>Print the tapecon banner (name + own version + TapeLibNET version).</summary>
     void WriteBanner();
+
+    // ─── Documents ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Write a pre-structured document — an embedded docs topic, a help page. Unlike <see cref="Log(LogEntry)"/>: no
+    ///  timestamp, no icon, and NOT suppressed by <see cref="QuietMode"/> — the user asked for the text explicitly.
+    /// </summary>
+    /// <remarks>
+    /// The implementation picks the form (<see cref="ConsoleCapabilities.UsePlain"/>) and the width
+    ///  (<see cref="ConsoleCapabilities.ClampWidth"/>), then renders only that form of <paramref name="document"/>.
+    /// </remarks>
+    void Write(ConsoleDocument document);
 
     // ─── Prompts ─────────────────────────────────────────────────────────────
 

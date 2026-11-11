@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.Text;
+using TapeConNET.Cli.Help;
 using TapeConNET.Infrastructure;
 using TapeConNET.Ux;
 using TapeLibNET.Compression;
@@ -13,8 +14,14 @@ namespace TapeConNET.Cli;
 ///  Absent both, the service asks through <see cref="ConsoleUxServiceHost.OnAskPassword"/> (masked; skipped unattended).
 /// </summary>
 /// <remarks>
+/// <para>
 /// <c>--password</c> exists only to refuse itself with advice: a user who reaches for it learns the safe form instead of
 ///  an "unknown option" error.
+/// </para>
+/// <para>
+/// Help group: <i>Encryption</i> (Design-CliPresentation §4.3) — all six options; backup adds its <c>--encrypt</c> /
+///  <c>--encryption</c>.
+/// </para>
 /// </remarks>
 internal static class PasswordOptions
 {
@@ -23,11 +30,13 @@ internal static class PasswordOptions
     public static readonly Option<string?> PasswordFile = new("--password-file")
     {
         Description = "Read the password from this file (UTF-8; one trailing line break is ignored).",
+        HelpName = "PATH",
     };
 
     public static readonly Option<string?> PasswordEnv = new("--password-env")
     {
         Description = "Read the password from this environment variable.",
+        HelpName = "VARIABLE",
     };
 
     public static readonly Option<string?> Password = new("--password")
@@ -39,11 +48,13 @@ internal static class PasswordOptions
     public static readonly Option<string?> NewPasswordFile = new("--new-password-file")
     {
         Description = "Change the set's password: read the new one from this file.",
+        HelpName = "PATH",
     };
 
     public static readonly Option<string?> NewPasswordEnv = new("--new-password-env")
     {
         Description = "Change the set's password: read the new one from this environment variable.",
+        HelpName = "VARIABLE",
     };
 
     public static readonly Option<string?> NewPassword = new("--new-password")
@@ -51,14 +62,22 @@ internal static class PasswordOptions
         Description = "Not supported — use --new-password-file, --new-password-env, or --change-password.",
     };
 
+    static PasswordOptions()
+    {
+        HelpGroups.Assign(HelpGroups.Encryption,
+            PasswordFile, PasswordEnv, Password, NewPasswordFile, NewPasswordEnv, NewPassword);
+    }
+
     /// <summary>Attaches the password sources; with <paramref name="withNew"/> also the new-password ones (rename).</summary>
     public static void Attach(Command cmd, bool withNew = false)
     {
         cmd.Options.Add(PasswordFile);
         cmd.Options.Add(PasswordEnv);
         cmd.Options.Add(Password);
+
         if (!withNew)
             return;
+
         cmd.Options.Add(NewPasswordFile);
         cmd.Options.Add(NewPasswordEnv);
         cmd.Options.Add(NewPassword);
@@ -101,6 +120,7 @@ internal static class PasswordOptions
             {
                 throw new TapeConException(TapeConExitCode.UsageError, $"Couldn't read the {what} file >{path}<: {ex.Message}");
             }
+
             if (text.Length == 0)
                 throw new TapeConException(TapeConExitCode.UsageError, $"The {what} file >{path}< is empty.");
         }
@@ -136,16 +156,20 @@ internal static class PasswordOptions
         if (ux.NonInteractive || ux.QuietMode)
             throw new TapeConException(TapeConExitCode.UsageError,
                 "--change-password needs an interactive console — use --new-password-file or --new-password-env.");
+
         for (int attempt = 1; attempt <= 3; attempt++)
         {
             string? first = ux.AskSecret($"New password for {setDisplay}");
             if (string.IsNullOrEmpty(first))
                 return null;
+
             string? again = ux.AskSecret("Repeat the new password");
             if (first == again)
                 return first.ToCharArray();
+
             ux.Log(WarningLevel.Warning, "The passwords do not match — try again.");
         }
+
         return null;
     }
 

@@ -54,6 +54,26 @@ cover in ~150 lines, because **we own the documents** and keep them inside a sma
 
 All user text is escaped (`Markup.Escape`) before the inline tags are applied.
 
+Also supported, because the topics use them:
+
+- **Backslash escapes** (`\*`, `\[`, …) outside code; **`\|` in table cells** becomes a literal pipe — inside code spans, too, as in GitHub Markdown.
+- **Lazy and indented continuation lines** in list items and quotes; **loose lists** (blank lines between items).
+- **`+` bullets** and **`1)` numbers**; `####`–`######` fold into level 3.
+- **Unclosed markers stay literal:** `*.docx`, `2 * 3`, a lone backtick.
+
+Deliberately **not** supported: hard line breaks (lines always join with a space), links and images (pass through as text), `_` emphasis (file names carry underscores), nested inline spans (`**bold `code`**` renders as bold text), more than one list nesting level. A nested item in a numbered list renders as a bullet.
+
+Rendering details as built:
+
+| Markdown | Spectre | Plain |
+|---|---|---|
+| `#` | `Rule`, title left, `Heading` | title, `═` under it |
+| `##` | `Heading` (bold cyan) | title, `─` under it |
+| `###` | `SubHeading` (cyan) | title only |
+| code block | `Panel`, rounded, `CodeBlock` (grey) text | indented 4 spaces, **never wrapped** — a wrapped command no longer runs when pasted |
+| table | `Table`, rounded, header in `Heading`, capped at the width | aligned columns, header underlined per column; when too wide, the widest column narrows (not below 8) and its cells wrap |
+
+
 ### 3.3 Shape
 
 The renderer parses once into a tiny block model, then renders that model twice — so the Spectre and the plain output
@@ -70,27 +90,34 @@ MarkdownDocument.Parse(string)                    // pure; line-based block pars
        MdQuote(Inline Text)
   Inline = IReadOnlyList<MdSpan>                  // MdSpan(Kind: Text|Code|Bold|Italic, string Text)
 
+MarkdownRenderer.ToDocument(blocks)               // ConsoleDocument: both forms, width supplied by the console
 MarkdownRenderer.ToRenderables(blocks, width)     // Spectre: IReadOnlyList<IRenderable>
 MarkdownRenderer.ToPlainLines(blocks, width)      // plain:   IReadOnlyList<string>
 ```
 
 - **Location:** `TapeConNET/Ux/Markdown/` — `MarkdownDocument.cs` (model + parser), `MarkdownRenderer.cs`.
 - **No console access** in either: both are pure functions, unit-tested directly.
+- **One word wrapper for both forms.** The rich form receives lines already broken at the same words as the plain form, so Spectre never re-wraps them (except on a console narrower than 60). A word may cross span borders (`` `--drive`, `` never breaks before its comma). A space between two spans of the same kind keeps that kind, so a bold phrase stays one styled run.
+- `MdListItem` carries `Number` (the source number of an ordered item); numbers are padded to the widest, so `9.` and `10.` texts line up.
 
-### 3.4 Output path
+## §3.4 Output path
 
-- `IConsoleUx` gains `void Write(ConsoleDocument doc)`, where `ConsoleDocument` carries **both** forms:
-  `IReadOnlyList<IRenderable> Rich` and `IReadOnlyList<string> Plain`.
-  - `SpectreConsoleUx` writes `Rich`, or `Plain` when `ConsoleCapabilities.UsePlain(this)` (§6).
-  - `SilentConsoleUx` always writes `Plain` to its `TextWriter` — tests see exactly what a redirected console sees.
-- Unlike `Log`, `Write` adds no timestamp and no icon, and is **not** suppressed by `--quiet`: the user asked for the
-  text explicitly.
-- `DocsCommand` parses the topic and calls `ux.Write(...)` instead of logging line by line.
+- `IConsoleUx` gains `void Write(ConsoleDocument document)`.
+- `ConsoleDocument` (`Ux/ConsoleDocument.cs`) carries **both** forms as **factories over the width**:
+  `Func<int, IReadOnlyList<IRenderable>> Rich` and `Func<int, IReadOnlyList<string>> Plain`. The console picks the form and the width, then renders **only** that form. The producer never asks for the width, and `IConsoleUx` gains no width or redirection members.
+- `SpectreConsoleUx` writes `Plain` straight to the profile's writer when `ConsoleCapabilities.UsePlain(...)` holds (§6). Otherwise it writes `Rich` inside a Spectre `Rows`, which ends every block with exactly one line break.
+- `SilentConsoleUx` always writes `Plain` to its `TextWriter`, at its `Width` (default 80). Tests see exactly what a redirected console sees.
+- Unlike `Log`, `Write` adds no timestamp and no icon. `--quiet` does **not** suppress it, because the user asked for the text explicitly. It adds nothing to `SilentConsoleUx.Entries`: tests read documents from `RunResult.Output`.
+- `ConsoleDocument.FromLines(...)` creates a fixed-line document for simple output and tests.
+- `DocsCommand` parses the topic and calls `ux.Write(MarkdownRenderer.ToDocument(...))`. **`docs --list`** is a document too: a small markdown list with a one-line summary per topic, so `--quiet` no longer hides it.
 
 ### 3.5 Contract for the docs
 
-The documents stay within §3.2. A unit test renders every embedded topic through `ToPlainLines` and asserts that no
-literal `|---`, `## `, `**` or backtick survives — so a doc edit that leaves the subset fails the build.
+The documents stay within §3.2. A unit test (`MarkdownTests.EmbeddedTopic_PlainOutput_ShowsNoMarkdownSyntax`) renders
+every embedded topic through `ToPlainLines` and asserts that no line contains `|---`, `**` or a backtick, and no line
+starts with `#` or `|`. **Code blocks are exempt:** their content is literal and may hold `**` globs
+(`path matches "**\bin\**"`) on purpose. A second test renders every topic through `ToRenderables` into a test console,
+so markup errors such as an unescaped `[Locked]` fail the build.
 
 ## 4. Structured help
 
@@ -115,6 +142,14 @@ public enum HelpGroupMode
     /// <summary>One line: the option names only, plus a pointer to where they are described in full.</summary>
     Summary,
 }
+```
+
+An option has exactly **one home group** (its full entry) and **zero or more references**.
+A reference repeats the option in another group, with a description written for that group:
+
+```csharp
+/// <summary>An option shown in a group other than its home, described for that group.</summary>
+public sealed record HelpReference(Option Option, string Description);
 ```
 
 Options without a group form the implicit **"Options"** group: the verb's own options, order 0, always `Full`.
@@ -145,15 +180,31 @@ internal static class HelpGroups
     ///  shown first and in Full mode. E.g. the new-virtual-media group on create-virtual.
     /// </summary>
     public static void Promote(Command cmd, HelpGroup group);
+
+    /// <summary>
+    /// Shows <paramref name="option"/> ALSO in <paramref name="group"/>, with <paramref name="description"/> in place of
+    ///  its own. The option keeps its home group; a reference never targets the home.
+    /// </summary>
+    public static void Reference(HelpGroup group, Option option, string description);
+
+    /// <summary>The references into <paramref name="group"/>, in registration order.</summary>
+    public static IReadOnlyList<HelpReference> ReferencesIn(HelpGroup group);
 }
 ```
 
 - Storage: a `Dictionary<Option, HelpGroup>` (reference keys) and a `Dictionary<Command, HelpGroup>` for promotions,
   both filled during the static initialisation of the option classes and during `RootCommandFactory.Create`.
+- Storage: a third `Dictionary<HelpGroup, List<HelpReference>>`. The option class that owns the home registers the reference (one place per option).
 - Each option class registers its own options in its static constructor or right after the fields:
   `GlobalOptions` (drive, diagnostics), `VirtualMediaOptions` (virtual-new), `FilterOptions` (filter),
   `PasswordOptions` + the encryption options (encryption).
 - Verb-local options stay unassigned — no change in the verbs except where a verb promotes a group.
+- **Rendering rules:**
+  - A reference row shows only for a command that has the option attached. Membership works the same way.
+  - In a section, rows follow the **command's attachment order**, home rows and reference rows alike. A reference therefore sits next to its natural neighbours (`--initiator` after `--init-capacity`) with no extra ordering key.
+  - **Full** mode: the name column matches the home row exactly, and the description column shows the reference's description. The renderer appends nothing, so the reference text must stand on its own.
+  - **Summary** mode: the reference name joins the name list, as a member's would.
+  - **Promotion** (create-virtual) changes nothing for references: the promoted group renders as "Options", Full, with its references included.
 
 ### 4.3 The groups
 
@@ -163,7 +214,7 @@ internal static class HelpGroups
 | `filter` | **File selection** | `--filter`, `--filter-file` | 10 | Full |
 | `encryption` | **Encryption** | `--password-file`, `--password-env`, (backup:) `--encrypt`, `--encryption` | 20 | Full |
 | `drive` | **Drive selection** | `--drive`, `--virtual-open`, `--virtual-create`, `--in-memory`, `--initiator` | 30 | Full |
-| `virtual-new` | **New virtual media** | `--capacity`, `--init-capacity`, `--setmarks`, `--seq-filemarks`, `--filemarks-only`, `--min-/--def-/--max-block-size`, `--overwrite-virtual` | 40 | **Summary** |
+| `virtual-new` | **New virtual media** | `--capacity`, `--initiator` (ref.), `--init-capacity`, `--setmarks`, `--seq-filemarks`, `--filemarks-only`, `--min-/--def-/--max-block-size`, `--overwrite-virtual` | 40 | **Summary** |
 | `diagnostics` | **Output and diagnostics** | `--log-level`, `--quiet`, `--no-color`, `--help` | 90 | Full |
 
 Intros (one line each, under the title):
@@ -173,7 +224,12 @@ Intros (one line each, under the title):
 - **File selection** — "Bare arguments are classified automatically; these bypass it."
 - **Encryption** — "Without these, encrypted sets stay locked, or the password is asked."
 
-`--initiator` sits in *Drive selection*, not *New virtual media*, because it also applies to `--virtual-open`.
+`--initiator` has its **home** in *Drive selection*, because it also applies to `--virtual-open`. A **reference** in *New virtual media* covers its create-time role:
+
+| Group | Description (draft; final wording in Step 3 against `GlobalOptions.cs`) |
+|---|---|
+| Drive selection (home) | Initiator-partition file of the virtual media; by default found next to the media file. |
+| New virtual media (reference) | Initiator-partition file to create; by default named after the media file when `--init-capacity` is given. |
 
 ### 4.4 Summary mode — the key to the overload
 
@@ -257,6 +313,7 @@ Option rows:
   e.g. `[default: Crc32]` for `--hash`. Descriptions that already state their default keep it in the text.
 - **Wrapping:** the description column wraps at the console width (§6); the name column is sized to the widest name
   in the *whole help*, capped at 34 characters — longer names push their description to the next line.
+- **References:** same name column as the home row; the description comes from the `HelpReference`; the default is not repeated.
 
 ### 5.3 Example — `tapecon backup --help`
 
@@ -316,24 +373,28 @@ A parse error keeps System.CommandLine's behaviour (error lines, exit 2). The he
 
 ## 6. Shared pieces
 
-- **Theme:** `ConsoleTheme` gains the presentation styles — `Heading`, `OptionName`, `Placeholder`, `Dimmed`,
-  `Code` — next to the existing level styles. Both renderers take colours only from there.
-- **Width:** `ConsoleCapabilities.Width(ux)` = console width, minimum 60, maximum 120 (long lines read badly);
-  80 when output is redirected.
-- **Plain mode:** `ConsoleCapabilities.UsePlain(ux)` = `NoColor || QuietMode || output redirected`.
+- **Theme:** `ConsoleTheme` gains the presentation styles `Heading` (bold cyan), `OptionName` (cyan), `Placeholder` (grey), `Dimmed` (dim), and `Code` (cyan). They are parsed from the same markup words the banner uses, so they cannot drift from hand-written markup. Both renderers take colours only from there.
+- **Level icons:** Completed `✓`, Info `ℹ`, Warning `⚠`, **Failed `✗`** (U+2717, slanted), **Error `✖`** (U+2716, heavy straight). Failed and Error differ by glyph as well as colour, so they stay distinct under `--no-color` and in redirected output.
+- **Plain mode:** `ConsoleCapabilities.UsePlain(noColor, quiet, redirected)` = `noColor || quiet || redirected`.
+- **Width:** `ConsoleCapabilities.ClampWidth(consoleWidth, redirected)` = 80 when the output is redirected or the console reports no width; otherwise the console width clamped to [60, 120].
+- **Redirection** comes from the console, not the helper: `SpectreConsoleUx` asks `Profile.Out.IsTerminal`, so an injected console decides for itself; `SilentConsoleUx` always counts as redirected. Both helpers are pure functions taking flags rather than an `IConsoleUx`, so the interface does not grow.
 - **Output:** `IConsoleUx.Write(ConsoleDocument)` (§3.4) serves docs and help alike.
+- `SubHeading` (cyan, `###`) and `CodeBlock` (grey, code blocks).
+
 
 ## 7. Testing
 
 | Area | Tests | How |
 |---|---|---|
-| Markdown parser | each block kind; inline spans; malformed input passes through | pure unit tests |
-| Markdown renderers | plain output of a fixture document, line by line | pure unit tests |
-| Doc subset | every embedded topic: no `\|---`, `## `, `**`, backtick in plain output | renders the real resources |
-| Help groups | every option attached to a drive verb has a group or is verb-local; no option in two groups | reflection over the built root |
-| Help model | per verb: every visible option appears exactly once; groups in order; verb's own group first | `HelpModel.Build` directly |
+| Markdown parser | each block kind; inline spans; escapes; unclosed markers; unsupported syntax passes through | `MarkdownTests`, pure |
+| Markdown renderers | plain fixture line by line; wrapping with hanging indent; table shrinking; rich rendering escapes brackets | `MarkdownTests`, pure + Spectre test console |
+| Doc subset | every embedded topic: no Markdown syntax in plain prose; rich render does not throw | `MarkdownTests`, renders the real resources |
+| `tapecon docs` | topics, default topic, `--list`, unknown topic; output carries no `#`/`##` lines and no `|---` | `DocsCommandTests` via `RunResult.Output` |
+| Help groups | every option attached to a drive verb has a home group or is verb-local; **no option has two homes; no reference targets its own home** | reflection over the built root |
+| Help model | per verb: every visible option appears **once as a home row, plus once per reference into a rendered group**; groups in order; the verb's own group first | `HelpModel.Build` directly |
 | Help output | `tapecon <verb> --help` exits 0 and its plain output contains the group titles and the verb's own options; `create-virtual` shows the virtual-new options in full | `TapeConHost` |
 | Recursive options | `tapecon backup --quiet …` parses | `TapeConHost` |
+| Output path | `SilentConsoleUx.Write` / `SpectreConsoleUx.Write` (redirected): plain lines only, no timestamp, not quiet-suppressed, at the decided width; `ConsoleCapabilities` rules; Error/Failed icons | `ConsoleOutputTests` (Step 1) |
 
 Existing `Help_ForVerb_ReturnsOk` tests keep passing.
 
@@ -344,10 +405,9 @@ read, plus the tests I extend. "(new)" files I create; you need not attach them.
 
 ### Step 1 — Output path and plain-mode helpers
 
-Content: `ConsoleDocument`, `IConsoleUx.Write`, `ConsoleCapabilities` (`UsePlain`, `Width`), presentation styles in
-`ConsoleTheme`. No visible change yet.
+Content (as built): `Ux/ConsoleDocument.cs` (new), `Ux/ConsoleCapabilities.cs` (new), `IConsoleUx.Write`, implementations in `SpectreConsoleUx` / `SilentConsoleUx` (plus `SilentConsoleUx.Width`), presentation styles and the Error icon in `ConsoleTheme`. No visible change except the Error icon.
 
-Exit: builds; all tests green; a unit test for `SilentConsoleUx.Write`.
+Exit: builds; all tests green; `ConsoleOutputTests` (new).
 
 | Attach | Why |
 |---|---|
@@ -360,10 +420,9 @@ Exit: builds; all tests green; a unit test for `SilentConsoleUx.Write`.
 
 ### Step 2 — Markdown renderer and `docs`
 
-Content: `Ux/Markdown/MarkdownDocument.cs` (new), `Ux/Markdown/MarkdownRenderer.cs` (new); `DocsCommand` switched;
-parser/renderer unit tests; the doc-subset test.
+Content (as built): `Ux/Markdown/MarkdownDocument.cs`, `Ux/Markdown/MarkdownRenderer.cs` (new); `ConsoleTheme.SubHeading` / `CodeBlock`; `DocsCommand` switched (`--list` included; `TopicNames` and `LoadTopic` internal for the tests); `MarkdownTests` (new); `DocsCommandTests` read `Output` instead of `Entries`.
 
-Exit: `tapecon docs` renders themed; plain under `--no-color`; all tests green.
+Exit: `tapecon docs` renders themed on a console, plain when redirected; all tests green. Plain under `--no-color` / `--quiet` **on the verb** waits for Step 3 (recursive root options); the root form, which the pre-scan in `Program` already honours, works now.
 
 | Attach | Why |
 |---|---|
@@ -377,6 +436,7 @@ Exit: `tapecon docs` renders themed; plain under `--no-color`; all tests green.
 
 Content: `Cli/Help/HelpGroups.cs`, `HelpModel.cs`, plain half of `HelpRenderer.cs`, `TapeConHelpAction.cs` (all new);
 registrations in the option classes; recursive `--quiet` / `--no-color`; `create-virtual` promotion; help tests.
+`HelpGroups.Reference` / `ReferencesIn`; the `--initiator` reference into *New virtual media*.
 
 Exit: `--help` shows the grouped layout in plain text everywhere; all tests green.
 

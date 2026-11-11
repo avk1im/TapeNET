@@ -1,4 +1,5 @@
 using System.CommandLine;
+using TapeConNET.Cli.Help;
 using TapeConNET.Infrastructure;
 using TapeLibNET.Virtual;
 
@@ -17,6 +18,9 @@ namespace TapeConNET.Cli;
 ///  <item>Initiator partition: present when <c>--initiator</c> or <c>--init-capacity</c> is given.</item>
 ///  <item>Block sizes: profile defaults unless overridden; must satisfy min ≤ default ≤ max.</item>
 /// </list>
+/// Help groups (Design-CliPresentation §4.3): <c>--virtual-create</c> is a drive selector — <i>Drive selection</i>; the
+///  profile, block-size and overwrite options form <i>New virtual media</i>, a one-paragraph summary on every verb but
+///  <c>create-virtual</c>, which promotes it.
 /// </remarks>
 internal static class VirtualMediaOptions
 {
@@ -63,6 +67,13 @@ internal static class VirtualMediaOptions
     public static readonly Option<uint?> MaxBlockSize = SizeOptions.BlockSize("--max-block-size",
         $"Maximum block size of NEW virtual media (default {Profile(false, false).MaxBlockSize >> 10} KiB).",
         "--maximal-block-size");
+
+    static VirtualMediaOptions()
+    {
+        HelpGroups.Assign(HelpGroups.Drive, VirtualCreate);
+        HelpGroups.Assign(HelpGroups.VirtualNew,
+            Setmarks, SeqFilemarks, FilemarksOnly, MinBlockSize, DefaultBlockSize, MaxBlockSize, OverwriteVirtual);
+    }
 
     /// <summary>Attach the profile and block-size options (not the drive selector itself).</summary>
     public static void AttachProfile(Command cmd)
@@ -121,6 +132,7 @@ internal static class VirtualMediaOptions
         // --init-capacity alone asks for the partition: derive its file by the shared convention.
         if (string.IsNullOrWhiteSpace(initiator) && initCapacity.HasValue)
             initiator = VirtualMediaPaths.BuildInitiatorFilePath(content);
+
         if (!string.IsNullOrWhiteSpace(initiator))
         {
             initiator = Path.GetFullPath(initiator);
@@ -134,11 +146,13 @@ internal static class VirtualMediaOptions
 
         bool withInitiator = initiator is not null;
         var caps = ResolveCapabilities(p, withInitiator, applyBlockSizes: true);
+
         var vmd = new VirtualMediaDescriptor(
             ContentPath: content,
             ContentCapacity: p.GetValue(GlobalOptions.Capacity) ?? VirtualMediaDefaults.ContentCapacity,
             InitiatorPath: initiator,
             InitiatorPartitionCapacity: withInitiator ? initCapacity ?? VirtualMediaDefaults.InitiatorCapacity : 0);
+
         return (caps, vmd);
     }
 

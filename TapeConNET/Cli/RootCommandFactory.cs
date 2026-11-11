@@ -1,9 +1,9 @@
 using System.CommandLine;
-
+using System.CommandLine.Help;
+using TapeConNET.Cli.Help;
 using TapeConNET.Ux;
 
 namespace TapeConNET.Cli;
-
 
 /// <summary>
 /// Composes the tapecon verb tree. Phase 1 produces a root command that only
@@ -23,18 +23,16 @@ public static class RootCommandFactory
             "Use 'tapecon <verb> --help' for verb-specific help.");
 
         // ─── Global options (apply to all verbs) ──────────────────────────────
-        var quietOption = new Option<bool>("--quiet", "-q")
-        {
-            Description = "Suppress informational output and auto-confirm prompts.",
-        };
-        var noColorOption = new Option<bool>("--no-color")
-        {
-            Description = "Disable ANSI color output.",
-        };
-        root.Options.Add(quietOption);
-        root.Options.Add(noColorOption);
+        //  Recursive (Design-CliPresentation §4.6): every verb parses them, and every verb's help lists them. Program's
+        //   pre-scan still applies them before parsing, for the banner.
+        root.Options.Add(GlobalOptions.Quiet);
+        root.Options.Add(GlobalOptions.NoColor);
 
-        // Push global options into the UX before any verb action runs.
+        // ─── Help (Design-CliPresentation §5.1) ───────────────────────────────
+        //  RootCommand brings its own HelpOption, recursive — replacing its action re-routes every verb's --help
+        //   through the grouped help model and IConsoleUx.Write.
+        root.Options.OfType<HelpOption>().Single().Action = new TapeConHelpAction(ux);
+
         root.SetAction(_ =>
         {
             ux.WriteBanner();
@@ -61,6 +59,7 @@ public static class RootCommandFactory
         root.Subcommands.Add(CreateVirtualCommand.Create(ux));
         root.Subcommands.Add(EjectCommand.Create(ux));
         root.Subcommands.Add(TocCommand.Create(ux));
+
         //  Operation verbs:
         root.Subcommands.Add(BackupCommand.Create(ux));
         root.Subcommands.Add(RestoreCommand.Create(ux));
@@ -70,6 +69,7 @@ public static class RootCommandFactory
         root.Subcommands.Add(RenameCommand.CreateRenameMedia(ux));
         root.Subcommands.Add(RenameCommand.CreateRenameSet(ux));
         root.Subcommands.Add(DeleteSetsCommand.Create(ux));
+
         //  Scan Media (read-only survey) and TOC recovery from a saved scan map:
         root.Subcommands.Add(ScanMediaCommand.Create(ux));
         root.Subcommands.Add(ScanMediaCommand.CreateRecoverToc(ux));

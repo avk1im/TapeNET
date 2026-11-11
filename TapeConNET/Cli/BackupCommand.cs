@@ -1,4 +1,5 @@
 using System.CommandLine;
+using TapeConNET.Cli.Help;
 using TapeConNET.Filtering;
 using TapeConNET.Infrastructure;
 using TapeConNET.Ux;
@@ -9,13 +10,17 @@ using TapeLibNET.Toc;
 
 namespace TapeConNET.Cli;
 
-
 /// <summary>
 /// <c>tapecon backup</c> — back up files (and folders, optionally recursively)
 /// to the loaded media. Mirrors legacy <c>HandleBackup</c> + the dozen flags
 /// that controlled it (block size, hash algorithm, append/incremental,
 /// filemarks, error handling).
 /// </summary>
+/// <remarks>
+/// Help (Design-CliPresentation §4.3): the local <c>--encrypt</c> / <c>--encryption</c> join the shared password options
+///  in <i>Encryption</i>. They are attached BEFORE the password options, so the section opens with the switch that
+///  turns encryption on, followed by where its password comes from.
+/// </remarks>
 internal static class BackupCommand
 {
     public static Command Create(IConsoleUx ux)
@@ -23,9 +28,9 @@ internal static class BackupCommand
         var cmd = new Command("backup",
             "Back up files/folders to the loaded media. " +
             "Each positional argument is a file path, folder path, or wildcard pattern.");
+
         GlobalOptions.Attach(cmd);
         FilterOptions.Attach(cmd);
-        PasswordOptions.Attach(cmd);
 
         var filesArg = new Argument<string[]>("files")
         {
@@ -38,71 +43,90 @@ internal static class BackupCommand
         {
             Description = "Backup-set description written into the TOC.",
         };
+
         var subdirsOption = new Option<bool>("--subdirs", "-s")
         {
             Description = "Recurse into subdirectories when expanding folders/patterns.",
         };
+
         var incrementalOption = new Option<bool>("--incremental", "-i")
         {
             Description = "Create an incremental backup set (only changed files since last full set).",
         };
+
         var blockSizeOption = SizeOptions.BlockSize("--block-size",
             "Block size (default: drive's preferred size; clamped to drive limits).", "-b");
+
         var hashOption = new Option<TapeHashAlgorithm>("--hash", "-H")
         {
             Description = "Per-file hash algorithm. Choices: None, Crc32, Crc64, XxHash32, XxHash3, XxHash64, XxHash128.",
             DefaultValueFactory = _ => TapeHashAlgorithm.Crc32,
         };
+
         var compressionOption = new Option<string>("--compression", "-c")
         {
             Description = "Per-file compression. Choices: off/none, hardware | drive, low, medium (default), high, or 1-19 (ZSTD level).",
             DefaultValueFactory = _ => CompressionPreset.KeyMedium,
         };
+
         var encryptOption = new Option<bool>("--encrypt", "-e")
         {
             Description = "Encrypt the backup set (software, AES-256-GCM). The password comes from --password-file / " +
                   "--password-env, else it is asked (twice). An incremental on an encrypted set is encrypted anyway.",
         };
+
         var encryptionOption = new Option<string?>("--encryption")
         {
             Description = $"Encryption scheme: {SchemeWords.EncryptionChoices}. 'hardware' (drive) is not supported " +
                           "in this version. Software encryption rules out hardware compression.",
         };
+
+        // Verb-local, yet shown with the shared password options — see the remarks
+        HelpGroups.Assign(HelpGroups.Encryption, encryptOption, encryptionOption);
+
         var appendOption = new Option<bool>("--append", "-a")
         {
             Description = "Append a new set to existing media (default: replace all).",
         };
+
         var appendAfterOption = new Option<int?>("--append-after")
         {
             Description = "Append after a specific set (replaces all sets after the given index). " +
                           "Set index follows the dual convention (positive=oldest-up, 0/negative=latest-down). " +
                           "Implies --append.",
         };
+
         var skipErrorsOption = new Option<bool>("--skip-errors")
         {
             Description = "Skip per-file errors automatically without prompting.",
         };
+
         var noMultivolumeOption = new Option<bool>("--no-multivolume")
         {
             Description = "Stop the backup when the tape is full instead of continuing to a new volume.",
         };
+
         var ejectWhenDoneOption = new Option<bool>("--eject-when-done")
         {
             Description = "Eject the media automatically when the backup is complete.",
         };
+
         var emergencyTocOption = new Option<string?>("--emergency-toc")
         {
             Description = "Folder for the emergency TOC export if writing the TOC to tape fails.",
         };
+
         var overwriteMediaOption = new Option<bool>("--overwrite-media")
         {
             Description = "Overwrite all content on the loaded media without a prompt. Does not replace " +
                           "existing virtual media files under --virtual-create — that takes --overwrite-virtual.",
         };
+
         var skipSetCorrectionOption = new Option<bool>("--skip-set-correction")
         {
             Description = "Do not attempt to correct backup set navigation errors.",
         };
+
         var skipSetVerifyOption = new Option<bool>("--skip-set-verify")
         {
             Description = "Skip backup set verification before overwriting (repair mode). " +
@@ -119,6 +143,7 @@ internal static class BackupCommand
         cmd.Options.Add(compressionOption);
         cmd.Options.Add(encryptOption);
         cmd.Options.Add(encryptionOption);
+        PasswordOptions.Attach(cmd);
         cmd.Options.Add(appendOption);
         cmd.Options.Add(appendAfterOption);
         cmd.Options.Add(skipErrorsOption);
@@ -176,17 +201,21 @@ internal static class BackupCommand
                     throw new TapeConException(TapeConExitCode.UsageError, "--encrypt and --encryption disagree.");
                 encryption = named;
             }
+
             if (encryption == TapeEncryption.Hardware)
                 throw new TapeConException(TapeConExitCode.UsageError,
                     "Hardware (drive) encryption is not supported in this version — use --encrypt (software).");
+
             if (encryption != TapeEncryption.None && compression == TapeCompression.Hardware)
                 throw new TapeConException(TapeConExitCode.UsageError,
                     "Software encryption rules out hardware compression — encrypted data does not compress. " +
                     "Use software compression (low / medium / high), or none.");
+
             char[]? password = PasswordOptions.Resolve(parseResult);
 
             // Append-after implies append
             if (appendAfter.HasValue) append = true;
+
             // Incremental implies append (cannot be incremental of nothing)
             if (incremental) append = true;
 
@@ -230,7 +259,6 @@ internal static class BackupCommand
             };
 
             var result = await service.ExecuteBackupAsync(options);
-
             return (int)VerbHost.ToExitCode(result.WasAborted, result.HasFailed || result.FilesFailed > 0,
                 result.SetStats.SetWriteBlocked, passwordRequired: result.ErrorCode == VerbHost.ErrorInvalidPassword);
         });

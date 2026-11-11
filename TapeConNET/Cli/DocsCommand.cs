@@ -1,10 +1,9 @@
 using System.CommandLine;
-
 using TapeConNET.Infrastructure;
 using TapeConNET.Ux;
+using TapeConNET.Ux.Markdown;
 
 namespace TapeConNET.Cli;
-
 
 /// <summary>
 /// <c>tapecon docs [topic]</c> — renders one of the embedded markdown topics
@@ -13,15 +12,26 @@ namespace TapeConNET.Cli;
 /// the assembly at build time so a single-file deployment still ships the
 /// docs.
 /// </summary>
+/// <remarks>
+/// Rendered through <see cref="MarkdownDocument"/> / <see cref="MarkdownRenderer"/> and written with
+///  <see cref="IConsoleUx.Write"/>: themed on a console, plain under <c>--no-color</c>, <c>--quiet</c>, or
+///  redirection — and never suppressed by <c>--quiet</c>, since the user asked for the text (Design-CliPresentation §3).
+/// </remarks>
 internal static class DocsCommand
 {
-    /// <summary>Mapping from CLI topic name to embedded resource leaf name.</summary>
-    private static readonly Dictionary<string, string> s_topics = new(StringComparer.OrdinalIgnoreCase)
+    /// <summary>An embedded topic: its resource leaf name and a one-line summary for <c>--list</c>.</summary>
+    private sealed record Topic(string Leaf, string Summary);
+
+    /// <summary>Mapping from CLI topic name to embedded resource leaf name. Listed in this order.</summary>
+    private static readonly Dictionary<string, Topic> s_topics = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["concepts"]  = "concepts.md",
-        ["migration"] = "migration-from-1.0.md",
-        ["faq"]       = "faq.md",
+        ["concepts"]  = new("concepts.md",             "Drives, media, the TOC, encryption, file selection, exit codes."),
+        ["migration"] = new("migration-from-1.0.md",   "Moving scripts from tapecon 1.x to 2.0."),
+        ["faq"]       = new("faq.md",                  "Common questions and troubleshooting."),
     };
+
+    /// <summary>The topic names, for tests that render every topic.</summary>
+    internal static IReadOnlyCollection<string> TopicNames => s_topics.Keys;
 
     public static Command Create(IConsoleUx ux)
     {
@@ -45,22 +55,19 @@ internal static class DocsCommand
         {
             if (parseResult.GetValue(listOption))
             {
-                ux.Log(WarningLevel.Info, "Available 'tapecon docs' topics:");
-                foreach (var key in s_topics.Keys.OrderBy(k => k, StringComparer.Ordinal))
-                    ux.Log(WarningLevel.None, $"  {key}");
+                ux.Write(MarkdownRenderer.ToDocument(MarkdownDocument.Parse(TopicListMarkdown())));
                 return (int)TapeConExitCode.Ok;
             }
 
             var topic = parseResult.GetValue(topicArg) ?? "concepts";
-
-            if (!s_topics.TryGetValue(topic, out var leaf))
+            if (!s_topics.ContainsKey(topic))
             {
                 ux.Log(WarningLevel.Error,
                     $"Unknown docs topic '{topic}'. Use --list to see available topics.");
                 return (int)TapeConExitCode.UsageError;
             }
 
-            var markdown = LoadEmbeddedTopic(leaf);
+            var markdown = LoadTopic(topic);
             if (markdown is null)
             {
                 ux.Log(WarningLevel.Error,
@@ -68,16 +75,26 @@ internal static class DocsCommand
                 return (int)TapeConExitCode.OperationFailed;
             }
 
-            // Render line-by-line so the UX layer can still apply quiet-mode
-            //  rules. The content is plain markdown; Spectre console renders
-            //  it in a readable monospace form via WarningLevel.None.
-            foreach (var line in markdown.Split('\n'))
-                ux.Log(WarningLevel.None, line.TrimEnd('\r'));
-
+            // Parsed once; the console renders the rich or the plain form at its width
+            ux.Write(MarkdownRenderer.ToDocument(MarkdownDocument.Parse(markdown)));
             return (int)TapeConExitCode.Ok;
         });
 
         return cmd;
+    }
+
+    /// <summary>
+    /// The markdown of <paramref name="topic"/> (a CLI topic name), or <c>null</c> for an unknown topic or a
+    ///  missing resource.
+    /// </summary>
+    internal static string? LoadTopic(string topic)
+        => s_topics.TryGetValue(topic, out var t) ? LoadEmbeddedTopic(t.Leaf) : null;
+
+    /// <summary>The <c>--list</c> output, written as markdown so it renders like any topic.</summary>
+    private static string TopicListMarkdown()
+    {
+        var items = s_topics.Select(kv => $"- `{kv.Key}` — {kv.Value.Summary}");
+        return "## Available topics\n\n" + string.Join('\n', items) + "\n\nShow one with `tapecon docs <topic>`.";
     }
 
     /// <summary>
@@ -88,6 +105,7 @@ internal static class DocsCommand
     private static string? LoadEmbeddedTopic(string leaf)
     {
         var asm = typeof(DocsCommand).Assembly;
+
         // Resources are embedded with a name like
         //  "TapeConNET.Resources.Docs.concepts.md"
         var name = asm.GetManifestResourceNames()
@@ -98,6 +116,7 @@ internal static class DocsCommand
         using var stream = asm.GetManifestResourceStream(name);
         if (stream is null)
             return null;
+
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
     }

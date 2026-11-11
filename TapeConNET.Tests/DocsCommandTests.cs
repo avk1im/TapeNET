@@ -1,15 +1,17 @@
 using TapeConNET.Infrastructure;
-
 using TapeConNET.Tests.Helpers;
 
 namespace TapeConNET.Tests;
-
 
 /// <summary>
 /// Phase 8 — verifies that <c>tapecon docs</c> renders the embedded markdown
 /// topics, lists topics on demand, and rejects unknown topics with the
 /// documented usage exit code.
 /// </summary>
+/// <remarks>
+/// Since Design-CliPresentation Step 2 the topics are written as documents (<c>IConsoleUx.Write</c>), not as log
+///  entries: the tests read <see cref="TapeConHost.RunResult.Output"/> — the plain form a redirected console shows.
+/// </remarks>
 public class DocsCommandTests
 {
     [Theory]
@@ -20,7 +22,21 @@ public class DocsCommandTests
     {
         var r = await TapeConHost.RunAsync("docs", topic);
         Assert.Equal(TapeConExitCode.Ok, r.Exit);
-        Assert.Contains(r.Entries, e => e.Message.Contains(headingFragment, StringComparison.Ordinal));
+        Assert.Contains(headingFragment, r.Output, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("concepts")]
+    [InlineData("migration")]
+    [InlineData("faq")]
+    public async Task Docs_KnownTopic_RendersMarkdown_NotItsSyntax(string topic)
+    {
+        var r = await TapeConHost.RunAsync("docs", topic);
+        Assert.Equal(TapeConExitCode.Ok, r.Exit);
+
+        var lines = r.Output.ReplaceLineEndings("\n").Split('\n');
+        Assert.DoesNotContain(lines, l => l.StartsWith("# ", StringComparison.Ordinal) || l.StartsWith("## ", StringComparison.Ordinal));
+        Assert.DoesNotContain("|---", r.Output, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -28,7 +44,7 @@ public class DocsCommandTests
     {
         var r = await TapeConHost.RunAsync("docs");
         Assert.Equal(TapeConExitCode.Ok, r.Exit);
-        Assert.Contains(r.Entries, e => e.Message.Contains("tapecon — Concepts", StringComparison.Ordinal));
+        Assert.Contains("tapecon — Concepts", r.Output, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -36,9 +52,9 @@ public class DocsCommandTests
     {
         var r = await TapeConHost.RunAsync("docs", "--list");
         Assert.Equal(TapeConExitCode.Ok, r.Exit);
-        Assert.Contains(r.Entries, e => e.Message.Contains("concepts"));
-        Assert.Contains(r.Entries, e => e.Message.Contains("migration"));
-        Assert.Contains(r.Entries, e => e.Message.Contains("faq"));
+        Assert.Contains("concepts", r.Output);
+        Assert.Contains("migration", r.Output);
+        Assert.Contains("faq", r.Output);
     }
 
     [Fact]
