@@ -293,8 +293,9 @@ HelpModel.Build(Command cmd, Command root)     // pure: walks the symbols, appli
               IReadOnlyList<HelpArgument>,
               IReadOnlyList<HelpSection>,       // HelpSection(Group, IReadOnlyList<HelpOptionRow>)
               IReadOnlyList<HelpCommandRow>)    // subcommands, for the root and 'toc'
-HelpRenderer.ToRenderables(model, width)
-HelpRenderer.ToPlainLines(model, width)
+HelpRenderer.Layout(model, width)        // internal: lines of styled runs — HelpRun(Text, Style)
+HelpRenderer.ToPlainLines(model, width)  // the runs' texts, concatenated
+HelpRenderer.ToRenderables(model, width) // ONE Markup: each run escaped, wrapped in its style's markup
 ```
 
 - **Location:** `TapeConNET/Cli/Help/` — `HelpGroups.cs`, `HelpModel.cs`, `HelpRenderer.cs`,
@@ -306,6 +307,9 @@ HelpRenderer.ToPlainLines(model, width)
 - `HelpModel.Build(Command cmd)` takes no root parameter; it walks `Parents`.
 - Option value types come from the generic `Option<T>` base type, not from a `ValueType` member.
 - The default comes from `Option.HasDefaultValue` / `GetDefaultValue()`. A throwing factory yields no default.
+- **One layout, two forms.** The help is laid out once, as lines of `HelpRun(Text, Style)`. The plain form concatenates the texts; the rich form wraps each escaped text in its style's markup. Both forms break every line at the same place, and the plain form, which the tests pin, is the rich form without colours. The tests check this for every command.
+- **Own wrapper.** `HelpRenderer` no longer calls `MarkdownRenderer.Wrap`, because its words carry a `Style`, not an `MdSpanKind`. The rule is the same: greedy at spaces, minimum width 20, and an overlong word breaks after `/ | , \` (`BreakOverlong`).
+- **Merged runs.** Neighbouring runs of one style join, and a space between two words of one style takes that style. That gives one markup tag per styled phrase.
 
 
 ### 5.2 Layout
@@ -320,6 +324,21 @@ HelpRenderer.ToPlainLines(model, width)
 | Commands | subcommands with descriptions (root, `toc`) | names themed | two columns |
 | Footer | root only: "Docs: tapecon docs concepts · exit codes: tapecon docs faq" | dimmed | as is |
 
+**Updated syles** (as implemented):
+
+| Section | Rich style |
+|---|---|
+| Title, section titles (*Arguments*, *Options*, group titles, *Commands*) | `Heading` (bold cyan) |
+| Usage | `Emphasis` (bold), whole line |
+| Description, option descriptions | unstyled |
+| Group intro | `Dimmed` |
+| Argument, option and command names, with their aliases | `OptionName` (cyan) |
+| Value placeholder | `Placeholder` (grey) |
+| `[default: …]` | `Dimmed` |
+| Summary names | `OptionName`; pointer `Dimmed` |
+| Footer | `Dimmed` |
+
+
 Option rows:
 
 - **Placeholder:** `HelpName` when set (`PATH`, `SIZE`), else derived from the value type — none for `bool`,
@@ -332,7 +351,6 @@ Option rows:
 - **Placeholder** of `string` options without `HelpName`: `TEXT`. Of other unknown types: `VALUE`. Step 3 added `HelpName`s where the shared option files were touched anyway: `--filter-file`, `--password-file`, `--new-password-file` (PATH); `--password-env`, `--new-password-env` (VARIABLE).
 - **Aliases:** canonical name first, then long (`--`) before short (`-`). Windows-style `/h`, `/?` are omitted.
 - **Commands** rows: name and aliases (`create-virtual, new-virtual`).
-- **Rich form (Step 3):** the plain lines, unstyled. Step 4 replaces it.
 
 ### 5.3 Example — `tapecon backup --help`
 
@@ -399,6 +417,7 @@ A parse error keeps System.CommandLine's behaviour (error lines, exit 2). The he
 - **Redirection** comes from the console, not the helper: `SpectreConsoleUx` asks `Profile.Out.IsTerminal`, so an injected console decides for itself; `SilentConsoleUx` always counts as redirected. Both helpers are pure functions taking flags rather than an `IConsoleUx`, so the interface does not grow.
 - **Output:** `IConsoleUx.Write(ConsoleDocument)` (§3.4) serves docs and help alike.
 - `SubHeading` (cyan, `###`) and `CodeBlock` (grey, code blocks).
+- `Emphasis` (bold, no colour): the help's usage line.
 
 
 ## 7. Testing
@@ -414,6 +433,7 @@ A parse error keeps System.CommandLine's behaviour (error lines, exit 2). The he
 | Help output | every verb `--help` exits 0; root lists commands and the footer; backup's section order; summary line and pointer; recursive options and `--help` last; create-virtual promotion; long names push the description down; lines fit 80 columns | `CliParsingTests` via `RunResult.Output` |
 | Recursive options | `docs --quiet` / `-q` / `--no-color`; `backup --quiet --no-color --help` | `CliParsingTests` |
 | Output path | `SilentConsoleUx.Write` / `SpectreConsoleUx.Write` (redirected): plain lines only, no timestamp, not quiet-suppressed, at the decided width; `ConsoleCapabilities` rules; Error/Failed icons | `ConsoleOutputTests` (Step 1) |
+| Coloured help | every command: rich without colours equals plain, line by line; rich with colours emits ANSI and keeps `[default: …]` as text; every run's theme style; neighbouring runs never share a style | `HelpRendererTests`, Spectre test console |
 
 Existing `Help_ForVerb_ReturnsOk` tests keep passing.
 
@@ -481,9 +501,9 @@ action and symbol API (`HelpOption`, `Option.Recursive`, `Option.HasDefaultValue
 
 ### Step 4 — Coloured help
 
-Content: rich half of `HelpRenderer.cs`; theme styles applied.
+Content (as built): `HelpRenderer` rewritten around `Layout` / `HelpRun`; `ConsoleTheme.Emphasis`; `HelpRendererTests` (new). Unchanged: `HelpModel`, `SpectreConsoleUx`, `MarkdownRenderer`.
 
-Exit: `--help` coloured on a console, plain when redirected; all tests green.
+Exit: `--help` coloured on a console, plain when redirected or under `--no-color` / `--quiet`; all tests green.
 
 | Attach | Why |
 |---|---|

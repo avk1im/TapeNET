@@ -42,10 +42,13 @@ public static class ConsoleTheme
     //  hand-written [bold cyan] elsewhere can never drift apart. Renderers take colours ONLY from here.
 
     /// <summary>Headings: doc headings, the help title, help group titles.</summary>
-    public static readonly Style Heading = Style.Parse("bold cyan");
+    public static readonly Style Heading = Style.Parse("bold yellow");
 
     /// <summary>Third-level doc headings (<c>###</c>): the heading colour without the weight.</summary>
-    public static readonly Style SubHeading = Style.Parse("cyan");
+    public static readonly Style SubHeading = Style.Parse("yellow");
+
+    /// <summary>Weight without colour: the help's usage line.</summary>
+    public static readonly Style Emphasis = Style.Parse("bold");
 
     /// <summary>Option names and aliases in help; argument and command names.</summary>
     public static readonly Style OptionName = Style.Parse("cyan");
@@ -60,5 +63,5 @@ public static class ConsoleTheme
     public static readonly Style Code = Style.Parse("cyan");
 
     /// <summary>Code blocks in docs: command examples, set apart from the prose around them.</summary>
-    public static readonly Style CodeBlock = Style.Parse("grey");
+    public static readonly Style CodeBlock = Style.Parse("cyan");
 }
