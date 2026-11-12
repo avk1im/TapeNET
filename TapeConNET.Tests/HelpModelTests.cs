@@ -25,7 +25,7 @@ public class HelpModelTests
         var options = new List<Option>(cmd.Options);
         for (var p = cmd.Parents.OfType<Command>().FirstOrDefault(); p is not null; p = p.Parents.OfType<Command>().FirstOrDefault())
             options.AddRange(p.Options.Where(o => o.Recursive));
-        return options.Distinct().ToList();
+        return [.. options.Distinct()];
     }
 
     public static TheoryData<string> CommandNames
@@ -79,11 +79,15 @@ public class HelpModelTests
         }
     }
 
+    /// <summary>
+    /// No name or alias twice among the options a command accepts — its own, the shared ones it attaches, and the
+    ///  recursive ones it inherits (<c>--quiet</c>, <c>-q</c>, <c>--no-color</c>, <c>--help</c>, <c>-h</c>). With a clash,
+    ///  the parser binds the token to one option only and the other becomes unreachable.
+    /// </summary>
     [Theory]
     [MemberData(nameof(CommandNames))]
-    public void Model_NoAliasCollides_WithRecursiveOptions(string name)
+    public void Model_NoOptionNameCollides(string name)
     {
-        // Recursive --quiet / -q / --no-color / --help / -h share each verb's name space with its own options
         var names = AcceptedOptions(Find(name)).SelectMany(o => o.Aliases.Prepend(o.Name)).ToList();
         var duplicates = names.GroupBy(n => n).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
         Assert.Empty(duplicates);
@@ -177,6 +181,17 @@ public class HelpModelTests
         Assert.NotEmpty(continuations);
         Assert.All(continuations, l => Assert.NotEqual(' ', l[hang.Length]));
     }
+
+    [Theory]
+    [InlineData("(Trace/Debug/Information/Warning/Error/Critical/None).", 42,
+    new[] { "(Trace/Debug/Information/Warning/Error/", "Critical/None)." })]
+    [InlineData("<None|Crc32|Crc64|XxHash32|XxHash3|XxHash64|XxHash128>", 20,
+    new[] { "<None|Crc32|Crc64|", "XxHash32|XxHash3|", "XxHash64|XxHash128>" })]
+    [InlineData("NoSeparatorAnywhereInThisVeryLongWord", 20,
+    new[] { "NoSeparatorAnywhereInThisVeryLongWord" })]     // stays whole: no separator to break at
+    [InlineData("short/word", 42, new[] { "short/word" })]
+    public void BreakOverlong_BreaksAfterSeparators(string word, int width, string[] expected)
+        => Assert.Equal(expected, HelpRenderer.BreakOverlong(word, width));
 
     #endregion
 }

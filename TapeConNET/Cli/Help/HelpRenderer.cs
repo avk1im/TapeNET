@@ -12,7 +12,8 @@ namespace TapeConNET.Cli.Help;
 /// <remarks>
 /// Two-column rows: names (+ placeholder) left, description right. The name column is as wide as the widest name in the
 ///  WHOLE help — so all sections line up — capped at <see cref="MaxNameColumn"/>; a longer name gets its own line and
-///  its description starts on the next one. Text wraps with the docs' word wrapper (<see cref="MarkdownRenderer.Wrap"/>).
+///  its description starts on the next one. Text wraps with the docs' word wrapper (<see cref="MarkdownRenderer.Wrap"/>),
+///  plus one help-specific rule: a word longer than the line breaks after a separator (<see cref="BreakAfter"/>).
 /// </remarks>
 public static class HelpRenderer
 {
@@ -27,6 +28,12 @@ public static class HelpRenderer
 
     /// <summary>Spaces between two names in a Summary section.</summary>
     private const string SummaryGap = "  ";
+
+    /// <summary>
+    /// Where an overlong word may break — after one of these. Help texts join choices without spaces
+    ///  (<c>Trace/Debug/…/None</c>, <c>None|Crc32|…</c>), which the docs' wrapper keeps whole as one word.
+    /// </summary>
+    private static readonly char[] BreakAfter = ['/', '|', ',', '\\'];
 
     /// <summary>Both forms of <paramref name="model"/>, ready for <see cref="IConsoleUx.Write"/>.</summary>
     public static ConsoleDocument ToDocument(HelpModel model)
@@ -146,7 +153,7 @@ public static class HelpRenderer
         else
         {
             yield return head.PadRight(hang.Length) + text[0];
-            text = text.Skip(1).ToList();
+            text = [.. text.Skip(1)];
         }
 
         foreach (var line in text)
@@ -174,10 +181,48 @@ public static class HelpRenderer
         return lines;
     }
 
+    #endregion
+
+    #region *** Wrapping ***
+
+    /// <summary>
+    /// Word wrap at <paramref name="width"/>, then <see cref="BreakOverlong"/> on every line still too long. The docs'
+    ///  wrapper sets an overlong word on a line of its own, so such a line IS the word — breaking it disturbs nothing else.
+    /// </summary>
     private static List<string> Wrap(string text, int width)
-        => MarkdownRenderer.Wrap([new MdSpan(MdSpanKind.Text, text)], width)
+        => [.. MarkdownRenderer.Wrap([new MdSpan(MdSpanKind.Text, text)], width)
             .Select(spans => string.Concat(spans.Select(s => s.Text)))
-            .ToList();
+            .SelectMany(line => BreakOverlong(line, width))];
+
+    /// <summary>
+    /// Breaks <paramref name="word"/> after the last <see cref="BreakAfter"/> character that still fits
+    ///  <paramref name="width"/>. With none in reach, it breaks at the next one beyond — the piece overruns, but less.
+    ///  A word without any separator stays whole: cutting <c>TapeLibNET</c> mid-letters reads worse than an overrun.
+    /// </summary>
+    /// <remarks>
+    /// Never breaks after the word's last character — that would leave an empty piece. <paramref name="width"/> is
+    ///  clamped as in <see cref="MarkdownRenderer.Wrap"/>, so a piece fits whatever line the wrapper made.
+    /// </remarks>
+    internal static IEnumerable<string> BreakOverlong(string word, int width)
+    {
+        width = Math.Max(width, 20);        // MarkdownRenderer's MinWrapWidth — the width the line was wrapped at
+
+        while (word.Length > width)
+        {
+            // Last separator inside the first `width` characters; else the first one after them
+            int cut = word.LastIndexOfAny(BreakAfter, width - 1);
+            if (cut < 0)
+                cut = word.IndexOfAny(BreakAfter, width);
+
+            if (cut < 0 || cut == word.Length - 1)
+                break;
+
+            yield return word[..(cut + 1)];
+            word = word[(cut + 1)..];
+        }
+
+        yield return word;
+    }
 
     private static IEnumerable<string> Indented(IEnumerable<string> lines, int indent)
         => lines.Select(l => new string(' ', indent) + l);

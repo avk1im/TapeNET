@@ -1,3 +1,4 @@
+using TapeConNET.Cli;
 using TapeConNET.Infrastructure;
 using TapeConNET.Tests.Helpers;
 
@@ -54,6 +55,18 @@ public class CliParsingTests
         // 'backup' requires at least one positional argument
         var r = await TapeConHost.RunAsync("backup", "--in-memory");
         Assert.NotEqual(TapeConExitCode.Ok, r.Exit);
+    }
+
+    [Fact]
+    public void Info_DriveSelector_And_DepthFlag_ParseApart()
+    {
+        // Parse only — no drive opens. --drive N selects the drive; --drive-only limits the depth.
+        var root = RootCommandFactory.Create(new Ux.SilentConsoleUx(new StringWriter()));
+        var p = root.Parse(["info", "--drive", "1", "--drive-only"]);
+
+        Assert.Empty(p.Errors);
+        Assert.Equal(1, p.GetValue(GlobalOptions.Drive));
+        Assert.True(p.GetValue<bool>("--drive-only"));
     }
 
     #endregion

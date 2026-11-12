@@ -129,11 +129,10 @@ order, and a display mode.
 ```csharp
 /// <summary>A titled section of a command's help.</summary>
 public sealed record HelpGroup(
-    string Key,             // "drive", "virtual-new", ...
-    string Title,           // "Drive selection"
-    string? Intro,          // one line under the title; may name the defaults
-    int Order,              // ascending; the verb's own options are always first
-    HelpGroupMode Mode = HelpGroupMode.Full);
+    string Key, string Title, string? Intro, int Order,
+    HelpGroupMode Mode = HelpGroupMode.Full,
+    string? SummaryPointer = null);       // Summary mode: "Details: tapecon create-virtual --help"
+
 
 public enum HelpGroupMode
 {
@@ -143,6 +142,8 @@ public enum HelpGroupMode
     Summary,
 }
 ```
+
+The implicit group is a real constant, `HelpGroups.Own` ("Options", order 0). A promoted group renders under its title.
 
 An option has exactly **one home group** (its full entry) and **zero or more references**.
 A reference repeats the option in another group, with a description written for that group:
@@ -192,19 +193,20 @@ internal static class HelpGroups
 }
 ```
 
-- Storage: a `Dictionary<Option, HelpGroup>` (reference keys) and a `Dictionary<Command, HelpGroup>` for promotions,
-  both filled during the static initialisation of the option classes and during `RootCommandFactory.Create`.
-- Storage: a third `Dictionary<HelpGroup, List<HelpReference>>`. The option class that owns the home registers the reference (one place per option).
-- Each option class registers its own options in its static constructor or right after the fields:
-  `GlobalOptions` (drive, diagnostics), `VirtualMediaOptions` (virtual-new), `FilterOptions` (filter),
-  `PasswordOptions` + the encryption options (encryption).
-- Verb-local options stay unassigned — no change in the verbs except where a verb promotes a group.
+- **Storage:** one `ConditionalWeakTable` per relation (option → home, command → promoted group), plus a locked list for references.
+  - Verb-local options and commands are created anew by every `RootCommandFactory.Create` (once per test), so the registry must not keep them alive.
+  - The tables are thread-safe, which parallel tests need.
+- **One home, enforced:** `Assign` throws `InvalidOperationException` when an option already has a *different* home group. Re-assigning the same home does nothing. `Reference` throws when it targets the option's home.
+- **Built-ins by type:** System.CommandLine creates its `HelpOption` and `VersionOption` per root. `GroupOf` places them in *Output and diagnostics* by type, instead of registering every instance.
+- **Registration** happens in the static constructor of each option class: `GlobalOptions`, `VirtualMediaOptions`, `FilterOptions`, `PasswordOptions`. An option instance in use therefore implies its registration. `BackupCommand` assigns its local `--encrypt` / `--encryption` to *Encryption*.
+- `HelpGroups.ReferencesOf(option)` complements `ReferencesIn(group)`: the model walks options, not groups.
 - **Rendering rules:**
-  - A reference row shows only for a command that has the option attached. Membership works the same way.
-  - In a section, rows follow the **command's attachment order**, home rows and reference rows alike. A reference therefore sits next to its natural neighbours (`--initiator` after `--init-capacity`) with no extra ordering key.
-  - **Full** mode: the name column matches the home row exactly, and the description column shows the reference's description. The renderer appends nothing, so the reference text must stand on its own.
-  - **Summary** mode: the reference name joins the name list, as a member's would.
-  - **Promotion** (create-virtual) changes nothing for references: the promoted group renders as "Options", Full, with its references included.
+  - A row shows only for a command that accepts the option: its own options, plus its ancestors' recursive ones.
+  - Rows follow the command's attachment order. `--help` comes last.
+  - **Full** mode: a reference row has the home row's name column, the reference's description, and no default.
+  - **Summary** mode: canonical names only (no aliases), joined by two spaces, wrapped between names.
+  - **Promotion:** the promoted group's rows render under *Options*. A reference **into** the promoted group **replaces** the option's home row on that command. On `create-virtual`, `--initiator` therefore shows once, under *Options*, with its create-time description. No *Drive selection* section holds `--initiator` alone under an intro ("At most one; none opens physical drive 0") that does not fit.
+  - Empty sections never render.
 
 ### 4.3 The groups
 
@@ -212,7 +214,7 @@ internal static class HelpGroups
 |---|---|---|---|---|
 | — | **Options** | the verb's own options | 0 | Full |
 | `filter` | **File selection** | `--filter`, `--filter-file` | 10 | Full |
-| `encryption` | **Encryption** | `--password-file`, `--password-env`, (backup:) `--encrypt`, `--encryption` | 20 | Full |
+| `encryption` | **Encryption** | `--password`, `--new-password-file`, `--new-password-env`, `--new-password` (rename-set). On backup, `--encrypt` / `--encryption` are attached **before** the password options, so the section opens with the switch. | 20 | Full |
 | `drive` | **Drive selection** | `--drive`, `--virtual-open`, `--virtual-create`, `--in-memory`, `--initiator` | 30 | Full |
 | `virtual-new` | **New virtual media** | `--capacity`, `--initiator` (ref.), `--init-capacity`, `--setmarks`, `--seq-filemarks`, `--filemarks-only`, `--min-/--def-/--max-block-size`, `--overwrite-virtual` | 40 | **Summary** |
 | `diagnostics` | **Output and diagnostics** | `--log-level`, `--quiet`, `--no-color`, `--help` | 90 | Full |
@@ -226,10 +228,13 @@ Intros (one line each, under the title):
 
 `--initiator` has its **home** in *Drive selection*, because it also applies to `--virtual-open`. A **reference** in *New virtual media* covers its create-time role:
 
-| Group | Description (draft; final wording in Step 3 against `GlobalOptions.cs`) |
+| Group | Description (as built) |
 |---|---|
-| Drive selection (home) | Initiator-partition file of the virtual media; by default found next to the media file. |
-| New virtual media (reference) | Initiator-partition file to create; by default named after the media file when `--init-capacity` is given. |
+| Drive selection (home) | Initiator (TOC) partition file of file-backed virtual media. Default: PATH_init.ext beside the content file, when it exists. With --virtual-create: the file to create. |
+| New virtual media (reference) | Initiator (TOC) partition file to create; giving it adds the partition. Default with only --init-capacity: PATH_init.ext. |
+
+`GlobalOptions.Attach` attaches `--initiator` **after** `--init-capacity`. It closes the selectors in *Drive selection* (the §4.3 member order) and sits next to the capacities in *New virtual media*. Parsing is unaffected.
+
 
 ### 4.4 Summary mode — the key to the overload
 
@@ -263,6 +268,10 @@ diagnostics* groups, which say what the options are for rather than where they a
 `Option.Recursive = true`) lets every verb parse them and lets the help list them in *Output and diagnostics*.
 The pre-scan in `Program` stays: the banner needs the flags before parsing.
 
+**As built:** `--quiet` / `--no-color` moved from locals in `RootCommandFactory` to `GlobalOptions.Quiet` / `NoColor`
+(static, `Recursive = true`, home *Output and diagnostics*), attached once to the root. `Program` is unchanged:
+its pre-scan still applies them before parsing.
+
 ### 4.7 Hidden and visible
 
 - `Option.Hidden` / `Command.Hidden` are honoured; nothing is hidden today.
@@ -292,6 +301,12 @@ HelpRenderer.ToPlainLines(model, width)
   `TapeConHelpAction.cs`.
 - `HelpModel.Build` is the only place that touches System.CommandLine's symbol API — one file to adapt when the
   package moves.
+- `TapeConHelpAction : SynchronousCommandLineAction` overrides **`ClearsParseErrors => true`**. Since 2.0 RC1, a custom help action no longer clears parse errors implicitly. Without the override, `backup --help` would fail on the missing `<files>`.
+- The root shows as `tapecon` (`HelpModel.RootName`), not `RootCommand`'s executable name, which in tests is the test host's.
+- `HelpModel.Build(Command cmd)` takes no root parameter; it walks `Parents`.
+- Option value types come from the generic `Option<T>` base type, not from a `ValueType` member.
+- The default comes from `Option.HasDefaultValue` / `GetDefaultValue()`. A throwing factory yields no default.
+
 
 ### 5.2 Layout
 
@@ -314,6 +329,10 @@ Option rows:
 - **Wrapping:** the description column wraps at the console width (§6); the name column is sized to the widest name
   in the *whole help*, capped at 34 characters — longer names push their description to the next line.
 - **References:** same name column as the home row; the description comes from the `HelpReference`; the default is not repeated.
+- **Placeholder** of `string` options without `HelpName`: `TEXT`. Of other unknown types: `VALUE`. Step 3 added `HelpName`s where the shared option files were touched anyway: `--filter-file`, `--password-file`, `--new-password-file` (PATH); `--password-env`, `--new-password-env` (VARIABLE).
+- **Aliases:** canonical name first, then long (`--`) before short (`-`). Windows-style `/h`, `/?` are omitted.
+- **Commands** rows: name and aliases (`create-virtual, new-virtual`).
+- **Rich form (Step 3):** the plain lines, unstyled. Step 4 replaces it.
 
 ### 5.3 Example — `tapecon backup --help`
 
@@ -390,10 +409,10 @@ A parse error keeps System.CommandLine's behaviour (error lines, exit 2). The he
 | Markdown renderers | plain fixture line by line; wrapping with hanging indent; table shrinking; rich rendering escapes brackets | `MarkdownTests`, pure + Spectre test console |
 | Doc subset | every embedded topic: no Markdown syntax in plain prose; rich render does not throw | `MarkdownTests`, renders the real resources |
 | `tapecon docs` | topics, default topic, `--list`, unknown topic; output carries no `#`/`##` lines and no `|---` | `DocsCommandTests` via `RunResult.Output` |
-| Help groups | every option attached to a drive verb has a home group or is verb-local; **no option has two homes; no reference targets its own home** | reflection over the built root |
-| Help model | per verb: every visible option appears **once as a home row, plus once per reference into a rendered group**; groups in order; the verb's own group first | `HelpModel.Build` directly |
-| Help output | `tapecon <verb> --help` exits 0 and its plain output contains the group titles and the verb's own options; `create-virtual` shows the virtual-new options in full | `TapeConHost` |
-| Recursive options | `tapecon backup --quiet …` parses | `TapeConHost` |
+| Help groups | second home throws; reference into home throws; `--initiator` home + reference; built-ins in *Output and diagnostics* | `HelpModelTests` |
+| Help model | **every command of the real tree:** sections non-empty and ordered; no option twice in a section; every visible option shown; exactly one home row (zero or one on a promoting command); **no alias collides with a recursive option** | `HelpModelTests`, `HelpModel.Build` |
+| Help output | every verb `--help` exits 0; root lists commands and the footer; backup's section order; summary line and pointer; recursive options and `--help` last; create-virtual promotion; long names push the description down; lines fit 80 columns | `CliParsingTests` via `RunResult.Output` |
+| Recursive options | `docs --quiet` / `-q` / `--no-color`; `backup --quiet --no-color --help` | `CliParsingTests` |
 | Output path | `SilentConsoleUx.Write` / `SpectreConsoleUx.Write` (redirected): plain lines only, no timestamp, not quiet-suppressed, at the decided width; `ConsoleCapabilities` rules; Error/Failed icons | `ConsoleOutputTests` (Step 1) |
 
 Existing `Help_ForVerb_ReturnsOk` tests keep passing.
@@ -434,9 +453,13 @@ Exit: `tapecon docs` renders themed on a console, plain when redirected; all tes
 
 ### Step 3 — Help groups and the help model (plain)
 
-Content: `Cli/Help/HelpGroups.cs`, `HelpModel.cs`, plain half of `HelpRenderer.cs`, `TapeConHelpAction.cs` (all new);
-registrations in the option classes; recursive `--quiet` / `--no-color`; `create-virtual` promotion; help tests.
-`HelpGroups.Reference` / `ReferencesIn`; the `--initiator` reference into *New virtual media*.
+Content (as built):
+- New: `Cli/Help/HelpGroups.cs`, `HelpModel.cs`, `HelpRenderer.cs` (plain), `TapeConHelpAction.cs`.
+- Registrations: `GlobalOptions` (adds `Quiet` / `NoColor`), `VirtualMediaOptions`, `FilterOptions`, `PasswordOptions`, `BackupCommand`.
+- Promotion: `CreateVirtualCommand`.
+- `RootCommandFactory` installs the help action.
+- Tests: `CliParsingTests` (extended), `HelpModelTests` (new).
+- Unchanged: `Program`, `TapeConHost`, `SizeOptions`.
 
 Exit: `--help` shows the grouped layout in plain text everywhere; all tests green.
 
