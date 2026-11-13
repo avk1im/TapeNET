@@ -183,7 +183,7 @@ internal static class PasswordOptions
 internal static class SchemeWords
 {
     /// <summary>The encryption choices, for help texts.</summary>
-    public const string EncryptionChoices = "none, software, hardware | drive";
+    public const string EncryptionChoices = "`none`, `software`, `hardware` | `drive`";
 
     /// <summary>Parses an encryption word.</summary>
     public static bool TryParseEncryption(string? word, out TapeEncryption scheme)

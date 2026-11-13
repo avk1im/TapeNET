@@ -316,7 +316,7 @@ HelpRenderer.ToRenderables(model, width) // ONE Markup: each run escaped, wrappe
 
 | Section | Content | Rich style | Plain |
 |---|---|---|---|
-| Title | `tapecon <verb>` — aliases in parentheses | bold cyan | as is |
+| Title | `tapecon <verb>` — aliases in parentheses | bold cyan (or bold yellow) | as is |
 | Description | `Command.Description` | wrapped | wrapped |
 | Usage | `tapecon <verb> [<args>...] [options]` | bold | as is |
 | Arguments | name, arity marker (`...`), description | name themed | two columns |
@@ -328,7 +328,7 @@ HelpRenderer.ToRenderables(model, width) // ONE Markup: each run escaped, wrappe
 
 | Section | Rich style |
 |---|---|
-| Title, section titles (*Arguments*, *Options*, group titles, *Commands*) | `Heading` (bold cyan) |
+| Title, section titles (*Arguments*, *Options*, group titles, *Commands*) | `Heading` (bold yellow) |
 | Usage | `Emphasis` (bold), whole line |
 | Description, option descriptions | unstyled |
 | Group intro | `Dimmed` |

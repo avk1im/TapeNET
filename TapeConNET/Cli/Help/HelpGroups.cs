@@ -74,8 +74,8 @@ internal static class HelpGroups
 
     #region *** Registry ***
 
-    private static readonly ConditionalWeakTable<Option, HelpGroup> s_homes = new();
-    private static readonly ConditionalWeakTable<Command, HelpGroup> s_promotions = new();
+    private static readonly ConditionalWeakTable<Option, HelpGroup> s_homes = [];
+    private static readonly ConditionalWeakTable<Command, HelpGroup> s_promotions = [];
 
     // References are few and all target static options — a locked list suffices
     private static readonly List<(HelpGroup Group, HelpReference Reference)> s_references = [];
@@ -140,14 +140,14 @@ internal static class HelpGroups
     public static IReadOnlyList<HelpReference> ReferencesIn(HelpGroup group)
     {
         lock (s_referencesLock)
-            return s_references.Where(r => r.Group == group).Select(r => r.Reference).ToArray();
+            return [.. s_references.Where(r => r.Group == group).Select(r => r.Reference)];
     }
 
     /// <summary>The references of <paramref name="option"/> into other groups, in registration order.</summary>
     public static IReadOnlyList<(HelpGroup Group, HelpReference Reference)> ReferencesOf(Option option)
     {
         lock (s_referencesLock)
-            return s_references.Where(r => r.Reference.Option == option).ToArray();
+            return [.. s_references.Where(r => r.Reference.Option == option)];
     }
 
     #endregion

@@ -4,8 +4,15 @@ using TapeConNET.Ux;
 
 namespace TapeConNET.Cli.Help;
 
-/// <summary>A run of help text in one style — <see cref="Style.Plain"/> for unstyled text, padding and separators.</summary>
-internal readonly record struct HelpRun(string Text, Style Style);
+
+/// <summary>
+/// A run of help text in one style — <see cref="Style.Plain"/> for unstyled text, padding and separators.
+/// <para>
+/// <paramref name="KeepWithPrevious"/>: no space separates it from the run before, so the wrapper must not
+///  break between the two (e.g. <c>`--drive`,</c> or <c>(`--drive`)</c> stay together).
+/// </para>
+/// </summary>
+internal readonly record struct HelpRun(string Text, Style Style, bool KeepWithPrevious = false);
 
 /// <summary>
 /// Renders a <see cref="HelpModel"/> (Design-CliPresentation §5.2) in both forms: plain lines and themed Spectre markup.
@@ -233,13 +240,78 @@ public static class HelpRenderer
 
     #endregion
 
-    #region *** Wrapping ***
+    #region *** Parsing ***
 
-    /// <summary>The words of <paramref name="text"/> (split at spaces, empty ones dropped), each a run of <paramref name="style"/>.</summary>
+    /// <summary>Marks literals in help texts: <c>`--password-file`</c> renders in <see cref="ConsoleTheme.Mention"/>.</summary>
+    private const char MentionMarker = '`';
+
+    /// <summary>
+    /// The runs of <paramref name="text"/>: the spans between <see cref="MentionMarker"/> pairs in
+    ///  <see cref="ConsoleTheme.Mention"/> (markers removed), everything else split at spaces into words of
+    ///  <paramref name="style"/>. A run that touches the mention without a space between is flagged
+    ///  <see cref="HelpRun.KeepWithPrevious"/> — on the mention's side as well as on the following text's.
+    /// </summary>
+    /// <remarks>
+    /// An unpaired marker stays literal (as in the docs). A span with spaces becomes several mention runs, so it can wrap.
+    /// </remarks>
     private static List<HelpRun> Words(string? text, Style style)
-        => text is null
-            ? []
-            : [.. text.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(w => new HelpRun(w, style))];
+    {
+        var runs = new List<HelpRun>();
+        if (text is null)
+            return runs;
+
+        bool afterMention = false;      // the last run added belongs to a mention span
+        int pos = 0;
+
+        while (pos < text.Length)
+        {
+            int open = text.IndexOf(MentionMarker, pos);
+            int close = open < 0 ? -1 : text.IndexOf(MentionMarker, open + 1);
+
+            if (close < 0)              // no further complete pair: the rest is plain, a lone marker stays literal
+            {
+                AddPlain(text[pos..]);
+                break;
+            }
+
+            AddPlain(text[pos..open]);
+            bool glued = open > 0 && text[open - 1] != ' ' && runs.Count > 0;
+            AddMention(text[(open + 1)..close], glued);
+            pos = close + 1;
+        }
+
+        return runs;
+
+        // Words of the text between mentions; the first one sticks to a preceding mention when no space separates them
+        void AddPlain(string segment)
+        {
+            bool glue = afterMention && segment.Length > 0 && segment[0] != ' ';
+            foreach (var word in segment.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                runs.Add(new(word, style, glue));
+                glue = false;
+            }
+            
+            // The following is not needed: afterMention will be set in the following call to AddMention() anyways
+            // if (segment.Length > 0)
+            //     afterMention = false;
+        }
+
+        void AddMention(string span, bool glueToPrevious)
+        {
+            foreach (var word in span.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            {
+                runs.Add(new(word, ConsoleTheme.Mention, glueToPrevious));
+                glueToPrevious = false;
+            }
+
+            afterMention = true;
+        }
+    }
+
+    #endregion
+
+    #region *** Wrapping ***
 
     /// <summary>
     /// Greedy word wrap of <paramref name="words"/> at <paramref name="width"/>, then <see cref="BreakOverlong"/> on a
@@ -250,13 +322,25 @@ public static class HelpRenderer
     {
         width = Math.Max(width, MinWrapWidth);
 
+        // A run flagged KeepWithPrevious joins the unit before it: units are what the wrapper may separate
+        var units = new List<List<HelpRun>>();
+        foreach (var run in words)
+        {
+            if (run.KeepWithPrevious && units.Count > 0)
+                units[^1].Add(run);
+            else
+                units.Add([run]);
+        }
+
         var lines = new List<List<HelpRun>>();
         var line = new List<HelpRun>();
         int length = 0;
 
-        foreach (var word in words)
+        foreach (var unit in units)
         {
-            if (length > 0 && length + 1 + word.Text.Length > width)
+            int unitLength = unit.Sum(r => r.Text.Length);
+
+            if (length > 0 && length + 1 + unitLength > width)
             {
                 lines.Add(line);
                 line = [];
@@ -266,16 +350,19 @@ public static class HelpRenderer
             if (length > 0)
             {
                 // The space takes the style of both neighbours when they agree — one styled run per phrase, not per word
-                line.Add(new(" ", line[^1].Style.Equals(word.Style) ? word.Style : Style.Plain));
+                line.Add(new(" ", line[^1].Style.Equals(unit[0].Style) ? unit[0].Style : Style.Plain));
                 length++;
             }
 
-            line.Add(word);
-            length += word.Text.Length;
+            line.AddRange(unit);
+            length += unitLength;
         }
 
         lines.Add(line);
 
+        // ... the BreakOverlong pass stays as it is
+
+        // Breaks overlong words into several lines, so the wrapper can wrap them. A word that fits stays whole.
         var result = new List<List<HelpRun>>();
         foreach (var l in lines)
         {

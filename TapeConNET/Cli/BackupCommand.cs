@@ -59,25 +59,25 @@ internal static class BackupCommand
 
         var hashOption = new Option<TapeHashAlgorithm>("--hash", "-H")
         {
-            Description = "Per-file hash algorithm. Choices: None, Crc32, Crc64, XxHash32, XxHash3, XxHash64, XxHash128.",
+            Description = "Per-file hash algorithm. Choices: `None`, `Crc32`, `Crc64`, `XxHash32`, `XxHash3`, `XxHash64`, `XxHash128`.",
             DefaultValueFactory = _ => TapeHashAlgorithm.Crc32,
         };
 
         var compressionOption = new Option<string>("--compression", "-c")
         {
-            Description = "Per-file compression. Choices: off/none, hardware | drive, low, medium (default), high, or 1-19 (ZSTD level).",
+            Description = "Per-file compression. Choices: `off`/`none`, `hardware` | `drive`, `low`, `medium` (default), `high`, or 1-19 (ZSTD level).",
             DefaultValueFactory = _ => CompressionPreset.KeyMedium,
         };
 
         var encryptOption = new Option<bool>("--encrypt", "-e")
         {
-            Description = "Encrypt the backup set (software, AES-256-GCM). The password comes from --password-file / " +
-                  "--password-env, else it is asked (twice). An incremental on an encrypted set is encrypted anyway.",
+            Description = "Encrypt the backup set (software, AES-256-GCM). The password comes from `--password-file` / " +
+                  "`--password-env`, else it is asked (twice). An incremental on an encrypted set is encrypted anyway.",
         };
 
         var encryptionOption = new Option<string?>("--encryption")
         {
-            Description = $"Encryption scheme: {SchemeWords.EncryptionChoices}. 'hardware' (drive) is not supported " +
+            Description = $"Encryption scheme: {SchemeWords.EncryptionChoices}. `hardware` (`drive`) is not supported " +
                           "in this version. Software encryption rules out hardware compression.",
         };
 
@@ -93,7 +93,7 @@ internal static class BackupCommand
         {
             Description = "Append after a specific set (replaces all sets after the given index). " +
                           "Set index follows the dual convention (positive=oldest-up, 0/negative=latest-down). " +
-                          "Implies --append.",
+                          "Implies `--append`.",
         };
 
         var skipErrorsOption = new Option<bool>("--skip-errors")
@@ -114,12 +114,13 @@ internal static class BackupCommand
         var emergencyTocOption = new Option<string?>("--emergency-toc")
         {
             Description = "Folder for the emergency TOC export if writing the TOC to tape fails.",
+            HelpName = "PATH",
         };
 
         var overwriteMediaOption = new Option<bool>("--overwrite-media")
         {
             Description = "Overwrite all content on the loaded media without a prompt. Does not replace " +
-                          "existing virtual media files under --virtual-create — that takes --overwrite-virtual.",
+                          "existing virtual media files under `--virtual-create` — that takes `--overwrite-virtual`.",
         };
 
         var skipSetCorrectionOption = new Option<bool>("--skip-set-correction")

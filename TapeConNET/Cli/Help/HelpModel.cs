@@ -60,9 +60,9 @@ public sealed record HelpModel(
             title,
             cmd.Description,
             UsageLine(path, cmd),
-            cmd.Arguments.Where(a => !a.Hidden).Select(a => new HelpArgumentRow(ArgumentName(a), a.Description)).ToList(),
+            [.. cmd.Arguments.Where(a => !a.Hidden).Select(a => new HelpArgumentRow(ArgumentName(a), a.Description))],
             BuildSections(cmd),
-            cmd.Subcommands.Where(c => !c.Hidden).Select(c => new HelpCommandRow(NamesOf(c.Name, c.Aliases), c.Description)).ToList(),
+            [.. cmd.Subcommands.Where(c => !c.Hidden).Select(c => new HelpCommandRow(NamesOf(c.Name, c.Aliases), c.Description))],
             cmd is RootCommand ? RootFooter : null);
     }
 
@@ -142,12 +142,11 @@ public sealed record HelpModel(
             }
         }
 
-        return rows
+        return [.. rows
             .OrderBy(kv => kv.Key.Order)
             .Select(kv => kv.Key == HelpGroups.Own
                 ? new HelpSection(HelpGroups.Own, HelpGroups.Own.Title, null, HelpGroupMode.Full, kv.Value)
-                : new HelpSection(kv.Key, kv.Key.Title, kv.Key.Intro, kv.Key.Mode, kv.Value))
-            .ToList();
+                : new HelpSection(kv.Key, kv.Key.Title, kv.Key.Intro, kv.Key.Mode, kv.Value))];
     }
 
     /// <summary>

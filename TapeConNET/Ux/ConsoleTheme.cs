@@ -56,6 +56,10 @@ public static class ConsoleTheme
     /// <summary>Value placeholders in help: <c>PATH</c>, <c>SIZE</c>, <c>&lt;None|Crc32|…&gt;</c>.</summary>
     public static readonly Style Placeholder = Style.Parse("grey");
 
+    /// <summary>Options and other literals mentioned inside help descriptions: text in reverse ticks,
+    ///  e.g. <c>`--password-file`</c>.</summary>
+    public static readonly Style Mention = Style.Parse("darkcyan");
+    
     /// <summary>Secondary text: <c>[default: …]</c>, group intros, quotes, the help footer.</summary>
     public static readonly Style Dimmed = Style.Parse("dim");
 
@@ -64,4 +68,5 @@ public static class ConsoleTheme
 
     /// <summary>Code blocks in docs: command examples, set apart from the prose around them.</summary>
     public static readonly Style CodeBlock = Style.Parse("cyan");
+
 }
