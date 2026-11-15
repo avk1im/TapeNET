@@ -46,7 +46,7 @@ internal static class InfoCommand
     {
         var cmd = new Command("info",
             "Show drive, media, and backup-sets overview. " +
-            "Use --drive-only or --media to limit the output depth.");
+            "Use `--drive-only` or `--media` to limit the output depth.");
 
         GlobalOptions.Attach(cmd);
         PasswordOptions.Attach(cmd);
@@ -54,13 +54,13 @@ internal static class InfoCommand
         var driveOnlyOption = new Option<bool>("--drive-only")
         {
             Description = "Show drive hardware properties only (no media access). " +
-                          "Superseded by --media or --full.",
+                          "Superseded by `--media` or `--full`.",
         };
 
         var mediaOption = new Option<bool>("--media")
         {
             Description = "Show drive + media info only (no TOC restore). " +
-                          "Supersedes --drive-only; superseded by --full.",
+                          "Supersedes `--drive-only`; superseded by `--full`.",
         };
 
         var fullOption = new Option<bool>("--full")

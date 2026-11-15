@@ -108,7 +108,31 @@ Run `tapecon scan-media`: it reads the whole cartridge without the TOC and recov
 Yes — the integration tests do exactly that. `--virtual PATH` (file-backed) or `--in-memory`. Size with `--capacity`;
 add a TOC partition with `--initiator PATH` and `--init-capacity`.
 
-## How does this relate to TapeWinNET?
+### How do I change tapecon's colors, or turn them off?
 
-They share the same engine (TapeLibNET.Services). Anything backed up with one is fully restorable with the other —
+Set `TAPECON_COLORS` to `key=style` pairs, separated by `;`. A style uses Spectre.Console's syntax: a color name
+(`yellow`, `dodgerblue1`), a hex value (`#ff8800`), decorations (`bold`, `dim`, `italic`), and `on` for a background.
+
+    set TAPECON_COLORS=heading=bold dodgerblue1;mention=darkcyan;error=bold red
+
+In PowerShell: `$env:TAPECON_COLORS = 'heading=bold dodgerblue1;mention=darkcyan'`.
+
+| Key | Colors |
+|---|---|
+| `heading`, `subheading` | titles in the help and the docs |
+| `emphasis` | the help's usage line |
+| `option`, `placeholder` | option names and their values (`PATH`, `SIZE`) in the help |
+| `mention` | options and commands named inside help texts |
+| `dimmed` | intros, defaults, footers |
+| `code`, `codeblock` | inline code and examples in the docs |
+| `completed`, `info`, `warning`, `failed`, `error` | the log levels |
+
+A key you leave out keeps its default. A wrong entry is skipped with a warning; tapecon runs on.
+
+To turn colors off, pass `--no-color`, or set `NO_COLOR` to any value — the convention many command-line tools
+follow (no-color.org). Either way the output turns plain: no colors, no box drawing.
+
+## How does this relate to tapewin (TapeWinNET)?
+
+tapecon and tapewin share the same engine (TapeLibNET). Anything backed up with one is fully restorable with the other —
 encrypted sets included, with the password.

@@ -31,6 +31,7 @@ public sealed record HelpCommandRow(string Names, string? Description);
 ///  reads System.CommandLine's symbol API, so a package update touches one file — and rendered by
 ///  <see cref="HelpRenderer"/>.
 /// </summary>
+/// <remarks>Texts are passed through as written, mention markers included; the renderer interprets them.</remarks>
 public sealed record HelpModel(
     string Title,
     string? Description,
@@ -44,7 +45,7 @@ public sealed record HelpModel(
     public const string RootName = "tapecon";
 
     /// <summary>The footer under the root's help.</summary>
-    public const string RootFooter = "Docs: tapecon docs concepts · exit codes: tapecon docs faq";
+    public const string RootFooter = "Docs: `tapecon docs concepts` · exit codes: `tapecon docs faq`";
 
     /// <summary>Builds the help of <paramref name="cmd"/>: its arguments, its options in groups (§4), its subcommands.</summary>
     public static HelpModel Build(Command cmd)

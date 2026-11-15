@@ -1,4 +1,6 @@
 using System.CommandLine;
+using System.Text.RegularExpressions;
+using Spectre.Console;
 using TapeConNET.Cli;
 using TapeConNET.Cli.Help;
 using TapeConNET.Ux;
@@ -8,6 +10,7 @@ namespace TapeConNET.Tests;
 /// <summary>
 /// Design-CliPresentation Step 3: the help groups (<see cref="HelpGroups"/>), the model (<see cref="HelpModel.Build"/>)
 ///  over the REAL verb tree, and the plain renderer's building blocks. End-to-end help output: <c>CliParsingTests</c>.
+///  Step 5: every option a help text names is marked as a mention.
 /// </summary>
 public class HelpModelTests
 {
@@ -44,6 +47,9 @@ public class HelpModelTests
         var root = BuildRoot();
         return name.Length == 0 ? root : AllCommands(root).First(c => c is not RootCommand && c.Name == name);
     }
+
+    /// <summary>A long option name in running text: <c>--word-word</c>, not inside a longer token.</summary>
+    private static readonly Regex s_longOption = new(@"(?<![\w-])--[a-z][a-z0-9-]*", RegexOptions.Compiled);
 
     #endregion
 
@@ -95,6 +101,66 @@ public class HelpModelTests
 
     #endregion
 
+    #region *** Mentions: every named option is marked (§5.2) ***
+
+    /// <summary>
+    /// Every help text — command, argument and option descriptions, reference descriptions, group intros and pointers,
+    ///  the root footer — names a real tapecon option only as a mention (<c>`--option`</c>). A miss fails with the text
+    ///  and the bare name, so the fix is obvious.
+    /// </summary>
+    /// <remarks>
+    /// Only names of options that EXIST count: <c>--</c> inside an FCL example or a negative set index is no option.
+    ///  The parsing lives here, in the test, not in the renderer — a false hit costs a test run, never wrong output.
+    /// </remarks>
+    [Fact]
+    public void HelpTexts_NameOptions_OnlyAsMentions()
+    {
+        var root = BuildRoot();
+        var commands = AllCommands(root).ToList();
+
+        var known = commands
+            .SelectMany(AcceptedOptions)
+            .SelectMany(o => o.Aliases.Prepend(o.Name))
+            .Where(n => n.StartsWith("--", StringComparison.Ordinal))
+            .ToHashSet(StringComparer.Ordinal);
+
+        var texts = new List<(string Where, string Text)>();
+        foreach (var cmd in commands)
+        {
+            string where = cmd is RootCommand ? "tapecon" : cmd.Name;
+            texts.Add((where, cmd.Description ?? ""));
+            texts.AddRange(cmd.Arguments.Select(a => ($"{where} <{a.Name}>", a.Description ?? "")));
+            texts.AddRange(cmd.Options.Select(o => ($"{where} {o.Name}", o.Description ?? "")));
+        }
+
+        foreach (var group in HelpGroups.All)
+        {
+            texts.Add(($"group {group.Key} intro", group.Intro ?? ""));
+            texts.Add(($"group {group.Key} pointer", group.SummaryPointer ?? ""));
+            texts.AddRange(HelpGroups.ReferencesIn(group).Select(r => ($"group {group.Key} ref {r.Option.Name}", r.Description)));
+        }
+
+        texts.Add(("root footer", HelpModel.RootFooter));
+
+        var misses = new List<string>();
+        foreach (var (where, text) in texts)
+        {
+            // What remains once the mentions are cut out — a space in their place, so no two words fuse
+            string outside = string.Join(' ', HelpRenderer.Segments(text, Style.Plain)
+                .Where(s => !s.Style.Equals(ConsoleTheme.Mention))
+                .Select(s => s.Text));
+
+            misses.AddRange(s_longOption.Matches(outside)
+                .Select(m => m.Value)
+                .Where(known.Contains)
+                .Select(n => $"{where}: {n}"));
+        }
+
+        Assert.True(misses.Count == 0, "Options named without `…`:\n" + string.Join('\n', misses.Distinct()));
+    }
+
+    #endregion
+
     #region *** Groups ***
 
     [Fact]
@@ -135,8 +201,9 @@ public class HelpModelTests
     {
         Assert.Equal("SIZE", HelpModel.Placeholder(GlobalOptions.Capacity));          // HelpName wins
         Assert.Equal("PATH", HelpModel.Placeholder(GlobalOptions.Virtual));
+        Assert.Equal("FCL", HelpModel.Placeholder(FilterOptions.Filter));
         Assert.Equal("N", HelpModel.Placeholder(GlobalOptions.Drive));                // int?
-        Assert.Equal("TEXT", HelpModel.Placeholder(FilterOptions.Filter));            // string?
+        Assert.Equal("TEXT", HelpModel.Placeholder(new Option<string?>("--any-text")));  // string?, no HelpName
         Assert.Null(HelpModel.Placeholder(GlobalOptions.InMemory));                    // flag
         Assert.Equal("<Trace|Debug|Information|Warning|Error|Critical|None>", HelpModel.Placeholder(GlobalOptions.LogLevel));
     }
@@ -161,11 +228,12 @@ public class HelpModelTests
     {
         var lines = HelpRenderer.ToPlainLines(HelpModel.Build(Find("backup")), 80);
 
+        // Intro and pointer carry mentions: the plain output shows them without the markers
         int title = lines.ToList().IndexOf("New virtual media");
         Assert.True(title >= 0);
-        Assert.Equal("  " + HelpGroups.VirtualNew.Intro, lines[title + 1]);
+        Assert.Equal("  " + HelpRenderer.PlainText(HelpGroups.VirtualNew.Intro!), lines[title + 1]);
         Assert.DoesNotContain(lines.Skip(title + 2).TakeWhile(l => l.Length > 0), l => l.Contains("--sequential-filemarks"));
-        Assert.Contains("  " + HelpGroups.VirtualNew.SummaryPointer, lines);
+        Assert.Contains("  " + HelpRenderer.PlainText(HelpGroups.VirtualNew.SummaryPointer!), lines);
     }
 
     [Theory]
@@ -184,11 +252,11 @@ public class HelpModelTests
 
     [Theory]
     [InlineData("(Trace/Debug/Information/Warning/Error/Critical/None).", 42,
-    new[] { "(Trace/Debug/Information/Warning/Error/", "Critical/None)." })]
+        new[] { "(Trace/Debug/Information/Warning/Error/", "Critical/None)." })]
     [InlineData("<None|Crc32|Crc64|XxHash32|XxHash3|XxHash64|XxHash128>", 20,
-    new[] { "<None|Crc32|Crc64|", "XxHash32|XxHash3|", "XxHash64|XxHash128>" })]
+        new[] { "<None|Crc32|Crc64|", "XxHash32|XxHash3|", "XxHash64|XxHash128>" })]
     [InlineData("NoSeparatorAnywhereInThisVeryLongWord", 20,
-    new[] { "NoSeparatorAnywhereInThisVeryLongWord" })]     // stays whole: no separator to break at
+        new[] { "NoSeparatorAnywhereInThisVeryLongWord" })]     // stays whole: no separator to break at
     [InlineData("short/word", 42, new[] { "short/word" })]
     public void BreakOverlong_BreaksAfterSeparators(string word, int width, string[] expected)
         => Assert.Equal(expected, HelpRenderer.BreakOverlong(word, width));

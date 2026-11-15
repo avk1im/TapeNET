@@ -17,9 +17,15 @@ namespace TapeConNET.Cli;
 /// filemarks, error handling).
 /// </summary>
 /// <remarks>
+/// <para>
 /// Help (Design-CliPresentation §4.3): the local <c>--encrypt</c> / <c>--encryption</c> join the shared password options
 ///  in <i>Encryption</i>. They are attached BEFORE the password options, so the section opens with the switch that
 ///  turns encryption on, followed by where its password comes from.
+/// </para>
+/// <para>
+/// Descriptions leave choices and defaults to the help where it shows them itself: an enum's choices in the placeholder
+///  (<c>--hash</c>), a default in <c>[default: …]</c> (<c>--hash</c>, <c>--compression</c>).
+/// </para>
 /// </remarks>
 internal static class BackupCommand
 {
@@ -35,7 +41,7 @@ internal static class BackupCommand
         var filesArg = new Argument<string[]>("files")
         {
             Description = "Files, folders, or wildcard patterns to back up. " +
-                          "Bare FCL expressions or paths to .fcl files are also accepted as filters.",
+                          "Bare FCL expressions or paths to `.fcl` files are also accepted as filters.",
             Arity = ArgumentArity.OneOrMore,
         };
 
@@ -51,7 +57,7 @@ internal static class BackupCommand
 
         var incrementalOption = new Option<bool>("--incremental", "-i")
         {
-            Description = "Create an incremental backup set (only changed files since last full set).",
+            Description = "Create an incremental backup set (only files changed since the last full set).",
         };
 
         var blockSizeOption = SizeOptions.BlockSize("--block-size",
@@ -59,26 +65,29 @@ internal static class BackupCommand
 
         var hashOption = new Option<TapeHashAlgorithm>("--hash", "-H")
         {
-            Description = "Per-file hash algorithm. Choices: `None`, `Crc32`, `Crc64`, `XxHash32`, `XxHash3`, `XxHash64`, `XxHash128`.",
+            Description = "Per-file hash algorithm.",
             DefaultValueFactory = _ => TapeHashAlgorithm.Crc32,
         };
 
         var compressionOption = new Option<string>("--compression", "-c")
         {
-            Description = "Per-file compression. Choices: `off`/`none`, `hardware` | `drive`, `low`, `medium` (default), `high`, or 1-19 (ZSTD level).",
+            Description = "Per-file compression: `off`/`none`, `hardware` | `drive`, `low`, `medium`, `high`, " +
+                          "or a ZSTD level `1`-`19`.",
             DefaultValueFactory = _ => CompressionPreset.KeyMedium,
+            HelpName = "LEVEL",
         };
 
         var encryptOption = new Option<bool>("--encrypt", "-e")
         {
             Description = "Encrypt the backup set (software, AES-256-GCM). The password comes from `--password-file` / " +
-                  "`--password-env`, else it is asked (twice). An incremental on an encrypted set is encrypted anyway.",
+                          "`--password-env`, else it is asked (twice). An incremental on an encrypted set is encrypted anyway.",
         };
 
         var encryptionOption = new Option<string?>("--encryption")
         {
             Description = $"Encryption scheme: {SchemeWords.EncryptionChoices}. `hardware` (`drive`) is not supported " +
                           "in this version. Software encryption rules out hardware compression.",
+            HelpName = "SCHEME",
         };
 
         // Verb-local, yet shown with the shared password options — see the remarks
@@ -92,8 +101,9 @@ internal static class BackupCommand
         var appendAfterOption = new Option<int?>("--append-after")
         {
             Description = "Append after a specific set (replaces all sets after the given index). " +
-                          "Set index follows the dual convention (positive=oldest-up, 0/negative=latest-down). " +
+                          "Set index follows the dual convention (positive = oldest-up, `0`/negative = latest-down). " +
                           "Implies `--append`.",
+            HelpName = "SET",
         };
 
         var skipErrorsOption = new Option<bool>("--skip-errors")
@@ -195,9 +205,10 @@ internal static class BackupCommand
             TapeEncryption encryption = parseResult.GetValue(encryptOption) ? TapeEncryption.Software : TapeEncryption.None;
             if (parseResult.GetValue(encryptionOption) is { } word)
             {
+                // The choices carry help mention markers — an error message is no help text: plain
                 if (!SchemeWords.TryParseEncryption(word, out var named))
                     throw new TapeConException(TapeConExitCode.UsageError,
-                        $"Unknown encryption >{word}<. Choices: {SchemeWords.EncryptionChoices}.");
+                        $"Unknown encryption >{word}<. Choices: {HelpRenderer.PlainText(SchemeWords.EncryptionChoices)}.");
                 if (encryption != TapeEncryption.None && named != encryption)
                     throw new TapeConException(TapeConExitCode.UsageError, "--encrypt and --encryption disagree.");
                 encryption = named;

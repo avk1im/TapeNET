@@ -6,7 +6,6 @@ using TapeLibNET.Services;
 
 namespace TapeConNET.Cli;
 
-
 /// <summary>
 /// <c>tapecon scan-media</c> — surveys the loaded media from BOM to EOD with no TOC assumed and prints the
 ///  headline, details and one line per noteworthy fragment (all reported by the service). READ-ONLY.
@@ -24,20 +23,26 @@ internal static class ScanMediaCommand
         var cmd = new Command("scan-media",
             "Scan the loaded media from start to end without relying on its TOC, and report what it holds. " +
             "Read-only: nothing is written to the media.");
+
         GlobalOptions.Attach(cmd);
 
         var noRecoverOption = new Option<bool>("--no-recover-toc")
         {
             Description = "Don't recover the table-of-contents copies found on the media (recovery is on by default).",
         };
+
         var exportOption = new Option<string?>("--export")
         {
-            Description = "Folder to save the scan map into (a .tapescan file usable by 'recover-toc').",
+            Description = $"Folder to save the scan map into (a `{MediaScanMap.MapFileExtension}` file usable by " +
+                          "`recover-toc`).",
+            HelpName = "PATH",
         };
+
         var jsonOption = new Option<bool>("--json")
         {
             Description = "Print the scan map as JSON to stdout; informational output is suppressed.",
         };
+
         cmd.Options.Add(noRecoverOption);
         cmd.Options.Add(exportOption);
         cmd.Options.Add(jsonOption);
@@ -45,6 +50,7 @@ internal static class ScanMediaCommand
         cmd.SetAction(async (parseResult, ct) =>
         {
             var json = parseResult.GetValue(jsonOption);
+
             // JSON goes to stdout: keep it clean by silencing the informational log
             if (json)
                 ux.QuietMode = true;
@@ -69,6 +75,7 @@ internal static class ScanMediaCommand
 
             if (result.WasAborted)
                 return (int)TapeConExitCode.Cancelled;
+
             return result.Success ? (int)TapeConExitCode.Ok : (int)TapeConExitCode.OperationFailed;
         });
 
@@ -80,30 +87,39 @@ internal static class ScanMediaCommand
     {
         var cmd = new Command("recover-toc",
             "Recover the table of contents from a TOC-copy fragment of a saved scan map.");
+
         GlobalOptions.Attach(cmd);
 
         var mapOption = new Option<string>("--map")
         {
-            Description = $"Scan map file ({MediaScanMap.MapFileExtension}) produced by 'scan-media --export' or '--json'.",
+            Description = $"Scan map file (`{MediaScanMap.MapFileExtension}`) produced by `scan-media --export` or " +
+                          "`scan-media --json`.",
             Required = true,
+            HelpName = "PATH",
         };
+
         var fragmentOption = new Option<int>("--fragment", "-f")
         {
             Description = "Ordinal of the TOC-copy fragment in the map (as listed by the scan).",
             Required = true,
         };
+
         var adoptOption = new Option<bool>("--adopt")
         {
-            Description = "Use the recovered TOC as the session's TOC (same identity check as 'toc import').",
+            Description = "Use the recovered TOC as the session's TOC (same identity check as `toc import`).",
         };
+
         var saveOption = new Option<string?>("--save")
         {
             Description = "Save the recovered TOC to this file.",
+            HelpName = "PATH",
         };
+
         var yesOption = new Option<bool>("--yes", "-y")
         {
             Description = "Skip the media-identity confirmation when adopting.",
         };
+
         cmd.Options.Add(mapOption);
         cmd.Options.Add(fragmentOption);
         cmd.Options.Add(adoptOption);
@@ -129,6 +145,7 @@ internal static class ScanMediaCommand
             {
                 throw new TapeConException(TapeConExitCode.UsageError, $"Couldn't read scan map '{mapPath}': {ex.Message}");
             }
+
             if (map is null)
                 throw new TapeConException(TapeConExitCode.UsageError, $"'{mapPath}' is not a valid scan map.");
 

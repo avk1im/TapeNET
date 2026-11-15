@@ -34,23 +34,28 @@ namespace TapeConNET.Cli;
 ///  <see cref="VirtualMediaOptions"/>' <i>New virtual media</i>; logging, <c>--quiet</c> and <c>--no-color</c> form
 ///  <i>Output and diagnostics</i>. Registered in the static constructor, so any option instance in use is registered.
 /// </para>
+/// <para>
+/// Descriptions mark options and literals as mentions (<c>`--option`</c>, §5.2). The capacities say nothing of "new
+///  media": they show in full only on <c>create-virtual</c>, where the group says it.
+/// </para>
 /// </remarks>
 public static class GlobalOptions
 {
     public static readonly Option<int?> Drive = new("--drive", "-d")
     {
-        Description = "Open the physical Win32 tape drive number N (0-based). " +
-                      "Mutually exclusive with --virtual-open / --virtual-create / --in-memory.",
+        Description = "Open physical Win32 tape drive N (0-based). " +
+                      "Excludes `--virtual-open`, `--virtual-create` and `--in-memory`.",
     };
 
     public static readonly Option<string?> Virtual = new("--virtual-open", "--virtual", "-V")
     {
-        Description = "Open EXISTING file-backed virtual media; PATH is the content file (metadata: PATH.vrt). " +
-                      $"A PATH without extension also finds PATH{VirtualMediaPaths.ContentExtension}. " +
-                      "Fails when no media exists — use --virtual-create. An initiator partition is found by " +
-                      "convention (PATH_init.ext) or given with --initiator. Sizes and the mark profile come from the " +
-                      "media: --capacity, --init-capacity and the block-size options are ignored. Legacy media without " +
-                      "a recorded profile is probed; --setmarks / --seq-filemarks / --filemarks-only override the probe.",
+        Description = "Open EXISTING file-backed virtual media; PATH is the content file (metadata: `PATH.vrt`). " +
+                      $"A PATH without extension also finds `PATH{VirtualMediaPaths.ContentExtension}`. " +
+                      "Fails when no media exists — use `--virtual-create`. An initiator partition is found by " +
+                      "convention (`PATH_init.ext`) or given with `--initiator`. Sizes and the mark profile come from " +
+                      "the media: `--capacity`, `--init-capacity` and the block-size options are ignored. Legacy media " +
+                      "without a recorded profile is probed; `--setmarks` / `--seq-filemarks` / `--filemarks-only` " +
+                      "override the probe.",
         HelpName = "PATH",
     };
 
@@ -58,30 +63,30 @@ public static class GlobalOptions
     //  text in the static constructor serves creating media — New virtual media.
     public static readonly Option<string?> Initiator = new("--initiator", "-I")
     {
-        Description = "Initiator (TOC) partition file of file-backed virtual media. Default: PATH_init.ext beside the " +
-                      "content file, when it exists. With --virtual-create: the file to create.",
+        Description = "Initiator (TOC) partition file of file-backed virtual media. Default: `PATH_init.ext` beside " +
+                      "the content file, when it exists. With `--virtual-create`: the file to create.",
         HelpName = "PATH",
     };
 
     public static readonly Option<bool> InMemory = new("--in-memory", "-M")
     {
         Description = "Open an in-memory virtual drive (no files). " +
-                      "Pair with --capacity / --init-capacity to size it.",
+                      "Size it with `--capacity` / `--init-capacity`.",
     };
 
     public static readonly Option<long?> Capacity = SizeOptions.Bytes("--capacity",
-        $"Content partition capacity of NEW virtual media (default " +
+        $"Content partition capacity (default " +
         $"{VirtualMediaDefaults.ContentCapacity >> 20} MiB file-backed, " +
         $"{VirtualMediaDefaults.InMemoryContentCapacity >> 20} MiB in-memory).");
 
     public static readonly Option<long?> InitCapacity = SizeOptions.Bytes("--init-capacity",
-        $"Initiator (TOC) partition capacity of NEW virtual media; giving it adds the partition " +
-        $"(default {VirtualMediaDefaults.InitiatorCapacity >> 20} MiB when the partition comes from --initiator).");
+        $"Initiator (TOC) partition capacity; giving it adds the partition " +
+        $"(default {VirtualMediaDefaults.InitiatorCapacity >> 20} MiB when the partition comes from `--initiator`).");
 
+    // The choices and the default show in the placeholder and in [default: …] — the text repeats neither
     public static readonly Option<LogLevel> LogLevel = new("--log-level")
     {
-        Description = "Minimum severity surfaced from TapeLibNET to the console " +
-                      "(Trace/Debug/Information/Warning/Error/Critical/None). Default: None.",
+        Description = "Minimum severity of TapeLibNET's own log messages shown on the console.",
         DefaultValueFactory = _ => Microsoft.Extensions.Logging.LogLevel.None,
     };
 
@@ -97,7 +102,8 @@ public static class GlobalOptions
 
     public static readonly Option<bool> NoColor = new("--no-color")
     {
-        Description = "Disable ANSI color output.",
+        Description = "Plain output: no colours, no box drawing. Setting the `NO_COLOR` environment variable does the " +
+                      "same; `TAPECON_COLORS` changes the colours instead (`tapecon docs faq`).",
         Recursive = true,
     };
 
@@ -111,7 +117,7 @@ public static class GlobalOptions
         //  its create-time role (§4.3)
         HelpGroups.Reference(HelpGroups.VirtualNew, Initiator,
             "Initiator (TOC) partition file to create; giving it adds the partition. " +
-            "Default with only --init-capacity: PATH_init.ext.");
+            "Default with only `--init-capacity`: `PATH_init.ext`.");
     }
 
     /// <summary>

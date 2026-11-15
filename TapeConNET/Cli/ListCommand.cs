@@ -6,7 +6,6 @@ using TapeLibNET.Services;
 
 namespace TapeConNET.Cli;
 
-
 /// <summary>
 /// <c>tapecon list</c> — lists the contents of the loaded media. Optional
 /// <c>start</c> and <c>end</c> set indexes select a range; remaining
@@ -15,11 +14,11 @@ namespace TapeConNET.Cli;
 /// <remarks>
 /// Depth-by-depth behavior for a calibration cartridge:
 /// <code>
-/// Command        Lifecycle          Identify             Presenter              Result
-/// info --drive   Drive              none, no media       none                   drive info only
-/// info --media   Media              none                 ListContentsAsync §2   detailed calibration
-/// info / --full  FullOrCalibration  brief one-liner §1   ListContentsAsync §2   one-liner + details
-/// list           FullOrCalibration  brief one-liner §1   ListContentsAsync §2   one-liner + details
+/// Command            Lifecycle          Identify             Presenter              Result
+/// info --drive-only  Drive              none, no media       none                   drive info only
+/// info --media       Media              none                 ListContentsAsync §2   detailed calibration
+/// info / --full      FullOrCalibration  brief one-liner §1   ListContentsAsync §2   one-liner + details
+/// list               FullOrCalibration  brief one-liner §1   ListContentsAsync §2   one-liner + details
 /// </code>
 /// </remarks>
 internal static class ListCommand
@@ -28,6 +27,7 @@ internal static class ListCommand
     {
         var cmd = new Command("list",
             "List the contents of the loaded media. Optional set range and file patterns may be specified.");
+
         GlobalOptions.Attach(cmd);
         FilterOptions.Attach(cmd);
         PasswordOptions.Attach(cmd);
@@ -35,19 +35,22 @@ internal static class ListCommand
         var argsArg = new Argument<string[]>("args")
         {
             Description = "Optional set index(es) followed by filter arguments " +
-                          "(DOS wildcard patterns, inline FCL, or .fcl file paths). " +
-                          "Examples: '0', '1 3', '-2 0 *.txt', 'photos/*.jpg', " +
-                          "'0 \"size > 1MB\"', './nightly.fcl'.",
+                          "(DOS wildcard patterns, inline FCL, or `.fcl` file paths). " +
+                          "Examples: `0`, `1 3`, `-2 0 *.txt`, `photos/*.jpg`, " +
+                          "`0 \"size > 1MB\"`, `./nightly.fcl`.",
             Arity = ArgumentArity.ZeroOrMore,
         };
+
         var noIncOption = new Option<bool>("--no-incremental")
         {
             Description = "List only the selected incremental set without expanding earlier dependencies.",
         };
+
         var nameOnlyOption = new Option<bool>("--name-only")
         {
             Description = "Show file names only (no full paths).",
         };
+
         var setsOnlyOption = new Option<bool>("--sets-only")
         {
             Description = "Show a compact backup-sets table only (no per-file listing).",
@@ -90,6 +93,7 @@ internal static class ListCommand
                     endIdx = startIdx;
                 }
             }
+
             string[] patterns = consumed < raw.Length ? raw[consumed..] : [];
 
             // Auto-classify any trailing tokens (wildcards, inline FCL, .fcl

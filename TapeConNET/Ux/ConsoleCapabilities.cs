@@ -19,6 +19,15 @@ public static class ConsoleCapabilities
     /// <summary>The width for redirected output (file, pipe) and for an unknown console width.</summary>
     public const int RedirectedWidth = 80;
 
+    /// <summary>The environment variable of the NO_COLOR convention (no-color.org): set and not empty — no colour.</summary>
+    public const string NoColorVariable = "NO_COLOR";
+
+    /// <summary>
+    /// True when the value of <see cref="NoColorVariable"/> asks for no colour: present and not empty, whatever it holds
+    ///  (<c>NO_COLOR=0</c> too — the convention looks at presence, not at the value).
+    /// </summary>
+    public static bool NoColorRequested(string? noColorValue) => !string.IsNullOrEmpty(noColorValue);
+
     /// <summary>
     /// True when the plain form applies: no colour asked for, quiet (script-friendly) output, or output that is not a
     ///  terminal — a file or a pipe must receive neither ANSI codes nor box drawing.

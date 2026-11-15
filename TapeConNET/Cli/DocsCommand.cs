@@ -36,11 +36,11 @@ internal static class DocsCommand
     public static Command Create(IConsoleUx ux)
     {
         var cmd = new Command("docs",
-            "Show conceptual documentation topics: concepts | migration | faq.");
+            "Show conceptual documentation topics: `concepts` | `migration` | `faq`.");
 
         var topicArg = new Argument<string?>("topic")
         {
-            Description = "Topic to display: concepts (default) | migration | faq.",
+            Description = "Topic to display: `concepts` (default) | `migration` | `faq`.",
             Arity       = ArgumentArity.ZeroOrOne,
         };
         cmd.Arguments.Add(topicArg);

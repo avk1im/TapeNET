@@ -4,7 +4,6 @@ using TapeConNET.Ux;
 
 namespace TapeConNET.Cli.Help;
 
-
 /// <summary>
 /// A run of help text in one style — <see cref="Style.Plain"/> for unstyled text, padding and separators.
 /// <para>
@@ -31,10 +30,16 @@ internal readonly record struct HelpRun(string Text, Style Style, bool KeepWithP
 ///  help-specific rule: a word longer than the line breaks after a separator (<see cref="BreakAfter"/>).
 /// </para>
 /// <para>
+/// Mentions (§5.2): text in backticks — <c>`--password-file`</c>, <c>`tapecon docs faq`</c> — renders in
+///  <see cref="ConsoleTheme.Mention"/>, without the backticks, in both forms. Punctuation touching a mention stays on
+///  its line (<see cref="HelpRun.KeepWithPrevious"/>). Every text the help shows takes mentions: descriptions, intros,
+///  the summary pointer, the footer.
+/// </para>
+/// <para>
 /// Styles (§5.2), all from <see cref="ConsoleTheme"/>: title and section titles <see cref="ConsoleTheme.Heading"/>; the
 ///  usage line <see cref="ConsoleTheme.Emphasis"/>; option, argument and command names <see cref="ConsoleTheme.OptionName"/>;
-///  value placeholders <see cref="ConsoleTheme.Placeholder"/>; intros, <c>[default: …]</c>, the summary pointer and the
-///  footer <see cref="ConsoleTheme.Dimmed"/>; descriptions unstyled.
+///  value placeholders <see cref="ConsoleTheme.Placeholder"/>; mentions <see cref="ConsoleTheme.Mention"/>; intros,
+///  <c>[default: …]</c>, the summary pointer and the footer <see cref="ConsoleTheme.Dimmed"/>; descriptions unstyled.
 /// </para>
 /// </remarks>
 public static class HelpRenderer
@@ -115,7 +120,7 @@ public static class HelpRenderer
                 // Canonical names only: the aliases belong to the full description, where the pointer leads
                 lines.AddRange(Indented(NameList(section.Rows.Select(r => r.Option.Name), width - Indent), Indent));
                 if (section.Group.SummaryPointer is { } pointer)
-                    lines.Add([Pad(Indent), new(pointer, ConsoleTheme.Dimmed)]);
+                    lines.AddRange(Indented(Wrap(Words(pointer, ConsoleTheme.Dimmed), width - Indent), Indent));
                 continue;
             }
 
@@ -158,12 +163,15 @@ public static class HelpRenderer
             ? [new(row.Names, ConsoleTheme.OptionName)]
             : [new(row.Names, ConsoleTheme.OptionName), new(" ", Style.Plain), new(row.Placeholder, ConsoleTheme.Placeholder)];
 
-    /// <summary>The description's words, then the default's: <c>… [default: Crc32]</c>.</summary>
+    /// <summary>
+    /// The description's words, then the default as ONE run: <c>… [default: Crc32]</c>. Never split — a wrap between
+    ///  <c>[default:</c> and its value would strand the value on a line of its own.
+    /// </summary>
     internal static List<HelpRun> SecondColumn(HelpOptionRow row)
     {
         var words = Words(row.Description, Style.Plain);
         if (row.Default is not null)
-            words.AddRange(Words($"[default: {row.Default}]", ConsoleTheme.Dimmed));
+            words.Add(new($"[default: {row.Default}]", ConsoleTheme.Dimmed));
         return words;
     }
 
@@ -240,73 +248,91 @@ public static class HelpRenderer
 
     #endregion
 
-    #region *** Parsing ***
+    #region *** Mentions ***
 
     /// <summary>Marks literals in help texts: <c>`--password-file`</c> renders in <see cref="ConsoleTheme.Mention"/>.</summary>
     private const char MentionMarker = '`';
 
     /// <summary>
-    /// The runs of <paramref name="text"/>: the spans between <see cref="MentionMarker"/> pairs in
-    ///  <see cref="ConsoleTheme.Mention"/> (markers removed), everything else split at spaces into words of
-    ///  <paramref name="style"/>. A run that touches the mention without a space between is flagged
-    ///  <see cref="HelpRun.KeepWithPrevious"/> — on the mention's side as well as on the following text's.
+    /// <paramref name="text"/> cut into segments: the text between a PAIR of <see cref="MentionMarker"/>s in
+    ///  <see cref="ConsoleTheme.Mention"/>, markers removed; everything else in <paramref name="style"/>.
     /// </summary>
     /// <remarks>
-    /// An unpaired marker stays literal (as in the docs). A span with spaces becomes several mention runs, so it can wrap.
+    /// Pairs match left to right. Literal, with the marker kept: a marker without a partner (an odd last one), and an
+    ///  empty pair (<c>``</c>) — whose second marker may still open a pair. So no text is ever lost to a stray marker.
     /// </remarks>
-    private static List<HelpRun> Words(string? text, Style style)
+    internal static IEnumerable<(string Text, Style Style)> Segments(string text, Style style)
     {
-        var runs = new List<HelpRun>();
-        if (text is null)
-            return runs;
+        int pos = 0;        // start of the text not yet yielded
+        int from = 0;       // where to look for the next opening marker
 
-        bool afterMention = false;      // the last run added belongs to a mention span
-        int pos = 0;
-
-        while (pos < text.Length)
+        while (true)
         {
-            int open = text.IndexOf(MentionMarker, pos);
+            int open = text.IndexOf(MentionMarker, from);
             int close = open < 0 ? -1 : text.IndexOf(MentionMarker, open + 1);
-
-            if (close < 0)              // no further complete pair: the rest is plain, a lone marker stays literal
-            {
-                AddPlain(text[pos..]);
+            if (close < 0)
                 break;
+
+            // An empty pair is no mention: the first marker stays literal, the second may open the next pair
+            if (close == open + 1)
+            {
+                from = close;
+                continue;
             }
 
-            AddPlain(text[pos..open]);
-            bool glued = open > 0 && text[open - 1] != ' ' && runs.Count > 0;
-            AddMention(text[(open + 1)..close], glued);
-            pos = close + 1;
+            if (open > pos)
+                yield return (text[pos..open], style);
+            yield return (text[(open + 1)..close], ConsoleTheme.Mention);
+            pos = from = close + 1;
+        }
+
+        if (pos < text.Length)
+            yield return (text[pos..], style);
+    }
+
+    /// <summary>
+    /// <paramref name="text"/> as the plain help shows it: mention markers removed, literal ones kept. For texts that
+    ///  ALSO appear outside the help — e.g. <see cref="SchemeWords.EncryptionChoices"/> in an error message.
+    /// </summary>
+    internal static string PlainText(string text) => string.Concat(Segments(text, Style.Plain).Select(s => s.Text));
+
+    /// <summary>
+    /// The words of <paramref name="text"/>, split at spaces, each a run of its segment's style (<see cref="Segments"/>).
+    ///  A word may cross segment borders — <c>(`--drive`),</c> is ONE word of three runs: every run after the first is
+    ///  flagged <see cref="HelpRun.KeepWithPrevious"/>, so the wrapper never separates them.
+    /// </summary>
+    internal static List<HelpRun> Words(string? text, Style style)
+    {
+        var runs = new List<HelpRun>();
+        if (string.IsNullOrEmpty(text))
+            return runs;
+
+        // True while the last run added ends a word that no space has closed yet — across segment borders, too
+        bool inWord = false;
+
+        foreach (var (segment, segmentStyle) in Segments(text, style))
+        {
+            int i = 0;
+            while (i < segment.Length)
+            {
+                if (segment[i] == ' ')
+                {
+                    inWord = false;
+                    i++;
+                    continue;
+                }
+
+                int end = segment.IndexOf(' ', i);
+                if (end < 0)
+                    end = segment.Length;
+
+                runs.Add(new(segment[i..end], segmentStyle, KeepWithPrevious: inWord));
+                inWord = true;
+                i = end;
+            }
         }
 
         return runs;
-
-        // Words of the text between mentions; the first one sticks to a preceding mention when no space separates them
-        void AddPlain(string segment)
-        {
-            bool glue = afterMention && segment.Length > 0 && segment[0] != ' ';
-            foreach (var word in segment.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-            {
-                runs.Add(new(word, style, glue));
-                glue = false;
-            }
-            
-            // The following is not needed: afterMention will be set in the following call to AddMention() anyways
-            // if (segment.Length > 0)
-            //     afterMention = false;
-        }
-
-        void AddMention(string span, bool glueToPrevious)
-        {
-            foreach (var word in span.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-            {
-                runs.Add(new(word, ConsoleTheme.Mention, glueToPrevious));
-                glueToPrevious = false;
-            }
-
-            afterMention = true;
-        }
     }
 
     #endregion
@@ -318,11 +344,15 @@ public static class HelpRenderer
     ///  word longer than the line. Such a word always stands alone — the wrapper flushes the line before any word that
     ///  does not fit — so breaking it disturbs nothing else. Returns at least one (possibly empty) line.
     /// </summary>
-    private static List<List<HelpRun>> Wrap(List<HelpRun> words, int width)
+    /// <remarks>
+    /// The wrapper moves UNITS, not runs: a run flagged <see cref="HelpRun.KeepWithPrevious"/> joins the unit before it.
+    ///  Only a single-run unit can be broken by <see cref="BreakOverlong"/>; an overlong multi-run unit (a long mention
+    ///  with punctuation attached) overruns instead — no help text holds one.
+    /// </remarks>
+    internal static List<List<HelpRun>> Wrap(List<HelpRun> words, int width)
     {
         width = Math.Max(width, MinWrapWidth);
 
-        // A run flagged KeepWithPrevious joins the unit before it: units are what the wrapper may separate
         var units = new List<List<HelpRun>>();
         foreach (var run in words)
         {
@@ -338,8 +368,7 @@ public static class HelpRenderer
 
         foreach (var unit in units)
         {
-            int unitLength = unit.Sum(r => r.Text.Length);
-
+            int unitLength = Length(unit);
             if (length > 0 && length + 1 + unitLength > width)
             {
                 lines.Add(line);
@@ -360,9 +389,6 @@ public static class HelpRenderer
 
         lines.Add(line);
 
-        // ... the BreakOverlong pass stays as it is
-
-        // Breaks overlong words into several lines, so the wrapper can wrap them. A word that fits stays whole.
         var result = new List<List<HelpRun>>();
         foreach (var l in lines)
         {

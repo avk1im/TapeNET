@@ -7,7 +7,7 @@ namespace TapeConNET.Cli.Help;
 /// <summary>A titled section of a command's help (Design-CliPresentation §4.1).</summary>
 /// <param name="Key">Stable key, e.g. <c>drive</c>, <c>virtual-new</c>.</param>
 /// <param name="Title">Section title, e.g. <c>Drive selection</c>.</param>
-/// <param name="Intro">One line under the title; may name the defaults.</param>
+/// <param name="Intro">One line under the title; may name the defaults. Takes mentions (<c>`--option`</c>).</param>
 /// <param name="Order">Ascending; the verb's own options (<see cref="HelpGroups.Own"/>, 0) always come first.</param>
 /// <param name="Mode">Full rows, or one paragraph of names (<see cref="HelpGroupMode.Summary"/>).</param>
 /// <param name="SummaryPointer">Summary mode only: the line that says where the options are described in full.</param>
@@ -65,10 +65,13 @@ internal static class HelpGroups
         "At most one; none opens physical drive 0.", 30);
 
     public static readonly HelpGroup VirtualNew = new("virtual-new", "New virtual media",
-        "Shape media created by --virtual-create. Ignored by --virtual-open.", 40,
-        HelpGroupMode.Summary, "Details: tapecon create-virtual --help");
+        "Shape media created by `--virtual-create`. Ignored by `--virtual-open`.", 40,
+        HelpGroupMode.Summary, "Details: `tapecon create-virtual --help`");
 
     public static readonly HelpGroup Diagnostics = new("diagnostics", "Output and diagnostics", null, 90);
+
+    /// <summary>All groups, for tests that check every intro and pointer.</summary>
+    internal static IReadOnlyList<HelpGroup> All => [Own, Filter, Encryption, Drive, VirtualNew, Diagnostics];
 
     #endregion
 

@@ -20,52 +20,52 @@ namespace TapeConNET.Cli;
 /// </list>
 /// Help groups (Design-CliPresentation §4.3): <c>--virtual-create</c> is a drive selector — <i>Drive selection</i>; the
 ///  profile, block-size and overwrite options form <i>New virtual media</i>, a one-paragraph summary on every verb but
-///  <c>create-virtual</c>, which promotes it.
+///  <c>create-virtual</c>, which promotes it. Their descriptions show only there, so they leave "new media" unsaid.
 /// </remarks>
 internal static class VirtualMediaOptions
 {
     public static readonly Option<string?> VirtualCreate = new("--virtual-create", "--virtual-new")
     {
         Description = "Create NEW file-backed virtual media at PATH, formatted with an empty TOC, then run the verb " +
-                      $"on it. A PATH without extension gets {VirtualMediaPaths.ContentExtension}. Existing virtual " +
-                      "media files are replaced only after a prompt, or with --overwrite-virtual. Sized by --capacity / " +
-                      "--init-capacity; shaped by --setmarks / --seq-filemarks / --filemarks-only and the block-size " +
-                      "options. The media records its mark profile.",
+                      $"on it. A PATH without extension gets `{VirtualMediaPaths.ContentExtension}`. Existing virtual " +
+                      "media files are replaced only after a prompt, or with `--overwrite-virtual`. Sized by " +
+                      "`--capacity` / `--init-capacity`; shaped by `--setmarks` / `--seq-filemarks` / " +
+                      "`--filemarks-only` and the block-size options. The media records its mark profile.",
         HelpName = "PATH",
     };
 
     public static readonly Option<bool> OverwriteVirtual = new("--overwrite-virtual")
     {
-        Description = "Replace existing virtual media FILES at the --virtual-create / create-virtual PATH without a " +
-                      "prompt — everything on them is lost. Not the same as backup's --overwrite-media, which " +
+        Description = "Replace existing virtual media FILES at the `--virtual-create` / `create-virtual` PATH without " +
+                      "a prompt — everything on them is lost. Not the same as backup's `--overwrite-media`, which " +
                       "replaces the backup sets on media already open.",
     };
 
     public static readonly Option<bool> Setmarks = new("--setmarks")
     {
-        Description = "Virtual drive profile: setmarks (DAT/AIT-like). The default for new media.",
+        Description = "Mark profile: setmarks (DAT/AIT-like). The default.",
     };
 
     public static readonly Option<bool> SeqFilemarks = new("--seq-filemarks", "--sequential-filemarks")
     {
-        Description = "Virtual drive profile: sequential filemarks (DLT-V4-like). Excludes --setmarks.",
+        Description = "Mark profile: sequential filemarks (DLT-V4-like). Excludes `--setmarks`.",
     };
 
     public static readonly Option<bool> FilemarksOnly = new("--filemarks-only", "--filemarks")
     {
-        Description = "Virtual drive profile: filemarks only (LTO-like). Excludes --setmarks and --seq-filemarks.",
+        Description = "Mark profile: filemarks only (LTO-like). Excludes `--setmarks` and `--seq-filemarks`.",
     };
 
     public static readonly Option<uint?> MinBlockSize = SizeOptions.BlockSize("--min-block-size",
-        $"Minimum block size of NEW virtual media (default {Profile(false, false).MinBlockSize} B).",
+        $"Minimum block size (default {Profile(false, false).MinBlockSize} B).",
         "--minimal-block-size");
 
     public static readonly Option<uint?> DefaultBlockSize = SizeOptions.BlockSize("--def-block-size",
-        $"Default block size of NEW virtual media (default {Profile(false, false).DefaultBlockSize >> 10} KiB).",
+        $"Default block size (default {Profile(false, false).DefaultBlockSize >> 10} KiB).",
         "--default-block-size");
 
     public static readonly Option<uint?> MaxBlockSize = SizeOptions.BlockSize("--max-block-size",
-        $"Maximum block size of NEW virtual media (default {Profile(false, false).MaxBlockSize >> 10} KiB).",
+        $"Maximum block size (default {Profile(false, false).MaxBlockSize >> 10} KiB).",
         "--maximal-block-size");
 
     static VirtualMediaOptions()

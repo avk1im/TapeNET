@@ -1,4 +1,4 @@
-# Design — tapecon presentation: rendered docs, structured and coloured help
+# Design — tapecon presentation: rendered docs, structured and colored help
 
 **Status:** design · ready to implement (follows the encryption branch).
 **Scope:** how tapecon shows its embedded documentation and its `--help` output. No change to what verbs and options
@@ -10,7 +10,7 @@ recursive, so that the help can list them on every verb (and they parse there).
 - **`tapecon docs`** prints the embedded Markdown (`Resources/Docs/*.md`) line by line, as literal text: `##`
   headings, `|`-tables, backticks and asterisks reach the user verbatim.
 - **`--help`** is System.CommandLine's default plain-text output: correct, but monochrome, and inconsistent with the
-  coloured, themed output of every verb.
+  colored, themed output of every verb.
 - **Option overload.** Every drive verb attaches the same 17 shared options (drive selection, new-virtual-media shape,
   logging) through `GlobalOptions.Attach`, plus the filter and password sets where they apply. System.CommandLine lists
   options in the order they were added — and `Attach` is called *first* — so `backup --help` opens with
@@ -23,7 +23,7 @@ recursive, so that the help can list them on every verb (and they parse there).
 |---|---|
 | Readable, themed docs in the console | A general Markdown engine |
 | Help structured in titled groups, the verb's own options first | A general System.CommandLine help customisation |
-| Coloured help consistent with `ConsoleTheme` | Switching to Spectre.Console.Cli (a rewrite of every verb) |
+| colored help consistent with `ConsoleTheme` | Switching to Spectre.Console.Cli (a rewrite of every verb) |
 | Plain fallback for `--no-color`, `--quiet`, redirected output, tests | New NuGet dependencies |
 | One source of truth: help built from the commands' own symbols | Hand-written help text per verb |
 | Unit-testable without a console | Paging, links, images, localisation |
@@ -307,7 +307,7 @@ HelpRenderer.ToRenderables(model, width) // ONE Markup: each run escaped, wrappe
 - `HelpModel.Build(Command cmd)` takes no root parameter; it walks `Parents`.
 - Option value types come from the generic `Option<T>` base type, not from a `ValueType` member.
 - The default comes from `Option.HasDefaultValue` / `GetDefaultValue()`. A throwing factory yields no default.
-- **One layout, two forms.** The help is laid out once, as lines of `HelpRun(Text, Style)`. The plain form concatenates the texts; the rich form wraps each escaped text in its style's markup. Both forms break every line at the same place, and the plain form, which the tests pin, is the rich form without colours. The tests check this for every command.
+- **One layout, two forms.** The help is laid out once, as lines of `HelpRun(Text, Style)`. The plain form concatenates the texts; the rich form wraps each escaped text in its style's markup. Both forms break every line at the same place, and the plain form, which the tests pin, is the rich form without colors. The tests check this for every command.
 - **Own wrapper.** `HelpRenderer` no longer calls `MarkdownRenderer.Wrap`, because its words carry a `Style`, not an `MdSpanKind`. The rule is the same: greedy at spaces, minimum width 20, and an overlong word breaks after `/ | , \` (`BreakOverlong`).
 - **Merged runs.** Neighbouring runs of one style join, and a space between two words of one style takes that style. That gives one markup tag per styled phrase.
 
@@ -338,13 +338,39 @@ HelpRenderer.ToRenderables(model, width) // ONE Markup: each run escaped, wrappe
 | Summary names | `OptionName`; pointer `Dimmed` |
 | Footer | `Dimmed` |
 
+**Mentions.** Help texts mark options and other literals with backticks: `` `--password-file` ``,
+`` `tapecon docs faq` ``, `` `PATH_init.ext` ``. Every text the help shows takes them: command, argument and option
+descriptions, reference descriptions, group intros, the summary pointer, the root footer.
+
+| Element | Rich | Plain |
+|---|---|---|
+| `` `…` `` | `ConsoleTheme.Mention` (darkcyan), markers removed | markers removed |
+| a marker without a partner (an odd last one) | literal | literal |
+| an empty pair ` `` ` | literal; its second marker may open the next pair | literal |
+
+- **Punctuation stays attached.** A word may cross a mention border: `` (`--drive`), `` is ONE word of three runs. Every
+  run after the first carries `HelpRun.KeepWithPrevious`, and the wrapper moves such runs as one unit — a line never
+  starts with `),`.
+- **Spaces inside a mention** split it into several mention words, so a long mention wraps; the space between two of
+  them takes the mention style, so the phrase stays one styled run.
+- **Only backticks.** The help does not reuse the docs' inline Markdown parser: `--filter`'s example
+  `'name matches "*.doc*"'` would turn `.doc` into italics.
+- **Texts used outside the help** pass through `HelpRenderer.PlainText` — e.g. `SchemeWords.EncryptionChoices` in
+  backup's "Unknown encryption" error.
+- **Completeness, by test.** `HelpModelTests.HelpTexts_NameOptions_OnlyAsMentions` finds every `--name` outside a mention
+  that names a real tapecon option, in every help text of the tree. The parsing lives in the test, not the renderer:
+  a false hit costs a test run, never wrong output.
+
+Code: `HelpRenderer.Segments(text, style)` (pairs markers left to right), `Words` (words of runs, `KeepWithPrevious`),
+`Wrap` (moves units), `PlainText`. `Words`, `Wrap` and `Segments` are internal for the tests.
 
 Option rows:
 
 - **Placeholder:** `HelpName` when set (`PATH`, `SIZE`), else derived from the value type — none for `bool`,
   `N` for integers, `TEXT` for strings, the choices for enums (`None|Crc32|…`).
 - **Default:** shown when the option has a default value factory and the value is not the type default —
-  e.g. `[default: Crc32]` for `--hash`. Descriptions that already state their default keep it in the text.
+  e.g. `[default: Crc32]` for `--hash`. The default is one unbreakable run, so a wrap never separates `[default:` from its value.
+  Descriptions that already state their default keep it in the text.
 - **Wrapping:** the description column wraps at the console width (§6); the name column is sized to the widest name
   in the *whole help*, capped at 34 characters — longer names push their description to the next line.
 - **References:** same name column as the home row; the description comes from the `HelpReference`; the default is not repeated.
@@ -410,14 +436,29 @@ A parse error keeps System.CommandLine's behaviour (error lines, exit 2). The he
 
 ## 6. Shared pieces
 
-- **Theme:** `ConsoleTheme` gains the presentation styles `Heading` (bold cyan), `OptionName` (cyan), `Placeholder` (grey), `Dimmed` (dim), and `Code` (cyan). They are parsed from the same markup words the banner uses, so they cannot drift from hand-written markup. Both renderers take colours only from there.
-- **Level icons:** Completed `✓`, Info `ℹ`, Warning `⚠`, **Failed `✗`** (U+2717, slanted), **Error `✖`** (U+2716, heavy straight). Failed and Error differ by glyph as well as colour, so they stay distinct under `--no-color` and in redirected output.
+- **Theme:** `ConsoleTheme` gains the presentation styles `Heading` (bold cyan), `OptionName` (cyan), `Placeholder` (grey), `Dimmed` (dim), and `Code` (cyan). They are parsed from the same markup words the banner uses, so they cannot drift from hand-written markup. Both renderers take colors only from there.
+- **Level icons:** Completed `✓`, Info `ℹ`, Warning `⚠`, **Failed `✗`** (U+2717, slanted), **Error `✖`** (U+2716, heavy straight). Failed and Error differ by glyph as well as color, so they stay distinct under `--no-color` and in redirected output.
 - **Plain mode:** `ConsoleCapabilities.UsePlain(noColor, quiet, redirected)` = `noColor || quiet || redirected`.
 - **Width:** `ConsoleCapabilities.ClampWidth(consoleWidth, redirected)` = 80 when the output is redirected or the console reports no width; otherwise the console width clamped to [60, 120].
 - **Redirection** comes from the console, not the helper: `SpectreConsoleUx` asks `Profile.Out.IsTerminal`, so an injected console decides for itself; `SilentConsoleUx` always counts as redirected. Both helpers are pure functions taking flags rather than an `IConsoleUx`, so the interface does not grow.
 - **Output:** `IConsoleUx.Write(ConsoleDocument)` (§3.4) serves docs and help alike.
 - `SubHeading` (cyan, `###`) and `CodeBlock` (grey, code blocks).
-- `Emphasis` (bold, no colour): the help's usage line.
+- `Emphasis` (bold, no color): the help's usage line.
+
+### 6.1 User colors and NO_COLOR
+
+- **`TAPECON_COLORS`** overrides any style by key: `key=style;key=style`, in Spectre's style syntax
+  (`Style.TryParse`). Keys (`ConsoleTheme.ColorKeys`): `heading`, `subheading`, `emphasis`, `option`, `placeholder`,
+  `mention`, `dimmed`, `code`, `codeblock`, `completed`, `info`, `warning`, `failed`, `error`.
+- **Read once,** by `ConsoleTheme`'s static constructor: the styles stay `static readonly` fields, no caller changes.
+  The log-level styles became fields too (`LevelCompleted` … `LevelError`); `StyleFor` returns them.
+- **Never fatal.** A bad entry (no `=`, unknown key, no style) is skipped and its default kept; a line goes to
+  `ConsoleTheme.ColorWarnings`, which `Program` logs as warnings. Keys are case-insensitive; a repeated key: the last wins.
+- **Parser pure:** `ConsoleTheme.ParseColors(spec, warnings)` — tested directly.
+- **`NO_COLOR`** (no-color.org): set and not empty, whatever the value, acts as `--no-color` — plain output, not just
+  colorless. `Program` checks it before the argument pre-scan (`ConsoleCapabilities.NoColorRequested`). tapecon has no
+  `--color` to override it; the convention's override rule therefore does not arise.
+- Not supported (yet): a config file. Should one come, `%APPDATA%\tapecon\` with the same `key=style` lines.
 
 
 ## 7. Testing
@@ -433,7 +474,10 @@ A parse error keeps System.CommandLine's behaviour (error lines, exit 2). The he
 | Help output | every verb `--help` exits 0; root lists commands and the footer; backup's section order; summary line and pointer; recursive options and `--help` last; create-virtual promotion; long names push the description down; lines fit 80 columns | `CliParsingTests` via `RunResult.Output` |
 | Recursive options | `docs --quiet` / `-q` / `--no-color`; `backup --quiet --no-color --help` | `CliParsingTests` |
 | Output path | `SilentConsoleUx.Write` / `SpectreConsoleUx.Write` (redirected): plain lines only, no timestamp, not quiet-suppressed, at the decided width; `ConsoleCapabilities` rules; Error/Failed icons | `ConsoleOutputTests` (Step 1) |
-| Coloured help | every command: rich without colours equals plain, line by line; rich with colours emits ANSI and keeps `[default: …]` as text; every run's theme style; neighbouring runs never share a style | `HelpRendererTests`, Spectre test console |
+| Colored help | every command: rich without colors equals plain, line by line; rich with colors emits ANSI and keeps `[default: …]` as text; every run's theme style; neighbouring runs never share a style | `HelpRendererTests`, Spectre test console |
+| Mentions | punctuation attached (`(…)`, `,`, `.`); style kept around a mention in dimmed text; spaces inside a mention; unpaired and empty markers literal; the wrapper never separates a mention from its punctuation; **no marker in any command's plain help**; mention runs in descriptions, intro, pointer and footer; rich output without markers | `HelpRendererTests` |
+| Mention completeness | every help text of the tree names real options only inside backticks | `HelpModelTests` |
+| Colors | `ParseColors`: empty, valid (names, hex, decorations), case and repetition, each kind of bad entry, bad entries don't spoil good ones, every key accepted; `NoColorRequested` by presence | `ConsoleThemeTests` (new) |
 
 Existing `Help_ForVerb_ReturnsOk` tests keep passing.
 
@@ -499,11 +543,11 @@ Exit: `--help` shows the grouped layout in plain text everywhere; all tests gree
 Also needed once, to pin the API: the exact **System.CommandLine package version** from `TapeConNET.csproj` — the help
 action and symbol API (`HelpOption`, `Option.Recursive`, `Option.HasDefaultValue`) moved between 2.0 betas and GA.
 
-### Step 4 — Coloured help
+### Step 4 — colored help
 
 Content (as built): `HelpRenderer` rewritten around `Layout` / `HelpRun`; `ConsoleTheme.Emphasis`; `HelpRendererTests` (new). Unchanged: `HelpModel`, `SpectreConsoleUx`, `MarkdownRenderer`.
 
-Exit: `--help` coloured on a console, plain when redirected or under `--no-color` / `--quiet`; all tests green.
+Exit: `--help` colored on a console, plain when redirected or under `--no-color` / `--quiet`; all tests green.
 
 | Attach | Why |
 |---|---|
@@ -513,8 +557,20 @@ Exit: `--help` coloured on a console, plain when redirected or under `--no-color
 
 ### Step 5 — Verb sweep: descriptions and placeholders
 
-Content: review every option description for length and duplication now that the group intro carries context (e.g.
-"of NEW virtual media" can go); add missing `HelpName`s; trim descriptions that restate defaults shown by §5.2.
+Content (as built):
+- **Mentions:** `HelpRenderer` — `Segments`, `Words` rewritten (word-by-word across segments), `Wrap` by units,
+  `PlainText`, the pointer through `Words`; `HelpGroups` intro and pointer, `HelpModel.RootFooter` with mentions;
+  `HelpGroups.All`.
+- **Description sweep, every verb and option file:** backticks on every option, command and literal named; "of NEW
+  virtual media" dropped where the group or promotion says it (`--capacity`, `--init-capacity`, the block sizes, the
+  mark profiles); choices and defaults the help shows itself dropped from the text (`--hash`, `--log-level`,
+  `--existing`, `--compression`'s "(default)"); HelpNames added: `--filter` FCL, `--compression` LEVEL, `--encryption`
+  SCHEME, `--append-after` SET, `--target` / `--export` / `--map` / `--save` PATH, `--name` NAME (create-virtual,
+  rename-set). `--target` states its default (the current folder). `ListCommand`'s remarks table: `info --drive-only`.
+- **Colors:** `ConsoleTheme` (`TAPECON_COLORS`, level fields, `ColorKeys`, `ColorWarnings`, `ParseColors`);
+  `ConsoleCapabilities.NoColorVariable` / `NoColorRequested`; `Program` (NO_COLOR, color warnings);
+  `--no-color`'s description names both variables. FAQ entry "How do I change tapecon's colors, or turn them off?".
+- Unchanged: `FormatCommand`, `EjectCommand`, `TocCommand`, `DeleteSetsCommand`, `DemoCommand`, `VerbHost`.
 
 Exit: every verb's help reviewed; all tests green.
 

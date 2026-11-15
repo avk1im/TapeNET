@@ -27,18 +27,19 @@ internal static class CreateVirtualCommand
     {
         var cmd = new Command("create-virtual",
             "Create new file-backed virtual media, formatted with an empty TOC. Existing virtual media files are " +
-            "replaced only after a prompt, or with --overwrite-virtual.");
+            "replaced only after a prompt, or with `--overwrite-virtual`.");
         cmd.Aliases.Add("new-virtual");
 
         var pathArg = new Argument<string>("path")
         {
-            Description = "Content file of the new media, e.g. D:\\vtapes\\weekly — without extension it becomes " +
-                          $"weekly{VirtualMediaPaths.ContentExtension} (metadata goes to PATH.vrt).",
+            Description = "Content file of the new media, e.g. `D:\\vtapes\\weekly` — without extension it becomes " +
+                          $"`weekly{VirtualMediaPaths.ContentExtension}` (metadata goes to `PATH.vrt`).",
         };
 
         var nameOption = new Option<string?>("--name", "-n")
         {
             Description = "Media name written into the new TOC (default: 'Media created <date time>').",
+            HelpName = "NAME",
         };
 
         cmd.Arguments.Add(pathArg);

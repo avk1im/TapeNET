@@ -8,7 +8,6 @@ using TapeLibNET.Toc;
 
 namespace TapeConNET.Cli;
 
-
 /// <summary>
 /// <c>tapecon restore</c> — restore the contents of a backup set (or a range
 /// of sets) to a target directory. Set spec follows the dual convention
@@ -29,58 +28,74 @@ internal static class RestoreCommand
     private static Command BuildRestoreLikeCommand(IConsoleUx ux, string name, string desc, RestoreMode mode, bool withTarget)
     {
         var cmd = new Command(name, desc);
+
         GlobalOptions.Attach(cmd);
         FilterOptions.Attach(cmd);
         PasswordOptions.Attach(cmd);
 
         var setArg = new Argument<string?>("set")
         {
-            Description = "Set index to process (positive = oldest-up, 0 = latest, -1/-2/... = older). Default: 0 (latest).",
+            Description = "Set index to process (positive = oldest-up, `0` = latest, `-1`/`-2`/… = older). " +
+                          "Default: `0` (latest).",
             Arity = ArgumentArity.ZeroOrOne,
         };
+
         var filterArgs = new Argument<string[]>("filter-args")
         {
             Description = "Optional filter arguments: DOS wildcard patterns, inline FCL, " +
-                          "or a path to a .fcl file. Combined with --filter / --filter-file.",
+                          "or a path to a `.fcl` file. Combined with `--filter` / `--filter-file`.",
             Arity = ArgumentArity.ZeroOrMore,
         };
+
         var targetOption = new Option<string?>("--target", "-t")
         {
-            Description = "Target folder for restored files (only for restore).",
+            Description = "Target folder for restored files (default: the current folder).",
+            HelpName = "PATH",
         };
+
         var subdirsOption = new Option<bool>("--subdirs", "-s")
         {
             Description = "Recreate the original directory structure under the target folder.",
         };
+
+        // The choices show in the placeholder, the default in [default: …]
         var existingOption = new Option<TapeHowToHandleExisting>("--existing", "-x")
         {
-            Description = "How to handle existing target files: Skip / Overwrite / KeepBoth.",
+            Description = "How to handle existing target files.",
             DefaultValueFactory = _ => TapeHowToHandleExisting.KeepBoth,
         };
+
         var incrementalOption = new Option<bool?>("--incremental", "-i")
         {
-            Description = "Force-on or force-off the incremental chain expansion (default: follow set's flag).",
+            Description = "Force-on or force-off the incremental chain expansion (default: follow set's flag). " +
+                          "`--incremental false` processes exactly the given set.",
         };
+
         var skipErrorsOption = new Option<bool>("--skip-errors")
         {
             Description = "Skip per-file errors automatically without prompting.",
         };
+
         var noMultivolumeOption = new Option<bool>("--no-multivolume")
         {
             Description = "Stop the operation when the current volume is exhausted instead of continuing to another volume.",
         };
+
         var ejectWhenDoneOption = new Option<bool>("--eject-when-done")
         {
             Description = "Eject the tape when the operation is complete.",
         };
+
         var skipMediaConfirmOption = new Option<bool>("--skip-media-confirm")
         {
             Description = "Silently proceed with mismatched media or volume.",
         };
+
         var skipSetCorrectionOption = new Option<bool>("--skip-set-correction")
         {
             Description = "Do not attempt to correct set navigation errors.",
         };
+
         var skipSetVerifyOption = new Option<bool>("--skip-set-verify")
         {
             Description = "Skip backup set verification. " +
@@ -136,6 +151,7 @@ internal static class RestoreCommand
                     throw new TapeConException(TapeConExitCode.UsageError,
                         $"Invalid set index >{setSpec}<.");
             }
+
             // Normalize 0/negative (latest-down) to standard 1..MaxSetIndex
             //  form expected by TOC.SelectFilesFromSets.
             if (service.TOC is not null)
@@ -169,7 +185,6 @@ internal static class RestoreCommand
             };
 
             var result = await service.ExecuteRestoreAsync(options);
-
             return (int)VerbHost.ToExitCode(result.WasAborted, result.HasFailed || result.FilesFailed > 0,
                 result.SetStats.SetWriteBlocked, passwordRequired: result.SetsLocked > 0);
         });

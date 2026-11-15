@@ -42,7 +42,7 @@ internal static class PasswordOptions
     public static readonly Option<string?> Password = new("--password")
     {
         Description = "Not supported: a password on the command line is visible in the shell history and the process " +
-                      "list. Use --password-file or --password-env.",
+                      "list. Use `--password-file` or `--password-env`.",
     };
 
     public static readonly Option<string?> NewPasswordFile = new("--new-password-file")
@@ -59,7 +59,7 @@ internal static class PasswordOptions
 
     public static readonly Option<string?> NewPassword = new("--new-password")
     {
-        Description = "Not supported — use --new-password-file, --new-password-env, or --change-password.",
+        Description = "Not supported — use `--new-password-file`, `--new-password-env`, or `--change-password`.",
     };
 
     static PasswordOptions()
@@ -182,7 +182,10 @@ internal static class PasswordOptions
 /// </summary>
 internal static class SchemeWords
 {
-    /// <summary>The encryption choices, for help texts.</summary>
+    /// <summary>
+    /// The encryption choices, for help texts — with mention markers. Anywhere else (an error message) pass it through
+    ///  <see cref="HelpRenderer.PlainText"/>.
+    /// </summary>
     public const string EncryptionChoices = "`none`, `software`, `hardware` | `drive`";
 
     /// <summary>Parses an encryption word.</summary>

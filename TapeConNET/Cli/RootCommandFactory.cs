@@ -20,7 +20,7 @@ public static class RootCommandFactory
     {
         var root = new RootCommand(
             "tapecon — command-line tape backup utility (TapeConNET 2.0). " +
-            "Use 'tapecon <verb> --help' for verb-specific help.");
+            "Use `tapecon <verb> --help` for verb-specific help.");
 
         // ─── Global options (apply to all verbs) ──────────────────────────────
         //  Recursive (Design-CliPresentation §4.6): every verb parses them, and every verb's help lists them. Program's
