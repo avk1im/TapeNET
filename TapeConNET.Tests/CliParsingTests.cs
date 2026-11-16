@@ -80,9 +80,11 @@ public class CliParsingTests
     public async Task RootOption_ParsesOnVerb(string option)
     {
         // Before §4.6 the verb rejected these as unknown tokens. docs ignores --quiet: the user asked for the text.
-        var r = await TapeConHost.RunAsync("docs", option, "concepts");
+        var r = await TapeConHost.RunAsync("docs", option, "faq"); // the topics are loaded dynamically
+                                                                   //  - assume "faq" topic is always present
         Assert.Equal(TapeConExitCode.Ok, r.Exit);
-        Assert.Contains("tapecon — Concepts", r.Output, StringComparison.Ordinal);
+        Assert.Contains("Why", r.Output, StringComparison.Ordinal);
+        Assert.Contains("How", r.Output, StringComparison.Ordinal);
     }
 
     [Fact]

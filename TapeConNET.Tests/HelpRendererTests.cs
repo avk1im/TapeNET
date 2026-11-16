@@ -193,7 +193,7 @@ public class HelpRendererTests
         // "aaaa aaaa aaaa" fills 14 of 20 columns; "(--drive)," (10) moves to the next line as a whole
         var lines = HelpRenderer.Wrap(HelpRenderer.Words("aaaa aaaa aaaa (`--drive`), x", Style.Plain), 20);
 
-        Assert.Equal(new[] { "aaaa aaaa aaaa", "(--drive), x" }, lines.Select(l => string.Concat(l.Select(r => r.Text))));
+        Assert.Equal(["aaaa aaaa aaaa", "(--drive), x"], lines.Select(l => string.Concat(l.Select(r => r.Text))));
     }
 
     [Theory]

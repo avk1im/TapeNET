@@ -10,8 +10,8 @@ namespace TapeConNET.Tests;
 
 /// <summary>
 /// The Examples sections of verb help (Design-CliPresentation §11): <c>examples/&lt;verb&gt;.md</c> resources, appended
-///  to <c>&lt;verb&gt; --help</c>. The examples must keep up with the command tree, so the tests parse every command line
-///  they show. Nothing runs.
+///  to <c>&lt;verb&gt; --help</c>. The examples and the docs topics must keep up with the command tree, so the tests
+///  parse every command line their code blocks show. Nothing runs.
 /// </summary>
 public class ExamplesTests
 {
@@ -31,15 +31,32 @@ public class ExamplesTests
         return DocTopics.Examples(command)!;
     }
 
+    private static string LoadTopic(string name) => DocTopics.Load(DocTopics.Find(name)!);
+
+    private static IEnumerable<string> CodeLines(string markdown)
+        => MarkdownDocument.Parse(markdown).OfType<MdCode>().SelectMany(code => code.Text.Split('\n'));
+
     /// <summary>
     /// The command lines in the code blocks of <paramref name="markdown"/>: lines starting with <c>tapecon </c>, as
-    ///  arguments without <c>tapecon</c>.
+    ///  arguments without <c>tapecon</c>. A shell pipe or redirection (<c> | </c>, <c> &gt; </c>) ends the command.
     /// </summary>
     private static IEnumerable<(string Line, string[] Args)> CommandLines(string markdown)
-        => MarkdownDocument.Parse(markdown).OfType<MdCode>()
-            .SelectMany(code => code.Text.Split('\n'))
+        => CodeLines(markdown)
             .Where(l => l.StartsWith("tapecon ", StringComparison.Ordinal))
-            .Select(l => (l, Split(l).Skip(1).ToArray()));
+            .Select(l => (l, Split(ShellCommand(l)).Skip(1).ToArray()));
+
+    /// <summary><paramref name="line"/> up to its first pipe or redirection.</summary>
+    private static string ShellCommand(string line)
+    {
+        int cut = line.Length;
+        foreach (var op in (string[])[" | ", " > "])
+        {
+            int i = line.IndexOf(op, StringComparison.Ordinal);
+            if (i >= 0 && i < cut)
+                cut = i;
+        }
+        return line[..cut];
+    }
 
     /// <summary>
     /// Splits a command line as the Windows argument rules do, for the cases the examples use: spaces separate,
@@ -82,6 +99,17 @@ public class ExamplesTests
         return args;
     }
 
+    /// <summary>Asserts that every command line of <paramref name="lines"/> parses against the real command tree.</summary>
+    private static void AssertCommandLinesParse(IEnumerable<(string Line, string[] Args)> lines)
+    {
+        foreach (var (line, args) in lines)
+        {
+            var result = Root().Parse(args);
+            Assert.True(result.Errors.Count == 0,
+                $"{line}\n  {string.Join("\n  ", result.Errors.Select(e => e.Message))}");
+        }
+    }
+
     public static TheoryData<string> Examples
     {
         get
@@ -93,9 +121,20 @@ public class ExamplesTests
         }
     }
 
+    public static TheoryData<string> Topics
+    {
+        get
+        {
+            var data = new TheoryData<string>();
+            foreach (var topic in DocTopics.All)
+                data.Add(topic.Name);
+            return data;
+        }
+    }
+
     #endregion
 
-    #region *** The resources ***
+    #region *** The examples ***
 
     [Fact]
     public void ThereAreExamples() => Assert.NotEmpty(DocTopics.ExampleNames);
@@ -110,10 +149,7 @@ public class ExamplesTests
     [Theory]
     [MemberData(nameof(Examples))]
     public void Example_CodeLines_FitTheWidth(string name)
-    {
-        var lines = MarkdownDocument.Parse(LoadExample(name)).OfType<MdCode>().SelectMany(c => c.Text.Split('\n'));
-        Assert.All(lines, l => Assert.True(l.Length <= MaxCodeLine, $"{l.Length}: {l}"));
-    }
+        => Assert.All(CodeLines(LoadExample(name)), l => Assert.True(l.Length <= MaxCodeLine, $"{l.Length}: {l}"));
 
     [Theory]
     [MemberData(nameof(Examples))]
@@ -121,12 +157,7 @@ public class ExamplesTests
     {
         var lines = CommandLines(LoadExample(name)).ToList();
         Assert.NotEmpty(lines);
-        foreach (var (line, args) in lines)
-        {
-            var result = Root().Parse(args);
-            Assert.True(result.Errors.Count == 0,
-                $"{line}\n  {string.Join("\n  ", result.Errors.Select(e => e.Message))}");
-        }
+        AssertCommandLinesParse(lines);
     }
 
     [Theory]
@@ -141,6 +172,25 @@ public class ExamplesTests
             Assert.False(line.StartsWith('#'), $"heading syntax survived: {line}");
         });
     }
+
+    #endregion
+
+    #region *** The docs topics ***
+
+    /// <summary>An option renamed in code must not live on in a topic.</summary>
+    [Theory]
+    [MemberData(nameof(Topics))]
+    public void Topic_CommandLines_Parse(string name)
+        => AssertCommandLinesParse(CommandLines(LoadTopic(name)));
+
+    [Theory]
+    [MemberData(nameof(Topics))]
+    public void Topic_CodeLines_FitTheWidth(string name)
+        => Assert.All(CodeLines(LoadTopic(name)), l => Assert.True(l.Length <= MaxCodeLine, $"{l.Length}: {l}"));
+
+    [Fact]
+    public void GettingStarted_ShowsCommands()
+        => Assert.NotEmpty(CommandLines(LoadTopic("getting-started")));
 
     #endregion
 

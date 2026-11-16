@@ -21,25 +21,20 @@ internal sealed record ResolvedFilter(
 /// of bare positional arguments per the auto-detect order documented in
 /// <c>TapeConNET-2.0-Architecture.md §4</c>:
 /// <list type="number">
-///   <item>An existing file with the <c>.fcl</c> extension is treated as an
-///         FCL file.</item>
-///   <item>A string starting with an FCL keyword
-///         (<c>name</c>, <c>fullname</c>, <c>path</c>, <c>extension</c>,
-///         <c>size</c>, <c>created</c>, <c>modified</c>, <c>date</c>,
-///         <c>attr</c>/<c>attributes</c>, <c>(</c>) is treated as inline FCL.</item>
-///   <item>An existing directory or file path is treated as a literal
-///         path.</item>
-///   <item>Anything else is treated as a DOS-style wildcard pattern
-///         (e.g. <c>*.doc*</c>).</item>
+///   <item>An existing file with the <c>.fcl</c> extension is treated as an FCL file.</item>
+///   <item>Inline FCL: a string opening with <c>(</c>, <c>!</c> or <c>not</c>, or with an FCL field name
+///         (<c>Name</c>, <c>FullName</c>, <c>Path</c>, <c>Extension</c>, <c>Size</c>, <c>Created</c>,
+///         <c>Modified</c>, <c>Attributes</c>) followed by whitespace or an operator symbol.</item>
+///   <item>An existing directory or file path is treated as a literal path.</item>
+///   <item>Anything else is treated as a DOS-style wildcard pattern (e.g. <c>*.doc*</c>).</item>
 /// </list>
 /// </summary>
 internal static class FilterResolver
 {
-    private static readonly HashSet<string> s_fclKeywords = new(StringComparer.OrdinalIgnoreCase)
+    /// <summary>FCL's field names (FCL-Specification, Fields), matched case-insensitively.</summary>
+    private static readonly HashSet<string> s_fclFields = new(StringComparer.OrdinalIgnoreCase)
     {
-        "name", "fullname", "path", "extension",
-        "size", "created", "modified", "date",
-        "attr", "attributes",
+        "FullName", "Name", "Extension", "Path", "Size", "Created", "Modified", "Attributes",
     };
 
     /// <summary>
@@ -110,22 +105,39 @@ internal static class FilterResolver
         catch { return false; }
     }
 
+    /// <summary>
+    /// True when <paramref name="arg"/> reads as inline FCL: it opens with <c>(</c>, <c>!</c> or the word <c>not</c>, or
+    ///  with a field name followed by whitespace or an operator symbol (<c>Size&gt;1MB</c>).
+    /// </summary>
+    /// <remarks>
+    /// A field name alone is not enough: <c>size-report.xlsx</c>, <c>Path\to\*.doc</c> and <c>names*.txt</c> are a file,
+    ///  a folder pattern and a wildcard. Every condition needs an operator after its field, so requiring the separator
+    ///  costs no valid expression.
+    /// </remarks>
     private static bool StartsWithFclKeyword(string arg)
     {
         if (string.IsNullOrWhiteSpace(arg))
             return false;
+
         var span = arg.AsSpan().TrimStart();
-        if (span.Length == 0)
-            return false;
-        if (span[0] == '(')
+        if (span[0] is '(' or '!')
             return true;
-        // First word
+
+        // First word, letters only: field names and `not` hold nothing else
         int end = 0;
-        while (end < span.Length && (char.IsLetter(span[end]) || span[end] == '_'))
+        while (end < span.Length && char.IsLetter(span[end]))
             end++;
-        if (end == 0)
-            return false;
-        return s_fclKeywords.Contains(span[..end].ToString());
+        if (end == 0 || end == span.Length)
+            return false;                                       // no word, or a lone word: no condition
+
+        var word = span[..end];
+        char next = span[end];
+
+        if (word.Equals("not", StringComparison.OrdinalIgnoreCase))
+            return char.IsWhiteSpace(next) || next == '(';
+
+        return s_fclFields.Contains(word.ToString())
+            && (char.IsWhiteSpace(next) || next is '=' or '!' or '<' or '>');
     }
 
     /// <summary>

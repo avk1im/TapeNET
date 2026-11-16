@@ -27,9 +27,9 @@ Back up to **another drive**, e.g. drive 2:
 Back up to a new **virtual tape**, a file in `C:\Tapes`, and later add to it:
 
     tapecon backup D:\Data --subdirs --virtual-create C:\Tapes\first
-    tapecon backup D:\Data --subdirs --incremental --virtual C:\Tapes\first
+    tapecon backup D:\Data --subdirs --incremental --virtual-open C:\Tapes\first
 
-*Every example above works on the virtual tape*, too: add `--virtual C:\Tapes\first`.
+*Every example above works on the virtual tape*, too: add `--virtual-open C:\Tapes\first`.
 
 *Notice:* a backup appends to **TapeNET media**. Format a new cartridge first (`tapecon format`), or use
 `--overwrite-media`. A backup larger than the cartridge asks for the next one, unless you give `--no-multivolume`.
