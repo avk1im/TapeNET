@@ -128,10 +128,10 @@ public static class HelpRenderer
                 lines.AddRange(TwoColumns(FirstColumn(row), SecondColumn(row), nameColumn, width));
         }
 
-        // ── Subcommands ──
+        // ── Subcommands (or, for `tapecon docs`, topics) ──
         if (model.Commands.Count > 0)
         {
-            AddTitle(lines, "Commands");
+            AddTitle(lines, model.CommandsTitle);
             foreach (var command in model.Commands)
                 lines.AddRange(TwoColumns([new(command.Names, ConsoleTheme.OptionName)],
                     Words(command.Description, Style.Plain), nameColumn, width));

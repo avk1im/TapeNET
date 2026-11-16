@@ -8,18 +8,31 @@ namespace TapeConNET.Cli;
 /// <c>tapecon rename-media</c>   — renames the loaded tape media.
 /// <c>tapecon rename-set INDEX</c> — renames the backup set at <c>INDEX</c>.
 /// </summary>
+/// <remarks>
+/// Scriptable: given the new text (<c>--media-description</c> / <c>--description</c>, both alias <c>--name</c>), neither
+///  verb asks.
+/// </remarks>
 internal static class RenameCommand
 {
     public static Command CreateRenameMedia(IConsoleUx ux)
     {
         var cmd = new Command("rename-media", "Rename the loaded tape media.");
+
         GlobalOptions.Attach(cmd);
+
+        var mediaDescOption = MediaOptions.Description("The new media description. Absent: asked.");
+        cmd.Options.Add(mediaDescOption);
 
         cmd.SetAction(async (parseResult, ct) =>
         {
             ux.WriteBanner();
+
+            string? mediaDesc = parseResult.GetValue(mediaDescOption);
+
             using var service = VerbHost.BuildAndOpen(parseResult, ux, VerbHost.LifecycleSteps.Full, ct);
-            var ok = await service.RenameMediaAsync();
+            var ok = mediaDesc is null
+                ? await service.RenameMediaAsync()
+                : await service.RenameMediaAsync(mediaDesc);
             return ok ? (int)TapeConExitCode.Ok : (int)TapeConExitCode.OperationFailed;
         });
 
@@ -30,6 +43,7 @@ internal static class RenameCommand
     {
         var cmd = new Command("rename-set",
             "Rename a backup set on the loaded tape, and/or change the password of an encrypted set.");
+
         GlobalOptions.Attach(cmd);
         PasswordOptions.Attach(cmd, withNew: true);
 
@@ -37,13 +51,12 @@ internal static class RenameCommand
         {
             Description = "Standard (1-based) set index to rename.",
         };
-
-        var nameOption = new Option<string?>("--name", "-n")
+        // The same name as backup's set description; --name, natural for a rename, as an alias
+        var descOption = new Option<string?>("--description", "--desc", "-D", "--name", "-n")
         {
-            Description = "The new description. Absent: asked (unless only the password changes).",
-            HelpName = "NAME",
+            Description = "The new set description. Absent: asked (unless only the password changes).",
+            HelpName = "TEXT",
         };
-
         var changePasswordOption = new Option<bool>("--change-password")
         {
             Description = "Change the password of an encrypted set — asked twice, masked. Unattended: use " +
@@ -52,7 +65,7 @@ internal static class RenameCommand
         };
 
         cmd.Arguments.Add(indexArg);
-        cmd.Options.Add(nameOption);
+        cmd.Options.Add(descOption);
         cmd.Options.Add(changePasswordOption);
 
         cmd.SetAction(async (parseResult, ct) =>
@@ -60,11 +73,11 @@ internal static class RenameCommand
             ux.WriteBanner();
 
             int setIndex = parseResult.GetValue(indexArg);
-            string? name = parseResult.GetValue(nameOption);
+            string? name = parseResult.GetValue(descOption);
             bool changePassword = parseResult.GetValue(changePasswordOption);
-
             char[]? password = PasswordOptions.Resolve(parseResult);
             char[]? newPassword = PasswordOptions.ResolveNew(parseResult);
+
             if (changePassword && newPassword is not null)
                 throw new TapeConException(TapeConExitCode.UsageError,
                     "--change-password asks for the new password; it cannot be combined with --new-password-file/-env.");
@@ -80,7 +93,6 @@ internal static class RenameCommand
                 if (service.TOC[setIndex].IsLocked && !await service.UnlockSetsAsync([setIndex], password))
                     return (int)TapeConExitCode.PasswordRequired;
                 password = null;                                        // cleared by UnlockSetsAsync
-
                 newPassword = PasswordOptions.AskNew(ux, service.TOC[setIndex].DisplayName);
                 if (newPassword is null)
                     return (int)TapeConExitCode.Cancelled;
@@ -99,7 +111,6 @@ internal static class RenameCommand
 
             if (ok)
                 return (int)TapeConExitCode.Ok;
-
             // Note: RenameBackupSetAsync(int) returns false when the user keeps the name
             //  — the exit then stays OperationFailed
             return service.TOC[setIndex].IsLocked ? (int)TapeConExitCode.PasswordRequired

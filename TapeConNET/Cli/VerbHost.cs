@@ -60,17 +60,24 @@ internal static class VerbHost
     /// <see cref="TapeConException"/> when any step fails so the verb can
     /// just <c>using</c>-it and call its operation.
     /// </summary>
+    /// <param name="tocHint">
+    /// Appended to the error when the TOC cannot be restored: what the verb's user can do about it — e.g. backup's
+    ///  "format it first, or overwrite it".
+    /// </param>
+    /// <param name="mediaName">The media description of new virtual media (<c>--virtual-create</c>); null: the default.</param>
     public static TapeService BuildAndOpen(
         ParseResult parseResult,
         IConsoleUx ux,
         LifecycleSteps steps,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? tocHint = null,
+        string? mediaName = null)
     {
         var service = Build(parseResult, ux, ct);
         try
         {
             if ((steps & LifecycleSteps.OpenDrive) != 0)
-                OpenDriveFromOptions(service, parseResult, ux);
+                OpenDriveFromOptions(service, parseResult, ux, mediaName);
 
             if ((steps & LifecycleSteps.LoadMedia) != 0)
             {
@@ -83,7 +90,7 @@ internal static class VerbHost
             {
                 if (!service.RestoreTOCAsync().GetAwaiter().GetResult())
                     throw new TapeConException(TapeConExitCode.OperationFailed,
-                        $"Couldn't restore TOC: {service.LastError}");
+                        $"Couldn't restore TOC: {service.LastError}" + (tocHint is null ? string.Empty : $". {tocHint}."));
             }
 
             if ((steps & LifecycleSteps.IdentifyMedia) != 0)
@@ -143,7 +150,8 @@ internal static class VerbHost
     /// <c>--drive</c>, <c>--virtual-open</c>, <c>--virtual-create</c>, <c>--in-memory</c> may be specified;
     /// multiples yield <see cref="TapeConExitCode.UsageError"/>, none opens Win32 drive 0.
     /// </summary>
-    private static void OpenDriveFromOptions(TapeService service, ParseResult parseResult, IConsoleUx ux)
+    private static void OpenDriveFromOptions(TapeService service, ParseResult parseResult, IConsoleUx ux,
+        string? mediaName)
     {
         var driveNumber = parseResult.GetValue(GlobalOptions.Drive);
         var openPath    = parseResult.GetValue(GlobalOptions.Virtual);
@@ -183,7 +191,7 @@ internal static class VerbHost
 
         if (!string.IsNullOrEmpty(createPath))
         {
-            CreateVirtualFromOptionsAsync(service, parseResult, createPath, mediaName: null).GetAwaiter().GetResult();
+            CreateVirtualFromOptionsAsync(service, parseResult, createPath, mediaName).GetAwaiter().GetResult();
             return;
         }
 

@@ -18,6 +18,17 @@ namespace TapeConNET.Cli;
 /// </summary>
 /// <remarks>
 /// <para>
+/// <b>Where the new set goes</b> — as in TapeWin: after the last set by default (<c>--append</c>), after a given set
+///  (<c>--append-after</c>), or over the entire media (<c>--overwrite-media</c>), which also writes a new media header
+///  and TOC, described by <c>--media-description</c>. Appending keeps the media header and TOC, so it needs a TapeNET
+///  media: formatted, or holding sets. New virtual media (<c>--virtual-create</c>) is written over from its start.
+/// </para>
+/// <para>
+/// <c>--overwrite-media</c> is the user's consent to erase, nothing more: it does not answer the service's media
+///  identity questions in advance. Those keep guarding the rest of the run — above all the continuation check of a
+///  multi-volume backup, which must not take volume 1 of the same series for a fresh cartridge.
+/// </para>
+/// <para>
 /// Help (Design-CliPresentation §4.3): the local <c>--encrypt</c> / <c>--encryption</c> join the shared password options
 ///  in <i>Encryption</i>. They are attached BEFORE the password options, so the section opens with the switch that
 ///  turns encryption on, followed by where its password comes from.
@@ -32,7 +43,7 @@ internal static class BackupCommand
     public static Command Create(IConsoleUx ux)
     {
         var cmd = new Command("backup",
-            "Back up files/folders to the loaded media. " +
+            "Back up files/folders to the loaded media, after the last set on it. " +
             "Each positional argument is a file path, folder path, or wildcard pattern.");
 
         GlobalOptions.Attach(cmd);
@@ -44,31 +55,25 @@ internal static class BackupCommand
                           "Bare FCL expressions or paths to `.fcl` files are also accepted as filters.",
             Arity = ArgumentArity.OneOrMore,
         };
-
         var descOption = new Option<string?>("--description", "--desc", "-D")
         {
             Description = "Backup-set description written into the TOC.",
         };
-
         var subdirsOption = new Option<bool>("--subdirs", "-s")
         {
             Description = "Recurse into subdirectories when expanding folders/patterns.",
         };
-
         var incrementalOption = new Option<bool>("--incremental", "-i")
         {
             Description = "Create an incremental backup set (only files changed since the last full set).",
         };
-
         var blockSizeOption = SizeOptions.BlockSize("--block-size",
             "Block size (default: drive's preferred size; clamped to drive limits).", "-b");
-
         var hashOption = new Option<TapeHashAlgorithm>("--hash", "-H")
         {
             Description = "Per-file hash algorithm.",
             DefaultValueFactory = _ => TapeHashAlgorithm.Crc32,
         };
-
         var compressionOption = new Option<string>("--compression", "-c")
         {
             Description = "Per-file compression: `off`/`none`, `hardware` | `drive`, `low`, `medium`, `high`, " +
@@ -76,68 +81,64 @@ internal static class BackupCommand
             DefaultValueFactory = _ => CompressionPreset.KeyMedium,
             HelpName = "LEVEL",
         };
-
         var encryptOption = new Option<bool>("--encrypt", "-e")
         {
             Description = "Encrypt the backup set (software, AES-256-GCM). The password comes from `--password-file` / " +
                           "`--password-env`, else it is asked (twice). An incremental on an encrypted set is encrypted anyway.",
         };
-
         var encryptionOption = new Option<string?>("--encryption")
         {
             Description = $"Encryption scheme: {SchemeWords.EncryptionChoices}. `hardware` (`drive`) is not supported " +
                           "in this version. Software encryption rules out hardware compression.",
             HelpName = "SCHEME",
         };
-
         // Verb-local, yet shown with the shared password options — see the remarks
         HelpGroups.Assign(HelpGroups.Encryption, encryptOption, encryptionOption);
 
         var appendOption = new Option<bool>("--append", "-a")
         {
-            Description = "Append a new set to existing media (default: replace all).",
+            Description = "Append the new set after the last set on the media — the default. " +
+                          "Excludes `--overwrite-media`.",
         };
-
         var appendAfterOption = new Option<int?>("--append-after")
         {
-            Description = "Append after a specific set (replaces all sets after the given index). " +
+            Description = "Append after a specific set; the sets after it are overwritten. " +
                           "Set index follows the dual convention (positive = oldest-up, `0`/negative = latest-down). " +
-                          "Implies `--append`.",
+                          "Excludes `--overwrite-media`.",
             HelpName = "SET",
         };
-
+        var overwriteMediaOption = new Option<bool>("--overwrite-media")
+        {
+            Description = "Overwrite the ENTIRE media: every set, the TOC and the media header are replaced. Works on " +
+                          "blank or foreign media, too. Not the same as `--overwrite-virtual`, which replaces existing " +
+                          "virtual media FILES under `--virtual-create`.",
+        };
+        // No --name alias here: a backup names both the set and the media (MediaOptions)
+        var mediaDescOption = MediaOptions.Description(
+            "Description of the new media, with `--overwrite-media` or `--virtual-create` " +
+            "(default: 'Media created <date time>'). Ignored otherwise.",
+            withNameAliases: false);
         var skipErrorsOption = new Option<bool>("--skip-errors")
         {
             Description = "Skip per-file errors automatically without prompting.",
         };
-
         var noMultivolumeOption = new Option<bool>("--no-multivolume")
         {
             Description = "Stop the backup when the tape is full instead of continuing to a new volume.",
         };
-
         var ejectWhenDoneOption = new Option<bool>("--eject-when-done")
         {
             Description = "Eject the media automatically when the backup is complete.",
         };
-
         var emergencyTocOption = new Option<string?>("--emergency-toc")
         {
             Description = "Folder for the emergency TOC export if writing the TOC to tape fails.",
             HelpName = "PATH",
         };
-
-        var overwriteMediaOption = new Option<bool>("--overwrite-media")
-        {
-            Description = "Overwrite all content on the loaded media without a prompt. Does not replace " +
-                          "existing virtual media files under `--virtual-create` — that takes `--overwrite-virtual`.",
-        };
-
         var skipSetCorrectionOption = new Option<bool>("--skip-set-correction")
         {
             Description = "Do not attempt to correct backup set navigation errors.",
         };
-
         var skipSetVerifyOption = new Option<bool>("--skip-set-verify")
         {
             Description = "Skip backup set verification before overwriting (repair mode). " +
@@ -157,11 +158,12 @@ internal static class BackupCommand
         PasswordOptions.Attach(cmd);
         cmd.Options.Add(appendOption);
         cmd.Options.Add(appendAfterOption);
+        cmd.Options.Add(overwriteMediaOption);
+        cmd.Options.Add(mediaDescOption);
         cmd.Options.Add(skipErrorsOption);
         cmd.Options.Add(noMultivolumeOption);
         cmd.Options.Add(ejectWhenDoneOption);
         cmd.Options.Add(emergencyTocOption);
-        cmd.Options.Add(overwriteMediaOption);
         cmd.Options.Add(skipSetCorrectionOption);
         cmd.Options.Add(skipSetVerifyOption);
 
@@ -176,13 +178,14 @@ internal static class BackupCommand
             var blockSize   = parseResult.GetValue(blockSizeOption);
             var hash        = parseResult.GetValue(hashOption);
             var compressionSpec = parseResult.GetValue(compressionOption);
-            var append      = parseResult.GetValue(appendOption);
+            var appendGiven = parseResult.GetValue(appendOption);
             var appendAfter = parseResult.GetValue(appendAfterOption);
+            var overwriteMedia = parseResult.GetValue(overwriteMediaOption);
+            var mediaDesc   = parseResult.GetValue(mediaDescOption);
             var skipErrors  = parseResult.GetValue(skipErrorsOption);
             var noMultivolume = parseResult.GetValue(noMultivolumeOption);
             var ejectWhenDone = parseResult.GetValue(ejectWhenDoneOption);
             var emergency   = parseResult.GetValue(emergencyTocOption);
-            var overwriteMedia = parseResult.GetValue(overwriteMediaOption);
             var skipSetCorrection = parseResult.GetValue(skipSetCorrectionOption);
             var skipSetVerify = parseResult.GetValue(skipSetVerifyOption);
             var filterFcl   = parseResult.GetValue(FilterOptions.Filter);
@@ -213,33 +216,42 @@ internal static class BackupCommand
                     throw new TapeConException(TapeConExitCode.UsageError, "--encrypt and --encryption disagree.");
                 encryption = named;
             }
-
             if (encryption == TapeEncryption.Hardware)
                 throw new TapeConException(TapeConExitCode.UsageError,
                     "Hardware (drive) encryption is not supported in this version — use --encrypt (software).");
-
             if (encryption != TapeEncryption.None && compression == TapeCompression.Hardware)
                 throw new TapeConException(TapeConExitCode.UsageError,
                     "Software encryption rules out hardware compression — encrypted data does not compress. " +
                     "Use software compression (low / medium / high), or none.");
 
-            char[]? password = PasswordOptions.Resolve(parseResult);
-
-            // Append-after implies append
-            if (appendAfter.HasValue) append = true;
-
-            // Incremental implies append (cannot be incremental of nothing)
-            if (incremental) append = true;
-
-            // New media starts blank: there is nothing to append to.
-            if (append && VerbHost.IsCreatingVirtualMedia(parseResult))
+            // ── Where the new set goes (see the remarks) ──
+            if (overwriteMedia && (appendGiven || appendAfter.HasValue || incremental))
                 throw new TapeConException(TapeConExitCode.UsageError,
-                    "--append, --append-after and --incremental need existing sets — not available with " +
+                    "--overwrite-media starts the media over — it excludes --append, --append-after and --incremental.");
+
+            bool creating = VerbHost.IsCreatingVirtualMedia(parseResult);
+            if (creating && (appendAfter.HasValue || incremental))
+                throw new TapeConException(TapeConExitCode.UsageError,
+                    "--append-after and --incremental need existing sets — not available with " +
                     "--virtual-create, which starts blank media.");
 
-            // Append needs the existing TOC; full backup only needs the media
-            var steps = append ? VerbHost.LifecycleSteps.Full : VerbHost.LifecycleSteps.Media;
-            using var service = VerbHost.BuildAndOpen(parseResult, ux, steps, ct);
+            // New virtual media is written over from its start, as an overwrite: same result, and no TOC to read first
+            bool append = !overwriteMedia && !creating;
+
+            if (mediaDesc is not null && append)
+                ux.Log(WarningLevel.Warning,
+                    "--media-description ignored: it describes NEW media (--overwrite-media, --virtual-create). " +
+                    "To rename the media, use 'tapecon rename-media'.");
+
+            char[]? password = PasswordOptions.Resolve(parseResult);
+
+            // Append needs the existing TOC; an overwrite only needs the media
+            using var service = append
+                ? VerbHost.BuildAndOpen(parseResult, ux, VerbHost.LifecycleSteps.Full, ct,
+                    tocHint: "A backup appends to TapeNET media. Format it first ('tapecon format'), " +
+                             "or overwrite it with --overwrite-media")
+                : VerbHost.BuildAndOpen(parseResult, ux, VerbHost.LifecycleSteps.Media, ct,
+                    mediaName: mediaDesc);
 
             // If user didn't pick a block size, fall back to the drive's max (LTO) or default size
             uint effectiveBlockSize = blockSize ?? (service.IsLtoDrive ? service.MaximumBlockSize : service.DefaultBlockSize);
@@ -259,11 +271,11 @@ internal static class BackupCommand
                 EjectWhenDone:          ejectWhenDone,
                 EmergencyTocFolder:     emergency,
                 Filter:                 resolved.Filter,
+                MediaName:              append ? null : mediaDesc,
                 Compression:            compression,
                 CompressionLevel:       compressionLevel)
             {
                 NoMultivolume = noMultivolume,
-                ProceedOnMediaMismatch = overwriteMedia,
                 CorrectSetNavigation = !skipSetCorrection,
                 VerifySetHeader = !skipSetVerify,
                 Encryption = encryption,

@@ -77,12 +77,17 @@ public sealed class SpectreConsoleUx(IAnsiConsole? ansi = null) : IConsoleUx
     }
 
     // ─── Prompts ─────────────────────────────────────────────────────────────
+    //  Every prompt suspends the live progress display first (SuspendProgress): Spectre's live displays and prompts
+    //   must never share the console. A display left running redraws over the prompt on every refresh, so the
+    //   prompt's first line repeats until the user answers. Suspended only when a prompt is actually SHOWN, so an
+    //   unattended run never stops its progress bar.
 
     public bool Confirm(string question, bool defaultAnswer = false)
     {
         if (QuietMode || NonInteractive)
             return defaultAnswer;
 
+        using var _ = SuspendProgress();
         var prompt = new ConfirmationPrompt(Markup.Escape(question)) { DefaultValue = defaultAnswer };
         return _ansi.Prompt(prompt);
     }
@@ -95,6 +100,7 @@ public sealed class SpectreConsoleUx(IAnsiConsole? ansi = null) : IConsoleUx
         if (QuietMode || NonInteractive)
             return defaultChoice ?? choices[0];
 
+        using var _ = SuspendProgress();
         var prompt = new SelectionPrompt<string>()
             .Title(Markup.Escape(question))
             .AddChoices(choices);
@@ -106,6 +112,7 @@ public sealed class SpectreConsoleUx(IAnsiConsole? ansi = null) : IConsoleUx
         if (QuietMode || NonInteractive)
             return defaultValue ?? string.Empty;
 
+        using var _ = SuspendProgress();
         var prompt = new TextPrompt<string>(Markup.Escape(question));
         if (defaultValue is not null)
             prompt.DefaultValue(defaultValue);
@@ -119,6 +126,7 @@ public sealed class SpectreConsoleUx(IAnsiConsole? ansi = null) : IConsoleUx
         if (QuietMode || NonInteractive)
             return null;
 
+        using var _ = SuspendProgress();
         var prompt = new TextPrompt<string>(Markup.Escape(question)).Secret().AllowEmpty();
         string answer = _ansi.Prompt(prompt);
         return answer.Length == 0 ? null : answer;
@@ -126,6 +134,29 @@ public sealed class SpectreConsoleUx(IAnsiConsole? ansi = null) : IConsoleUx
 
     // ─── Progress ────────────────────────────────────────────────────────────
 
+    private readonly object _progressGate = new();
+    private SpectreProgressScope? _progress;    // the live progress display, if one runs
+
     public IProgressScope BeginProgress(string title)
-        => new SpectreProgressScope(_ansi, title, QuietMode);
+    {
+        var scope = new SpectreProgressScope(_ansi, title, QuietMode, onDisposed: s =>
+        {
+            lock (_progressGate)
+                if (ReferenceEquals(_progress, s))
+                    _progress = null;
+        });
+        lock (_progressGate)
+            _progress = scope;
+        return scope;
+    }
+
+    /// <summary>Suspends the live progress display, if any, until the returned token is disposed.</summary>
+    private IDisposable? SuspendProgress()
+    {
+        SpectreProgressScope? progress;
+        lock (_progressGate)
+            progress = _progress;
+        return progress?.Suspend();
+    }
+
 }

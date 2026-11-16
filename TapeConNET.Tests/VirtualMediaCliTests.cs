@@ -240,17 +240,36 @@ public class VirtualMediaCliTests
         Assert.Equal(src.Files.Count, Directory.EnumerateFiles(restoreRoot, "*", SearchOption.AllDirectories).Count());
     }
 
-    [Fact]
-    public async Task Backup_VirtualCreate_WithAppend_IsUsageError()
+    [Theory]
+    [InlineData("--incremental")]
+    [InlineData("--append-after", "1")]
+    public async Task Backup_VirtualCreate_WithExistingSetOption_IsUsageError(params string[] option)
     {
         using var scratch = new TempVirtualMedia();
         using var src = new TempFileTree();
         src.AddFile("a.txt", 1024);
         var path = MediaPath(scratch);
 
-        var backup = await TapeConHost.RunAsync("backup", "--virtual-create", path, "--append", src.RootPath);
+        var backup = await TapeConHost.RunAsync(["backup", "--virtual-create", path, .. option, src.RootPath]);
         Assert.Equal(TapeConExitCode.UsageError, backup.Exit);
         Assert.False(VirtualMediaPaths.MediaExists(path));     // refused before any file was touched
+    }
+
+    [Fact]
+    public async Task Backup_VirtualCreate_MediaDescription_IsRecorded()
+    {
+        using var scratch = new TempVirtualMedia();
+        using var src = new TempFileTree();
+        src.AddFile("a.txt", 1024);
+        var path = MediaPath(scratch);
+
+        var backup = await TapeConHost.RunAsync("backup", "--virtual-create", path, "--capacity", SmallCapacity,
+            "--mdesc", "Born-In-Backup", "--description", "First-Set", src.RootPath);
+        Assert.Equal(TapeConExitCode.Ok, backup.Exit);
+
+        var info = await TapeConHost.RunAsync("info", "--virtual-open", path);
+        Assert.True(info.ContainsMessage("Born-In-Backup"));
+        Assert.True(info.ContainsMessage("First-Set"));
     }
 
     // ── Recorded mark profile ──────────────────────────────────────────────────

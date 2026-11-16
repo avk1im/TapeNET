@@ -35,15 +35,11 @@ internal static class CreateVirtualCommand
             Description = "Content file of the new media, e.g. `D:\\vtapes\\weekly` — without extension it becomes " +
                           $"`weekly{VirtualMediaPaths.ContentExtension}` (metadata goes to `PATH.vrt`).",
         };
-
-        var nameOption = new Option<string?>("--name", "-n")
-        {
-            Description = "Media name written into the new TOC (default: 'Media created <date time>').",
-            HelpName = "NAME",
-        };
+        var mediaDescOption = MediaOptions.Description(
+            "Media description written into the new TOC (default: 'Media created <date time>').");
 
         cmd.Arguments.Add(pathArg);
-        cmd.Options.Add(nameOption);
+        cmd.Options.Add(mediaDescOption);
         cmd.Options.Add(GlobalOptions.Capacity);
         cmd.Options.Add(GlobalOptions.InitCapacity);
         cmd.Options.Add(GlobalOptions.Initiator);
@@ -58,10 +54,10 @@ internal static class CreateVirtualCommand
             ux.WriteBanner();
 
             var path = parseResult.GetValue(pathArg)!;
-            var name = parseResult.GetValue(nameOption);
+            var mediaDesc = parseResult.GetValue(mediaDescOption);
 
             using var service = VerbHost.Build(parseResult, ux, ct);
-            var caps = await VerbHost.CreateVirtualFromOptionsAsync(service, parseResult, path, name);
+            var caps = await VerbHost.CreateVirtualFromOptionsAsync(service, parseResult, path, mediaDesc);
 
             // The path actually created — it may have gained the default extension.
             ux.Log(WarningLevel.Completed, $"Virtual media created: >{service.LastVMD?.ContentPath}<");

@@ -88,7 +88,7 @@ recent version of every file across the whole chain.
 ## What's the difference between validate and verify?
 
 - `validate` re-reads the tape and checks each file's recorded hash. No source files needed.
-- `verify` compares the tape with the files on disk, byte by byte. The source files must still exist.
+- `verify` compares the tape with the files on disk, byte by byte. The source files must still exist in their original location.
 
 Both work on encrypted sets with the password, and both check the encryption's authentication as well.
 
@@ -136,3 +136,19 @@ follow (no-color.org). Either way the output turns plain: no colors, no box draw
 
 tapecon and tapewin share the same engine (TapeLibNET). Anything backed up with one is fully restorable with the other —
 encrypted sets included, with the password.
+
+## The help runs off the screen. How do I page it?
+
+Scroll back. Every modern terminal keeps the output: use the mouse wheel, or `Ctrl+Shift+PgUp` in Windows Terminal. `Ctrl+Shift+F` searches it.
+
+Paging through a pipe works too, but it drops the colours: tapecon writes plain text into any pipe.
+
+    tapecon backup --help | Out-Host -Paging
+
+To keep the text at hand, write it to a file:
+
+    tapecon backup --help > backup-help.txt
+
+Garbled characters such as `ΓöÇΓöÇ` in piped output mean PowerShell reads tapecon's UTF-8 output with an old code page. Add this line to your PowerShell profile to fix it for good:
+
+    $OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8

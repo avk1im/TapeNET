@@ -27,11 +27,14 @@ public sealed record HelpSection(HelpGroup Group, string Title, string? Intro, H
 public sealed record HelpCommandRow(string Names, string? Description);
 
 /// <summary>
-/// The help of one command, as data (Design-CliPresentation §5.1). Built by <see cref="Build"/> — the ONLY place that
-///  reads System.CommandLine's symbol API, so a package update touches one file — and rendered by
+/// The help of one command, as data (Design-CliPresentation §5.1). Built by <see cref="Build"/>, the ONLY place that
+///  reads System.CommandLine's symbol API, so a package update touches one file, and rendered by
 ///  <see cref="HelpRenderer"/>.
 /// </summary>
 /// <remarks>Texts are passed through as written, mention markers included; the renderer interprets them.</remarks>
+/// <param name="CommandsTitle">
+/// The title over <paramref name="Commands"/>. <c>tapecon docs</c> lists its topics as such rows, titled <c>Topics</c>.
+/// </param>
 public sealed record HelpModel(
     string Title,
     string? Description,
@@ -39,7 +42,8 @@ public sealed record HelpModel(
     IReadOnlyList<HelpArgumentRow> Arguments,
     IReadOnlyList<HelpSection> Sections,
     IReadOnlyList<HelpCommandRow> Commands,
-    string? Footer)
+    string? Footer,
+    string CommandsTitle = "Commands")
 {
     /// <summary>The name the root shows as — not <see cref="RootCommand"/>'s executable name, which is the test host's in tests.</summary>
     public const string RootName = "tapecon";
