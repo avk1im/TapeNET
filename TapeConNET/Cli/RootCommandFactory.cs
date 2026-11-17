@@ -42,8 +42,7 @@ public static class RootCommandFactory
         });
 
         // ─── 'docs' verb (Phase 8) ────────────────────────────────────────────
-        //  Renders embedded markdown topics (concepts, migration, faq) so a
-        //   single-file deployment still ships the documentation.
+        //  Renders embedded markdown topics so a single-file deployment still ships the documentation.
         root.Subcommands.Add(DocsCommand.Create(ux));
 
         // ─── 'demo' verb (Phase 2 smoke test) ─────────────────────────────────
@@ -58,7 +57,7 @@ public static class RootCommandFactory
         root.Subcommands.Add(FormatCommand.Create(ux));
         root.Subcommands.Add(CreateVirtualCommand.Create(ux));
         root.Subcommands.Add(EjectCommand.Create(ux));
-        root.Subcommands.Add(TocCommand.Create(ux));
+        root.Subcommands.Add(ExportTocCommand.Create(ux));
 
         //  Operation verbs:
         root.Subcommands.Add(BackupCommand.Create(ux));
@@ -70,7 +69,8 @@ public static class RootCommandFactory
         root.Subcommands.Add(RenameCommand.CreateRenameSet(ux));
         root.Subcommands.Add(DeleteSetsCommand.Create(ux));
 
-        //  Scan Media (read-only survey) and TOC recovery from a saved scan map:
+        //  Media recovery: survey without a TOC, and a TOC copy from a saved scan map — both into files that
+        //   --import-toc reads (tapecon docs media-recovery):
         root.Subcommands.Add(ScanMediaCommand.Create(ux));
         root.Subcommands.Add(ScanMediaCommand.CreateRecoverToc(ux));
 

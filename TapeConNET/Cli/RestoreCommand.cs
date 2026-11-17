@@ -14,6 +14,10 @@ namespace TapeConNET.Cli;
 /// (positive=oldest-up, 0/negative=latest-down). The default is the latest
 /// set (index 0).
 /// </summary>
+/// <remarks>
+/// <c>--import-toc</c> (all three verbs): the TOC comes from a file, and the media's own is never read — the way to
+///  recover data from a cartridge whose TOC is damaged (<see cref="TocOptions"/>).
+/// </remarks>
 internal static class RestoreCommand
 {
     public static Command Create(IConsoleUx ux) =>
@@ -32,6 +36,7 @@ internal static class RestoreCommand
         GlobalOptions.Attach(cmd);
         FilterOptions.Attach(cmd);
         PasswordOptions.Attach(cmd);
+        TocOptions.Attach(cmd);
 
         var setArg = new Argument<string?>("set")
         {
@@ -39,63 +44,52 @@ internal static class RestoreCommand
                           "Default: `0` (latest).",
             Arity = ArgumentArity.ZeroOrOne,
         };
-
         var filterArgs = new Argument<string[]>("filter-args")
         {
             Description = "Optional filter arguments: DOS wildcard patterns, inline FCL, " +
                           "or a path to a `.fcl` file. Combined with `--filter` / `--filter-file`.",
             Arity = ArgumentArity.ZeroOrMore,
         };
-
         var targetOption = new Option<string?>("--target", "-t")
         {
             Description = "Target folder for restored files (default: the current folder).",
             HelpName = "PATH",
         };
-
         var subdirsOption = new Option<bool>("--subdirs", "-s")
         {
             Description = "Recreate the original directory structure under the target folder.",
         };
-
         // The choices show in the placeholder, the default in [default: …]
         var existingOption = new Option<TapeHowToHandleExisting>("--existing", "-x")
         {
             Description = "How to handle existing target files.",
             DefaultValueFactory = _ => TapeHowToHandleExisting.KeepBoth,
         };
-
         var incrementalOption = new Option<bool?>("--incremental", "-i")
         {
             Description = "Force-on or force-off the incremental chain expansion (default: follow set's flag). " +
                           "`--incremental false` processes exactly the given set.",
         };
-
         var skipErrorsOption = new Option<bool>("--skip-errors")
         {
             Description = "Skip per-file errors automatically without prompting.",
         };
-
         var noMultivolumeOption = new Option<bool>("--no-multivolume")
         {
             Description = "Stop the operation when the current volume is exhausted instead of continuing to another volume.",
         };
-
         var ejectWhenDoneOption = new Option<bool>("--eject-when-done")
         {
             Description = "Eject the tape when the operation is complete.",
         };
-
         var skipMediaConfirmOption = new Option<bool>("--skip-media-confirm")
         {
             Description = "Silently proceed with mismatched media or volume.",
         };
-
         var skipSetCorrectionOption = new Option<bool>("--skip-set-correction")
         {
             Description = "Do not attempt to correct set navigation errors.",
         };
-
         var skipSetVerifyOption = new Option<bool>("--skip-set-verify")
         {
             Description = "Skip backup set verification. " +
@@ -134,6 +128,7 @@ internal static class RestoreCommand
             var skipSetVerify = parseResult.GetValue(skipSetVerifyOption);
             var filterFcl   = parseResult.GetValue(FilterOptions.Filter);
             var filterFile  = parseResult.GetValue(FilterOptions.FilterFile);
+            var importToc   = parseResult.GetValue(TocOptions.ImportToc);
 
             // Bare positional args after `set` are auto-classified as wildcard
             //  patterns, inline FCL, or .fcl files and combined with the
@@ -142,7 +137,8 @@ internal static class RestoreCommand
 
             char[]? password = PasswordOptions.Resolve(parseResult);
 
-            using var service = VerbHost.BuildAndOpen(parseResult, ux, VerbHost.LifecycleSteps.Full, ct);
+            using var service = VerbHost.BuildAndOpen(parseResult, ux, VerbHost.LifecycleSteps.Full, ct,
+                tocHint: VerbHost.TocRecoveryHint, importToc: importToc);
 
             int setIndex = 0; // default: latest set
             if (!string.IsNullOrWhiteSpace(setSpec))

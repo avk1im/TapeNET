@@ -20,7 +20,7 @@ formats and TOC structures are unchanged: media written by 1.x reads back fine i
 | `tapecon info` | `tapecon info` |
 | `tapecon format ...` | `tapecon format --yes ...` |
 | `tapecon eject` | `tapecon eject` |
-| `tapecon toc ...` | `tapecon toc export ...`, `tapecon toc import ...` |
+| `tapecon toc ...` | `tapecon export-toc ...`, `tapecon restore --import-toc ...` (also with `delete-sets`) |
 | (renaming via TOC editor) | `tapecon rename-media ...`, `tapecon rename-set ...` |
 
 `tapecon --help` lists every verb; `tapecon <verb> --help` documents its options, with examples.

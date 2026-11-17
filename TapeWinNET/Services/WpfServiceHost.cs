@@ -1,14 +1,17 @@
 using System.Globalization;
 using System.Windows;
 using System.Windows.Threading;
+
+using Windows.Win32.System.SystemServices; // Helpers.BytesToString
+
 using TapeLibNET.Agents;
 using TapeLibNET.Services;
 using TapeLibNET.Virtual;
+
 // ReSharper disable once RedundantUsingDirective — WpfServiceHost itself lives in TapeWinNET.Services
 // but its prompt methods reference dialogs from the TapeWinNET root namespace.
 using TapeWinNET.Models;
 using TapeWinNET.ViewModels;
-using Windows.Win32.System.SystemServices; // Helpers.BytesToString
 
 namespace TapeWinNET.Services;
 
@@ -1044,8 +1047,8 @@ public sealed class WpfServiceHost(Dispatcher dispatcher, MainViewModel viewMode
             var dlg = new Microsoft.Win32.SaveFileDialog
             {
                 Title            = "Emergency TOC Export — Choose Save Location",
-                Filter           = $"Media TOC files (*{TapeAgentBase.TOCFileExtension})" +
-                                   $"|*{TapeAgentBase.TOCFileExtension}|All files (*.*)|*.*",
+                Filter           = $"Media TOC files (*{TapeServiceBase.TOCFileExtension})" +
+                                   $"|*{TapeServiceBase.TOCFileExtension}|All files (*.*)|*.*",
                 FileName         = System.IO.Path.GetFileName(suggestedPath),
                 InitialDirectory = System.IO.Path.GetDirectoryName(suggestedPath) ?? "",
                 OverwritePrompt  = true,

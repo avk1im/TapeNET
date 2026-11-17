@@ -127,7 +127,6 @@ public partial class TapeServiceBase
             bool faulted = !aborted && !scanner.LastResult.Success;
 
             var (level, headline, details) = VerbalizeScan(map);
-
             _host.Report(level, headline);
             foreach (string line in details)
                 _host.Report(level == ServiceReportLevel.Completed ? ServiceReportLevel.Info : level,
@@ -137,7 +136,15 @@ public partial class TapeServiceBase
             foreach (ScanAdvice a in advice)
                 LogInfoSub(ScanAdviceText(a));
 
-            string? exportPath = request.MapExportFolder is { } folder ? ExportScanMap(map, folder) : null;
+            // Exports are best-effort: the scan itself stands, and the map is in the result either way
+            string? exportPath = null;
+            IReadOnlyList<string> tocPaths = [];
+            if (request.MapExportFolder is { } folder)
+            {
+                exportPath = ExportScanMap(map, folder);
+                if (request.ExportRecoveredTocs)
+                    tocPaths = ExportRecoveredTocs(map, folder);
+            }
 
             OnStatusUpdate(aborted ? "Scan aborted" : "Scan complete");
             progressHandler.CompleteProgress();
@@ -162,6 +169,7 @@ public partial class TapeServiceBase
                 LastSetUnclosed = map.LastSetUnclosed && !UnclosedLastSetEndsAtEom(map),
                 Advice = advice,
                 MapExportPath = exportPath,
+                TocExportPaths = tocPaths,
                 Summary = headline,
             };
         }
@@ -179,6 +187,13 @@ public partial class TapeServiceBase
         }
     }
 
+    /// <summary>The common stem of a scan's exported files: <c>Scan_&lt;media id&gt;_&lt;time&gt;</c>.</summary>
+    private static string ScanFileStem(MediaScanMap map)
+    {
+        string id = map.MediaId is { } g ? g.ToString("N")[..8] : "unidentified";
+        return $"Scan_{id}_{map.ScannedUtc:yyyyMMdd-HHmmss}";
+    }
+
     /// <summary>Creates the progress handler for a scan. Override to add a progress display.</summary>
     protected virtual ServiceScanProgressHandler CreateScanProgressHandler(
         TapeScanner scanner, ScanMediaRequest request)
@@ -193,11 +208,7 @@ public partial class TapeServiceBase
         try
         {
             Directory.CreateDirectory(folder);
-
-            string id = map.MediaId is { } g ? g.ToString("N")[..8] : "unidentified";
-            string path = Path.Combine(folder,
-                $"Scan_{id}_{map.ScannedUtc:yyyyMMdd-HHmmss}{MediaScanMap.MapFileExtension}");
-
+            string path = Path.Combine(folder, ScanFileStem(map) + MediaScanMap.MapFileExtension);
             File.WriteAllText(path, map.ToJson());
             LogInfoSub($"Scan map saved: {path}");
             return path;
@@ -207,6 +218,48 @@ public partial class TapeServiceBase
             LogWarnSub($"Couldn't save the scan map: {ex.Message}");
             return null;
         }
+    }
+
+    /// <summary>
+    /// Saves every TOC the scan recovered into <paramref name="folder"/>, one file per copy:
+    ///  <c>Scan_&lt;id&gt;_&lt;time&gt;_toc&lt;ordinal&gt;.tapetoc</c>, the ordinal naming the copy's fragment in the map.
+    /// </summary>
+    /// <remarks>
+    /// The map's JSON leaves recovered TOCs out (<see cref="TapeMediaFragment.HarvestedToc"/> is not serialized), so
+    ///  without these files a host with no session of its own — the CLI — would lose them with the process. Best-effort,
+    ///  per copy: one failed save does not stop the next. Each copy is saved from a private copy of the TOC.
+    /// </remarks>
+    /// <returns>The paths saved, in fragment order.</returns>
+    private List<string> ExportRecoveredTocs(MediaScanMap map, string folder)
+    {
+        var paths = new List<string>();
+        if (_drive is null)
+            return paths;
+
+        foreach (TapeMediaFragment copy in map.Fragments.Where(f => f.HarvestedToc is not null))
+        {
+            string path = Path.Combine(folder, $"{ScanFileStem(map)}_toc{copy.Ordinal}{TapeAgentBase.TOCFileExtension}");
+            try
+            {
+                Directory.CreateDirectory(folder);
+                using var saver = new TapeAgentBase(_drive, new TapeTOC(copy.HarvestedToc!));
+                TapeResult saved = saver.SaveTOCToFile(path);
+                if (saved)
+                {
+                    paths.Add(path);
+                    LogInfoSub($"Recovered TOC saved: {path}");
+                }
+                else
+                {
+                    LogWarnSub($"Couldn't save the TOC recovered {copy.Where}: {saved.ErrorMessage}");
+                }
+            }
+            catch (Exception ex)
+            {
+                LogWarnSub($"Couldn't save the TOC recovered {copy.Where}: {ex.Message}");
+            }
+        }
+        return paths;
     }
 
     private static int CountRecoveredTocs(MediaScanMap map)

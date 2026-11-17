@@ -26,8 +26,8 @@ namespace TapeConNET.Cli;
 /// </para>
 /// <para>
 /// Two overwrite permissions, deliberately separate: <c>--overwrite-virtual</c> (here, every drive verb) replaces
-///  existing virtual media FILES under <c>--virtual-create</c>; <c>--overwrite-media</c> (backup only) replaces the
-///  SETS on the loaded media without a prompt.
+///  existing virtual media FILES under <c>--virtual-create</c>; <c>--overwrite-media</c> (backup only) starts the
+///  loaded media over — every set, the TOC and the media header. Neither answers the media checks in advance.
 /// </para>
 /// <para>
 /// Help groups (§4.3): the selectors and <c>--initiator</c> form <i>Drive selection</i>; the capacities join

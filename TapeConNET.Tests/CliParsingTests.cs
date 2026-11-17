@@ -115,7 +115,7 @@ public class CliParsingTests
     [InlineData("list")]
     [InlineData("format")]
     [InlineData("eject")]
-    [InlineData("toc")]
+    [InlineData("export-toc")]
     [InlineData("docs")]
     [InlineData("demo")]
     [InlineData("rename-set")]

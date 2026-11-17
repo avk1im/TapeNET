@@ -12,6 +12,7 @@ namespace TapeConNET.Cli;
 /// positional args are FCL/wildcard patterns to filter the listing.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Depth-by-depth behavior for a calibration cartridge:
 /// <code>
 /// Command            Lifecycle          Identify             Presenter              Result
@@ -20,6 +21,11 @@ namespace TapeConNET.Cli;
 /// info / --full      FullOrCalibration  brief one-liner §1   ListContentsAsync §2   one-liner + details
 /// list               FullOrCalibration  brief one-liner §1   ListContentsAsync §2   one-liner + details
 /// </code>
+/// </para>
+/// <para>
+/// <c>--import-toc</c>: lists a TOC file instead of the media's TOC — e.g. to see what a recovered TOC holds before
+///  restoring from it. Needs the drive for now; listing a TOC file with no drive at all is planned.
+/// </para>
 /// </remarks>
 internal static class ListCommand
 {
@@ -31,26 +37,24 @@ internal static class ListCommand
         GlobalOptions.Attach(cmd);
         FilterOptions.Attach(cmd);
         PasswordOptions.Attach(cmd);
+        TocOptions.Attach(cmd);
 
         var argsArg = new Argument<string[]>("args")
         {
             Description = "Optional set index(es) followed by filter arguments " +
                           "(DOS wildcard patterns, inline FCL, or `.fcl` file paths). " +
                           "Examples: `0`, `1 3`, `-2 0 *.txt`, `photos/*.jpg`, " +
-                          "`0 \"size > 1MB\"`, `./nightly.fcl`.",
+                          "`0 \"Size > 1MB\"`, `./nightly.fcl`.",
             Arity = ArgumentArity.ZeroOrMore,
         };
-
         var noIncOption = new Option<bool>("--no-incremental")
         {
             Description = "List only the selected incremental set without expanding earlier dependencies.",
         };
-
         var nameOnlyOption = new Option<bool>("--name-only")
         {
             Description = "Show file names only (no full paths).",
         };
-
         var setsOnlyOption = new Option<bool>("--sets-only")
         {
             Description = "Show a compact backup-sets table only (no per-file listing).",
@@ -71,10 +75,11 @@ internal static class ListCommand
             var setsOnly   = parseResult.GetValue(setsOnlyOption);
             var filterFcl  = parseResult.GetValue(FilterOptions.Filter);
             var filterFile = parseResult.GetValue(FilterOptions.FilterFile);
-
+            var importToc  = parseResult.GetValue(TocOptions.ImportToc);
             char[]? password = PasswordOptions.Resolve(parseResult);
 
-            using var service = VerbHost.BuildAndOpen(parseResult, ux, VerbHost.LifecycleSteps.FullOrCalibration, ct); // was .Full
+            using var service = VerbHost.BuildAndOpen(parseResult, ux, VerbHost.LifecycleSteps.FullOrCalibration, ct,
+                importToc: importToc);
 
             // Parse leading 0..2 tokens as set indexes; the rest are patterns
             int? startIdx = null, endIdx = null;
@@ -93,7 +98,6 @@ internal static class ListCommand
                     endIdx = startIdx;
                 }
             }
-
             string[] patterns = consumed < raw.Length ? raw[consumed..] : [];
 
             // Auto-classify any trailing tokens (wildcards, inline FCL, .fcl
@@ -113,7 +117,6 @@ internal static class ListCommand
             };
 
             var result = await service.ListContentsAsync(options);
-
             return !result.Success
                 ? (int)TapeConExitCode.OperationFailed
                 : (int)TapeConExitCode.Ok;

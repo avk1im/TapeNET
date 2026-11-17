@@ -54,5 +54,5 @@ compression works: it compresses **before** encrypting (`--compression medium`, 
 ## Keep a spare TOC
 
 **A lost password cannot be recovered**, by tapecon or anyone else. And an encrypted set's files can only be found
-through the TOC, so keep an exported TOC of important cartridges (`tapecon toc export`). An export of an encrypted set
+through the TOC, so keep an exported TOC of important cartridges (`tapecon export-toc`). An export of an encrypted set
 stays encrypted.

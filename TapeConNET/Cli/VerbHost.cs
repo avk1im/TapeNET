@@ -65,14 +65,23 @@ internal static class VerbHost
     ///  "format it first, or overwrite it".
     /// </param>
     /// <param name="mediaName">The media description of new virtual media (<c>--virtual-create</c>); null: the default.</param>
+    /// <param name="importToc">
+    /// <c>--import-toc</c>: the TOC file that replaces the media's TOC. If provided, it takes the place of
+    ///  <see cref="LifecycleSteps.RestoreTOC"/> and <see cref="LifecycleSteps.IdentifyMedia"/> — the media's own TOC is
+    ///  never read, which is the point when it is damaged. A later volume's TOC is accepted read-only.
+    /// </param>
     public static TapeService BuildAndOpen(
         ParseResult parseResult,
         IConsoleUx ux,
         LifecycleSteps steps,
         CancellationToken ct,
         string? tocHint = null,
-        string? mediaName = null)
+        string? mediaName = null,
+        string? importToc = null)
     {
+        if (importToc is not null)
+            steps &= ~(LifecycleSteps.RestoreTOC | LifecycleSteps.IdentifyMedia);
+
         var service = Build(parseResult, ux, ct);
         try
         {
@@ -84,6 +93,13 @@ internal static class VerbHost
                 if (!service.LoadMediaAsync().GetAwaiter().GetResult())
                     throw new TapeConException(TapeConExitCode.OperationFailed,
                         $"Couldn't load media: {service.LastError}");
+            }
+
+            if (importToc is not null)
+            {
+                if (!service.ImportTOCFromFileAsync(importToc, acceptSeriesToc: true).GetAwaiter().GetResult())
+                    throw new TapeConException(TapeConExitCode.OperationFailed,
+                        $"Couldn't import the TOC from >{importToc}<: {service.LastError}");
             }
 
             if ((steps & LifecycleSteps.RestoreTOC) != 0)
@@ -113,6 +129,12 @@ internal static class VerbHost
             throw;
         }
     }
+
+    /// <summary>
+    /// The hint for a TOC that cannot be read — where to find another. Shared by the verbs that read one.
+    /// </summary>
+    public const string TocRecoveryHint =
+        "Recover it with 'tapecon scan-media', or use a saved one with --import-toc (tapecon docs media-recovery)";
 
     /// <summary>True when the command line asks for NEW virtual media (<c>--virtual-create</c>).</summary>
     public static bool IsCreatingVirtualMedia(ParseResult parseResult)

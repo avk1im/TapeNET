@@ -39,7 +39,7 @@ be, often because something was written behind it or a mark was lost. Re-save it
 Keep an exported TOC of important cartridges. It is the rescue path if both copies on tape are lost, and the **only**
 way back to the files of an encrypted set without its TOC.
 
-    tapecon toc export D:\Safe\first.toc
+    tapecon export-toc D:\Safe\first.toc
 
 `tapecon toc import FILE` loads such a file. An export of an encrypted set stays encrypted.
 

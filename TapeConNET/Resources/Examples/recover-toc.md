@@ -1,11 +1,11 @@
 ## Examples
 
-Scan the tape and save the scan map as JSON, then recover the TOC from the copy the scan lists as fragment 2, and save
-it to a file:
+Recover the TOC copy the scan listed as fragment 7 (`-f` is short for `--fragment`), and save it:
 
-    tapecon scan-media --json > scan.json
-    tapecon recover-toc --map scan.json --fragment 2 --save first.toc
+    tapecon recover-toc --map D:\Scans\first.tapescan -f 7 --save first.tapetoc
 
-A map saved with `tapecon scan-media --export FOLDER` works the same way.
+Then restore with it:
+
+    tapecon restore 0 --target D:\Restored --import-toc first.tapetoc
 
 *Notice:* the cartridge in the drive must be the scanned one; otherwise recovery is refused.

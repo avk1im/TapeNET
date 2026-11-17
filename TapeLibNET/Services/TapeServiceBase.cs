@@ -73,10 +73,12 @@ public enum TOCSource
     Recovered,
 
     /// <summary>
-    /// The series TOC a multi-volume operation kept, while the drive holds another cartridge
-    ///  — not that volume's own TOC.
+    /// The series TOC, while the drive holds an EARLIER volume of the series — not that volume's own TOC. Arises two ways:
+    ///  a multi-volume operation kept it across a swap, or a later volume's TOC was imported for an earlier volume
+    ///  (<see cref="TapeServiceBase.ImportTOCFromFileAsync"/> with <c>acceptSeriesToc</c>).
     /// <para>
-    /// Read-only: writes refuse until the loaded volume's TOC is read (Reread Media).
+    /// Read-only: writes refuse until the loaded volume's own TOC is read (Reread Media) — writing it would make the
+    ///  earlier volume claim the later volumes' sets.
     /// </para>
     /// </summary>
     Series,
@@ -174,6 +176,13 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
 
     /// <summary>True when the current TOC was loaded from a file rather than from tape.</summary>
     public TOCSource TOCIsFrom { get; protected set; } = TOCSource.Media;
+
+    /// <summary>
+    /// File extension for emergency TOC files and scan-recovered TOCs, among others.
+    /// </summary>
+    /// <remarks>Exposing the constant from <see cref="TapeAgentBase"/> for callers not importing
+    ///  <see cref="TapeLibNET.Agents"/>.</remarks>
+    public static string TOCFileExtension => TapeAgentBase.TOCFileExtension;
 
     /// <summary>Full path of the TOC file when <see cref="TOCIsFrom"/> is <see cref="TOCSource.File"/>;
     ///  <see langword="null"/> otherwise.</summary>
@@ -1676,13 +1685,19 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
     }
 
     /// <summary>
-    /// Imports a TOC from a file
-    ///  Use when the on-tape TOC is missing or corrupt and a TOC file is available.
+    /// Imports a TOC from a file. Use when the on-tape TOC is missing or corrupt and a TOC file is available.
     /// <para>
-    /// The media must be loaded, since the agent will need to create a navigator -- only possible with media.
+    /// The drive must be open; with media loaded, the TOC is checked against the media's identity first.
     /// </para>
     /// </summary>
-    public Task<bool> ImportTOCFromFileAsync(string filePath)
+    /// <param name="filePath">The TOC file.</param>
+    /// <param name="acceptSeriesToc">
+    /// Accept, without asking, the TOC of a LATER volume of the loaded volume's series. Every volume's TOC lists the
+    ///  series' sets up to its own volume, so a later volume's TOC describes the loaded one too — the way to read an
+    ///  earlier volume whose own TOC is lost. Such a TOC is held as <see cref="TOCSource.Series"/>: read-only. A TOC of
+    ///  an EARLIER volume is still questioned — it knows nothing of the loaded volume's sets.
+    /// </param>
+    public Task<bool> ImportTOCFromFileAsync(string filePath, bool acceptSeriesToc = false)
     {
         _host.OnServiceStateChanged(ServiceStateChange.OperationStarted);
         return Task.Run(async () =>
@@ -1710,28 +1725,41 @@ public partial class TapeServiceBase(ILoggerFactory loggerFactory, ITapeServiceH
                 _toc = _agent.TOC;
                 ReapplyKeys();      // retained keys reopen their chains (Design-Encryption §11.1.7)
 
-                // Now compare the media header with the loaded _toc acc. to
-                //  verify-and-adopt-Volume-not-MediaId reconciliation (§10.8).
+                // Compare the media header with the loaded _toc: verify-and-adopt-Volume-not-MediaId (§10.8).
                 //  Import has media presence as optional, so we guard on IsMediaLoaded:
+                bool seriesToc = false;
                 if (_drive.IsMediaLoaded)
                 {
                     RefreshLoadedHeader();
-                    var choice = PresentVerdict(
-                        EvaluateLoadedHeader(expectedSeriesId: _toc.MediaId, expectedVolume: _toc.Volume),
-                        MediaPromptContext.ImportToc, suppress: false, allowProceedAlways: false); // ProceedAlways is disallowed (one-off)
+                    var verdict = EvaluateLoadedHeader(expectedSeriesId: _toc.MediaId, expectedVolume: _toc.Volume);
+
+                    // A later volume's TOC of the same series describes this volume too — accepted, read-only
+                    if (acceptSeriesToc && verdict == TapeMediaVerdict.WrongVolume
+                        && _loadedHeader is TapeMediaHeader earlier && earlier.Volume < _toc.Volume)
+                    {
+                        LogInfo($"Using the series TOC of volume #{_toc.Volume} for volume #{earlier.Volume} — " +
+                                "read-only");
+                        verdict = TapeMediaVerdict.Match;
+                        seriesToc = true;
+                    }
+
+                    var choice = PresentVerdict(verdict, MediaPromptContext.ImportToc,
+                        suppress: false, allowProceedAlways: false);   // ProceedAlways is disallowed (one-off)
                     if (choice == MediaMismatchChoice.Abort)
                     {
                         LastError = "Import cancelled — media does not match the imported TOC";
                         return false;
                     }
+
                     // On Proceed: adopt the mounted volume's number (FUNCTIONAL — restore positions by TOC.Volume),
                     //  but NOT its MediaId (adopting would hide a wrong-tape error inside a good TOC — §10.8).
                     if (_loadedHeader is TapeMediaHeader imh)
                         _toc.Volume = imh.Volume;
                 }
 
-                TOCIsFrom = TOCSource.File;
+                TOCIsFrom = seriesToc ? TOCSource.Series : TOCSource.File;
                 TOCFilePath = filePath;
+
                 LogOk($"TOC imported from file with {_toc.Count} backup set(s)");
                 LogTOCInfo();
                 LogWarn("TOC imported from a file - on-tape TOC may be missing or corrupt");

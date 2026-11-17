@@ -9,18 +9,29 @@ namespace TapeConNET.Cli;
 /// <c>tapecon rename-set INDEX</c> — renames the backup set at <c>INDEX</c>.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Scriptable: given the new text (<c>--media-description</c> / <c>--description</c>, both alias <c>--name</c>), neither
 ///  verb asks.
+/// </para>
+/// <para>
+/// <c>rename-media</c> also SAVES the TOC — both copies, where the layout keeps them. That makes it the repair verb for a
+///  TOC that is damaged or was found only by searching: with <c>--import-toc FILE</c> and no new name, it writes the
+///  imported TOC back under its current name. A later volume's TOC is read-only: refused by the service.
+/// </para>
 /// </remarks>
 internal static class RenameCommand
 {
     public static Command CreateRenameMedia(IConsoleUx ux)
     {
-        var cmd = new Command("rename-media", "Rename the loaded tape media.");
+        var cmd = new Command("rename-media",
+            "Rename the loaded media, and save its TOC. With `--import-toc` and no new name: write the imported TOC " +
+            "to the media under its current name.");
 
         GlobalOptions.Attach(cmd);
+        TocOptions.Attach(cmd);
 
-        var mediaDescOption = MediaOptions.Description("The new media description. Absent: asked.");
+        var mediaDescOption = MediaOptions.Description("The new media description. Absent: asked — " +
+            "or, with `--import-toc`, kept.");
         cmd.Options.Add(mediaDescOption);
 
         cmd.SetAction(async (parseResult, ct) =>
@@ -28,8 +39,15 @@ internal static class RenameCommand
             ux.WriteBanner();
 
             string? mediaDesc = parseResult.GetValue(mediaDescOption);
+            var importToc = parseResult.GetValue(TocOptions.ImportToc);
 
-            using var service = VerbHost.BuildAndOpen(parseResult, ux, VerbHost.LifecycleSteps.Full, ct);
+            using var service = VerbHost.BuildAndOpen(parseResult, ux, VerbHost.LifecycleSteps.Full, ct,
+                tocHint: VerbHost.TocRecoveryHint, importToc: importToc);
+
+            // An imported TOC is re-saved as it is, unless a new name is given
+            if (mediaDesc is null && importToc is not null)
+                mediaDesc = service.TOC!.Description ?? string.Empty;
+
             var ok = mediaDesc is null
                 ? await service.RenameMediaAsync()
                 : await service.RenameMediaAsync(mediaDesc);
