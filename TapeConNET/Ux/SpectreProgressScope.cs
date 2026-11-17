@@ -1,4 +1,5 @@
 using Spectre.Console;
+using Spectre.Console.Rendering;
 
 namespace TapeConNET.Ux;
 
@@ -13,14 +14,16 @@ namespace TapeConNET.Ux;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Suspendable.</b> Spectre's live displays and its prompts must never run at the same time: the display redraws its
-///  region on every refresh and overwrites the prompt's lines, so a prompt's first line repeats until the user answers.
-///  <see cref="Suspend"/> ends the live display and returns a token. Disposing the token starts a new one with the same
-///  value and status. <see cref="SpectreConsoleUx"/> suspends around every prompt.
+/// <b>Suspendable</b> (Design-CliPresentation §6.2). Spectre's live displays and its prompts must never run at the same
+///  time: the display redraws its region on every refresh and overwrites the prompt's lines, so a prompt's first line
+///  repeats until the user answers. <see cref="Suspend"/> ends the live display and returns a token. Disposing the token
+///  starts a new one with the same value, status and elapsed time. <see cref="SpectreConsoleUx"/> suspends around every
+///  prompt.
 /// </para>
 /// <para>
-/// Value and status live in the scope, not in the Spectre task, so they survive a suspension and reports made while
-///  suspended are not lost.
+/// Value, status and the clock live in the scope, not in the Spectre task, so they survive a suspension and reports made
+///  while suspended are not lost. The clock stops while suspended: time spent answering a prompt is not operation time,
+///  as in the service's own timing figures.
 /// </para>
 /// </remarks>
 internal sealed class SpectreProgressScope : IProgressScope
@@ -30,6 +33,9 @@ internal sealed class SpectreProgressScope : IProgressScope
     private readonly bool _quiet;
     private readonly Action<SpectreProgressScope>? _onDisposed;
     private readonly object _gate = new();
+
+    // The operation's clock: runs while the display runs, pauses while suspended
+    private readonly System.Diagnostics.Stopwatch _clock = new();
 
     // The running live display; all null while suspended (or quiet)
     private ProgressTask? _task;
@@ -72,8 +78,9 @@ internal sealed class SpectreProgressScope : IProgressScope
     public void Complete(string? status = null) => Report(100d, status);
 
     /// <summary>
-    /// Ends the live display until the returned token is disposed: for a prompt, which must not share the console with
-    ///  a live display. Nests: the display resumes when the last token is disposed. A no-op token when quiet or disposed.
+    /// Ends the live display and pauses the clock until the returned token is disposed: for a prompt, which must not
+    ///  share the console with a live display. Nests: the display resumes when the last token is disposed. A no-op token
+    ///  when quiet or disposed.
     /// </summary>
     public IDisposable Suspend()
     {
@@ -111,7 +118,10 @@ internal sealed class SpectreProgressScope : IProgressScope
 
     #region *** Live display ***
 
-    /// <summary>Starts a live display showing the current value and status. Caller holds <see cref="_gate"/>.</summary>
+    /// <summary>
+    /// Starts a live display showing the current value, status and elapsed time; restarts the clock. Caller holds
+    ///  <see cref="_gate"/>.
+    /// </summary>
     private void Start()
     {
         var ready = new ManualResetEventSlim(false);
@@ -127,7 +137,8 @@ internal sealed class SpectreProgressScope : IProgressScope
                     new TaskDescriptionColumn(),
                     new ProgressBarColumn(),
                     new PercentageColumn(),
-                    new ElapsedTimeColumn(),
+                    // The scope's clock, not the task's: a resumed display continues where it stopped
+                    new ScopeElapsedColumn(() => _clock.Elapsed),
                     new SpinnerColumn())
                 .Start(ctx =>
                 {
@@ -141,12 +152,17 @@ internal sealed class SpectreProgressScope : IProgressScope
         ready.Wait();
         _task = captured;
         _done = done;
+        _clock.Start();
         Apply();
     }
 
-    /// <summary>Ends the live display and waits until it has released the console. Caller holds <see cref="_gate"/>.</summary>
+    /// <summary>
+    /// Pauses the clock, ends the live display and waits until it has released the console. Caller holds
+    ///  <see cref="_gate"/>.
+    /// </summary>
     private void Stop()
     {
+        _clock.Stop();
         _done?.Set();
         try { _runner?.Wait(TimeSpan.FromSeconds(2)); } catch { /* best-effort */ }
         _done?.Dispose();
@@ -166,6 +182,29 @@ internal sealed class SpectreProgressScope : IProgressScope
 
     #endregion
 
+    #region *** Helper classes ***
+
+    /// <summary>
+    /// Elapsed time from a clock of the caller's, formatted as Spectre's <see cref="ElapsedTimeColumn"/> does. Spectre's
+    ///  own column reads the task's start time, which a new task after a suspension resets.
+    /// </summary>
+    private sealed class ScopeElapsedColumn(Func<TimeSpan> elapsed) : ProgressColumn
+    {
+        private static readonly Style s_style = new(Color.Blue);
+
+        public override IRenderable Render(RenderOptions options, ProgressTask task, TimeSpan deltaTime)
+        {
+            TimeSpan value = elapsed();
+            // Past a day the hours keep counting instead of wrapping
+            string text = value.TotalHours >= 24
+                ? $"{(int)value.TotalHours}:{value:mm\\:ss}"
+                : $"{value:hh\\:mm\\:ss}";
+            return new Text(text, s_style);
+        }
+
+        public override int? GetColumnWidth(RenderOptions options) => 8;
+    }
+
     private sealed class ResumeToken(SpectreProgressScope scope) : IDisposable
     {
         private int _disposed;
@@ -182,4 +221,6 @@ internal sealed class SpectreProgressScope : IProgressScope
         public static readonly NoopToken Instance = new();
         public void Dispose() { }
     }
+
+    #endregion
 }

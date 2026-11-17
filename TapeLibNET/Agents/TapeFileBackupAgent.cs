@@ -81,6 +81,16 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     public bool MediaHeaderStamped { get; private set; }
 
     /// <summary>
+    /// Whether this agent has written a set header during the current operation.
+    /// </summary>
+    /// <remarks>
+    /// An append writes the set header where the TOC stood (the recorded end of content), so once it is on tape the old
+    ///  TOC copy is gone — whatever happens to the content session after it. Operation-scoped, like
+    ///  <see cref="MediaHeaderStamped"/>: the service's TOC-save decision must not miss it.
+    /// </remarks>
+    public bool SetHeaderStamped { get; private set; }
+
+    /// <summary>
     /// Why the volume just completed ended before the file list did (Design-TocReserve §9.6): end-of-media, the TOC
     ///  reserve (TOC in set), or a full TOC partition. <see cref="ContentStopReason.None"/> while the backup runs or
     ///  when it completed on this volume.
@@ -434,6 +444,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                     SetError(WIN32_ERROR.ERROR_WRITE_FAULT, "The set header could not be written");
                 return false;   // SH-6 reset the position
             }
+
+            SetHeaderStamped = true;    // for TOC-in-set, the old TOC copy at this position is gone from here on
         }
 
         // The set's encryption session (Design-Encryption §9.1, E16): AFTER the set header — a drive key (v2) must
@@ -1486,7 +1498,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         ResetLatchedFailure();
 
         MediaHeaderStamped = false; // reset for the new series (per-series, cross-volume artifact)
-        
+        SetHeaderStamped = false;
+
         m_carriedFailure = TapeResult.OK;
         m_volumeRejected = false;
         VolumeEndReason = ContentStopReason.None;

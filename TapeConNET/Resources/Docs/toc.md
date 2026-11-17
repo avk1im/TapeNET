@@ -8,9 +8,12 @@ its hash. tapecon reads it before almost every operation, and rewrites it after 
 The TOC is written **twice** on every volume, so one damaged copy never loses it. Where depends on the media:
 
 - **TOC partition:** the TOC has a partition of its own, and content may fill its partition to the very end.
-  `format` creates one by default; `--single-partition` declines it. Virtual tapes get one
-  with `--init-capacity` or `--initiator` (see `tapecon docs virtual-drives`).
+  `format` creates one by default; `--single-partition` declines it. Virtual tapes get one with `--init-capacity` or
+  `--initiator` (see `tapecon docs virtual-drives`).
 - **TOC in set:** on all other media, the TOC follows the content on the same partition.
+
+The TOC of each volume of a series lists the sets of **every volume up to its own**: the last volume's TOC describes
+the whole series.
 
 ## The TOC reserve
 
@@ -31,27 +34,28 @@ from a nearby landmark, and, only after asking, a search of the whole medium. Un
 since a search only reads.
 
 Each deviation is reported, with advice. A TOC "found only by searching" is intact: it simply was not where it should
-be, often because something was written behind it or a mark was lost. Re-save it, for example with
-`tapecon rename-media` and the same name, so it is found directly next time.
+be, often because something was written behind it or a mark was lost. Re-save it, so it is found directly next time:
+
+    tapecon rename-media --name "My first tape"
+
+Any command that saves the TOC rewrites both copies; renaming the media under its current name is the simplest.
 
 ## A spare copy
 
-Keep an exported TOC of important cartridges. It is the rescue path if both copies on tape are lost, and the **only**
-way back to the files of an encrypted set without its TOC.
+Keep an exported TOC of important cartridges, apart from them. It is the rescue path if both copies on tape are lost,
+and the **only** way back to the files of an encrypted set without its TOC. An export of an encrypted set stays
+encrypted.
 
-    tapecon export-toc D:\Safe\first.toc
+    tapecon export-toc D:\Safe\first.tapetoc
 
-`tapecon toc import FILE` loads such a file. An export of an encrypted set stays encrypted.
+Commands that read a cartridge take such a file instead of the TOC on the tape, with `--import-toc`:
+
+    tapecon list --import-toc D:\Safe\first.tapetoc
 
 ## When no TOC can be read
 
-`scan-media` reads the whole cartridge, every partition, **without** relying on its TOC, and reports what it finds:
-the media header, backup sets, TOC copies, damaged and unidentified data. It is read-only and needs no password:
-encrypted sets are counted and named "(encrypted)", never revealed. By default it also recovers every TOC copy it
-finds.
+`scan-media` reads the whole cartridge, every partition, **without** relying on its TOC, reports what it finds, and
+saves every TOC copy it can recover as a file for `--import-toc`. It only reads, and needs no password: encrypted sets
+are counted and named "(encrypted)", never revealed.
 
-    tapecon scan-media --export D:\Scans
-
-`--export` saves the scan as a map file (`.tapescan`); `--json` prints it instead. `recover-toc` then recovers the TOC
-from one copy listed in the map: `--save FILE` writes it to a file, `--adopt` uses it like `toc import`. If the loaded
-cartridge is not the scanned one, recovery is refused.
+The whole procedure, from finding a TOC to repairing the cartridge, is in `tapecon docs media-recovery`.

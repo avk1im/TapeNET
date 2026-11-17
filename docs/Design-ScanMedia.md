@@ -1,8 +1,9 @@
 # Design — Scan Media (TOC-less media survey)
 
-**Status:** v3.2 · Phases 0–7 implemented. v3.2 adds the **partition update** (SM-14: every partition walked, each
-fragment records its partition), the **nearest-mark rule** (§3.2), **header-less 2.1 sets** (`FragmentKind.SetContent`)
-and the **format 2.1** identification order (§4.1).
+**Status:** v3.3 · Phases 0–7 implemented. v3.3: the CLI keeps a TOC as a **file** — the scan saves every recovered
+copy (§9.1 `ExportRecoveredTocs`), `recover-toc` only saves, and the next verb reads it with `--import-toc` (§14).
+v3.2 added the partition update (SM-14), the nearest-mark rule (§3.2), header-less 2.1 sets and the format 2.1
+identification order (§4.1).
 
 **Scope:** read a cartridge — every partition it has — forward, and produce a **fragment map**: everything on the medium
 that can be identified, with **no table of contents in hand and none assumed**. Then, as an option or as a separate
@@ -536,8 +537,9 @@ An unclosed last set that a recovered TOC records as closed by end-of-media (par
 ```csharp
 public sealed record ScanMediaRequest : ServiceOperationRequest
 {
-    public bool    RecoverTocCopies { get; init; } = true;   // → scanner HarvestTocCopies
-    public string? MapExportFolder  { get; init; }           // null ⇒ no export
+    public bool    RecoverTocCopies    { get; init; } = true;   // → scanner HarvestTocCopies
+    public string? MapExportFolder     { get; init; }           // null ⇒ no export
+    public bool    ExportRecoveredTocs { get; init; } = false;  // also save each recovered TOC there (CLI)
 }
 
 public enum ScanAdvice
@@ -552,10 +554,11 @@ public sealed record ScanMediaResult : ServiceOperationResult
 {
     public MediaScanMap? Map { get; init; }                  // also truncated, on abort / fault
     public ScannedMediaKind MediaKind { get; init; }
-    public int  SetsFound, TocCopiesFound, TocsRecovered, UnknownFragments;   // init-only
+    public int  SetsFound, TocCopiesFound, TocsRecovered, UnknownFragments, EncryptedSets;   // init-only
     public bool LastSetUnclosed { get; init; }
     public IReadOnlyList<ScanAdvice> Advice { get; init; } = [];
     public string? MapExportPath { get; init; }
+    public IReadOnlyList<string> TocExportPaths { get; init; } = [];   // recovered TOCs saved, in fragment order
     public string Summary { get; init; } = string.Empty;     // the reported headline
     public bool WasAborted => Outcome == ServiceReportLevel.Failed;
 }
@@ -582,6 +585,11 @@ public Task<ScanMediaResult> ScanMediaAsync(ScanMediaRequest request);
 - **Out-of-place fragments** → a detail line, and the cartridge *needs attention* (as do an unclosed set, index gaps,
   mixed identity, damage).
 - `AdoptRecoveredToc` and `RecoverTocFromCopy` exclude each other.
+- **Recovered TOCs as files** (`ExportRecoveredTocs`, with `MapExportFolder`): the map's JSON leaves
+  `HarvestedToc` out, so a host without a session — the CLI — would lose the recovered TOCs with its process. Each
+  harvested copy is saved beside the map as `Scan_<id>_<time>_toc<ordinal>.tapetoc`
+  (`TapeServiceBase.TOCFileExtension`), the ordinal naming its fragment. Best-effort per copy, like the map export;
+  each save works on a private copy of the TOC. Off by default: TapeWinNET adopts in its session instead.
 
 Further: calibration inspection is never requested — the service advises `InspectCalibrationCartridge`; TOC recovery is on
 by default here; no identity prompt, `_toc` never touched, `_loadedHeader` refreshed; map export is best-effort.
@@ -615,6 +623,9 @@ public Task<RecoverTocResult> RecoverTocAsync(RecoverTocRequest request);
 - A fragment carrying a `HarvestedToc` is used as is — a **private copy**, no tape I/O.
 - Otherwise the guards of §8.4 around a probe agent's `RestoreTOCAt(copy.StartBlock, copy.Partition)`.
 - Save and adoption failures downgrade the outcome to Warning; the recovery itself stands.
+- **Two hosts, two endings.** TapeWinNET adopts (`Adopt`, through the import path, §8.5). The CLI never adopts — a run
+  lasts one verb — and only saves (`SaveToFilePath`); the next verb imports the file. `ProceedOnMediaMismatch` thus
+  serves TapeWinNET alone.
 
 ---
 
@@ -660,7 +671,7 @@ TapeLibNET/
 | 3 — TOC recovery | `MoveToTOCCopyAt`, `BeginReadTOCAt`, `RestoreTOCAt`, harvest | `TapeScannerHarvestTests` |
 | 4 — service | `ScanMediaAsync`, `RecoverTocAsync`, pure statics, progress handler, map export, `TOCSource.Recovered` | `ServiceScanMediaTests` |
 | 5 — TapeWinNET | setup dialog, overlay, result window (§14) | manual acceptance |
-| 6 — TapeConNET | `scan-media`, `recover-toc` | CLI tests |
+| 6 — TapeConNET | `scan-media` saving map and recovered TOCs; `recover-toc --save`; `--import-toc`; `export-toc` | `TocRecoveryTests` |
 | **7 — partitions, nearest mark, format 2.1** | every partition walked (SM-14); `ScannedPartition`, `OutOfPlaceFragments`; nearest-mark rule; `SetContent`; TOC recovery by partition; initiator fault injectors; partition column in WPF | `TapeScannerPartitionTests`; exemptions removed from the earlier suites; `ServiceLegacyMediaTests` (legacy and mixed cartridges) |
 | Encryption Phase 5 | s. §4.8 | `TapeScannerEncryptionTests`, `ServiceScanEncryptionTests`
 
@@ -730,7 +741,8 @@ offers `PartitionBlank` / `PartitionNotScanned`, `TocCopiesWhereTheLayoutPutsThe
 - **A header-less 2.1 set left open by EOD** is not flagged — `LastSetUnclosed` looks at set headers only (§15).
 - **A TOC newer than this build** is not recognized as a TOC copy (§4.4); a record from a newer build reads as damaged.
 - **A record damaged in its magic or signature** cannot be told from foreign data (§4.1).
-- **Saving a recovered TOC needs media loaded** — `SaveTOCToFile` is an agent instance method.
+- **Saving a recovered TOC needs a drive and media** — `SaveTOCToFile` is an agent instance method. The scan's own
+  export runs while both are at hand; `recover-toc` loads the media anyway, to read the copy.
 - **Real hardware:** confirmed only on the virtual backend — a read that meets a mark leaves the head past it (setmarks
   need `ReportSetmarks`), EOD is reported through `eof` without `tapemark`, and the nearest-mark measurement's cost on a
   long damaged partition (§15). Worth confirming on the DLT and LTO families.
@@ -755,9 +767,18 @@ optional map folder) → the shared operation overlay → a result window:
 A scan changes nothing on tape and never touches the TOC, so the tree is never reloaded after it. The seam to Repair
 Media is a later **[Compare with a table of contents…]** button on the same window.
 
-**TapeConNET** (Phase 6): `tapecon scan-media [--no-recover-toc] [--export <dir>] [--json]` prints the headline, details
-and one line per fragment (`DescribeFragment`); `tapecon recover-toc --map <file> --fragment <n> [--adopt] [--save <file>]`
-loads a `.tapescan`; the exit code distinguishes success, refused (a guard), and failure.
+**TapeConNET** (Phase 6, reworked): a TOC travels between verbs as a file (TapeConNET-2.0-Architecture §3.5).
+
+- `tapecon scan-media [--export <dir>] [--no-recover-toc] [--json]` prints the headline, details and one line per
+  fragment (`DescribeFragment`). It saves the map **and every recovered TOC** into `<dir>` — the current folder
+  without `--export`; with `--json`, only when `--export` is given — and names the next command: `--import-toc` with
+  a recovered TOC, or `recover-toc` with the map.
+- `tapecon recover-toc --map <file> --fragment <n> --save <file>`, all three required: for maps scanned with
+  `--no-recover-toc`. No `--adopt`. Reads the copy from the loaded cartridge behind the guards of §8.4; the exit code
+  distinguishes success, refused (a guard, `WriteRefused`) and failure.
+- `--import-toc <file>` on `list`, `restore`, `validate`, `verify`, `delete-sets`, `rename-media` uses the file in
+  place of the cartridge's TOC. A later volume's TOC of the same series is accepted read-only (`TOCSource.Series`).
+- The walkthrough for users: `tapecon docs media-recovery`.
 
 ---
 

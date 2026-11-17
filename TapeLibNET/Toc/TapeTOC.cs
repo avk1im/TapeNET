@@ -410,6 +410,15 @@ public partial class TapeSetTOC : IReadOnlyList<TapeFileInfo>
     public long FirstBlockAfterSet { get; internal set; } = -1;
 
     /// <summary>
+    /// Whether this set physically exists on tape: its closing mark was written (<see cref="FirstBlockAfterSet"/>), or
+    ///  end-of-media closed it (<see cref="ClosedByEom"/>). An EMPTY set may still exist on tape — a backup that wrote
+    ///  the set header and closing mark but no file. Such a set holds its place in the mark count: it is never silently
+    ///  recycled, and the end of content it records stays authoritative.
+    /// </summary>
+    /// <remarks>Never hidden by encryption: both traits travel in the plain stub.</remarks>
+    public bool IsOnTape => FirstBlockAfterSet >= 0 || ClosedByEom;
+
+    /// <summary>
     /// Snapshots this set's metadata (description, hash, block size, incremental, capacity — and its encryption)
     ///  into a <see cref="TapeSetTOCParams"/> bundle suitable for seeding a continuation
     ///  set on the next volume via <see cref="TapeTOC.AddContinuationSetTOC"/>. Throws on a locked set.
@@ -1078,9 +1087,9 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     ///  caller (the navigator) knows; −1 when it does not either.</param>
     /// <returns>The block, or −1 when the record does not tell.</returns>
     /// <remarks>
-    /// A trailing VACANT set with no recorded end never reached the tape (a backup refused before moving) and is looked
-    ///  past. A set that holds files and records no end makes the answer unknown — it is never guessed from an earlier
-    ///  set.
+    /// Only a trailing vacant set that never reached the tape (<see cref="TapeSetTOC.IsOnTape"/> false — a backup refused
+    ///  before moving) is looked past. A set on tape without a recorded end, or one holding files without it, makes the
+    ///  answer unknown — it is never guessed from an earlier set.
     /// </remarks>
     public long FirstBlockAfterContentOnVolume(int volume, long beginOfContent = -1)
     {
@@ -1091,7 +1100,7 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
                 continue;
             if (set.FirstBlockAfterSet >= 0)
                 return set.FirstBlockAfterSet;
-            if (!set.IsVacant)
+            if (!set.IsVacant || set.IsOnTape)
                 return -1;
         }
         return beginOfContent;
@@ -1146,13 +1155,14 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     }
 
     /// <summary>
-    /// Appends a new <see cref="TapeSetTOC"/> — or replaces a trailing VACANT one — and makes it current.
+    /// Appends a new <see cref="TapeSetTOC"/> — or replaces a trailing VACANT one that never reached the tape — and makes
+    ///  it current.
     /// <para>The first set in a TOC is never marked incremental, regardless of the parameter.</para>
     /// </summary>
     /// <remarks>
     /// <para>
-    /// A trailing vacant set (e.g. left by an aborted backup) is REPLACED by a fresh instance, not recycled: the new
-    ///  set starts with every attribute at its default — a fresh <see cref="TapeSetTOC.SetId"/>, FileIds from 1,
+    /// A trailing vacant set left by a backup refused before moving is REPLACED by a fresh instance, not recycled: the
+    ///  new set starts with every attribute at its default — a fresh <see cref="TapeSetTOC.SetId"/>, FileIds from 1,
     ///  the current <see cref="TapeDataFormat"/>, and no description, hash, compression, block size or encryption
     ///  inherited from the abandoned attempt. Replacing rather than resetting field by field means a future attribute
     ///  can never be forgotten. The new object identity also lets consumers detect the replacement, as with
@@ -1162,11 +1172,17 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
     /// <b>Vacant, not "Count == 0"</b>: a LOCKED trailing set is vacant only when its stub records no size on tape — an
     ///  encrypted set that holds files is never replaced (Design-Encryption §6.2).
     /// </para>
+    /// <para>
+    /// <b>Never a set that is on tape</b> (<see cref="TapeSetTOC.IsOnTape"/>): an empty set whose header and closing mark
+    ///  were written holds its place in the mark count. Reusing its slot as a NEW set would append at the end of content
+    ///  recorded BEFORE it — where its set header now stands — and the append would be refused (RecordedEndDisputed). A
+    ///  new set goes behind it instead; removing an empty set from tape is the delete's job.
+    /// </para>
     /// </remarks>
     public void AddNewSetTOC(int capacity = 0, bool incremental = false)
     {
         // Do NOT use CurrentSetTOC here: it calls AddNewSetTOC() itself when the TOC is empty.
-        if (m_setTOCs.Count > 0 && m_setTOCs[^1].IsVacant)
+        if (m_setTOCs.Count > 0 && m_setTOCs[^1] is { IsVacant: true, IsOnTape: false })
         {
             // Count > 1 means "there's at least one other set before this vacant one."
             //  If Count == 1, the vacant set IS the first set → not incremental.
@@ -1178,7 +1194,6 @@ public partial class TapeTOC : IEnumerable<TapeSetTOC>
             //  If Count == 0, we're adding the very first set → not incremental.
             m_setTOCs.Add(new TapeSetTOC(Volume, capacity, incremental && m_setTOCs.Count > 0));
         }
-
         Debug.Assert(m_setTOCs.Count > 0);
         MakeLastSetCurrent();
     }

@@ -6,9 +6,8 @@ using TapeConNET.Ux;
 namespace TapeConNET.Cli;
 
 /// <summary>
-/// Composes the tapecon verb tree. Phase 1 produces a root command that only
-/// supports <c>--help</c> / <c>--version</c> and a single placeholder
-/// <c>docs</c> verb. Verb implementations are filled in by later phases.
+/// Composes the tapecon verb tree (TapeConNET-2.0-Architecture §3): the recursive root options, the help action, and
+///  one flat level of verbs.
 /// </summary>
 public static class RootCommandFactory
 {
@@ -37,29 +36,24 @@ public static class RootCommandFactory
         {
             ux.WriteBanner();
             ux.Log(WarningLevel.Info,
-                "No verb specified. Run 'tapecon --help' to see available commands.");
+                "No verb specified. Run 'tapecon --help' for the commands, 'tapecon docs getting-started' to begin.");
             return (int)Infrastructure.TapeConExitCode.Ok;
         });
 
-        // ─── 'docs' verb (Phase 8) ────────────────────────────────────────────
-        //  Renders embedded markdown topics so a single-file deployment still ships the documentation.
+        // ─── Docs and self-test ───────────────────────────────────────────────
+        //  docs renders the embedded topics, so a single-file deployment still ships the documentation;
+        //   demo exercises the console UX (log levels, progress, prompts).
         root.Subcommands.Add(DocsCommand.Create(ux));
-
-        // ─── 'demo' verb (Phase 2 smoke test) ─────────────────────────────────
-        //  Exercises every WarningLevel, the bounded progress scope, and an
-        //   optional confirmation prompt. Will likely stay in 2.0 as a built-in
-        //   self-test verb.
         root.Subcommands.Add(DemoCommand.Create(ux));
 
-        // ─── Phase 4 verbs ────────────────────────────────────────────────────
-        //  Lifecycle verbs (drive/media/TOC):
+        // ─── Lifecycle (drive, media, TOC file) ───────────────────────────────
         root.Subcommands.Add(InfoCommand.Create(ux));
         root.Subcommands.Add(FormatCommand.Create(ux));
         root.Subcommands.Add(CreateVirtualCommand.Create(ux));
         root.Subcommands.Add(EjectCommand.Create(ux));
         root.Subcommands.Add(ExportTocCommand.Create(ux));
 
-        //  Operation verbs:
+        // ─── Operations ───────────────────────────────────────────────────────
         root.Subcommands.Add(BackupCommand.Create(ux));
         root.Subcommands.Add(RestoreCommand.Create(ux));
         root.Subcommands.Add(RestoreCommand.CreateValidate(ux));
@@ -69,8 +63,9 @@ public static class RootCommandFactory
         root.Subcommands.Add(RenameCommand.CreateRenameSet(ux));
         root.Subcommands.Add(DeleteSetsCommand.Create(ux));
 
-        //  Media recovery: survey without a TOC, and a TOC copy from a saved scan map — both into files that
-        //   --import-toc reads (tapecon docs media-recovery):
+        // ─── Media recovery ───────────────────────────────────────────────────
+        //  Survey without a TOC, and a TOC copy from a saved scan map — both into files that --import-toc reads
+        //   (tapecon docs media-recovery).
         root.Subcommands.Add(ScanMediaCommand.Create(ux));
         root.Subcommands.Add(ScanMediaCommand.CreateRecoverToc(ux));
 

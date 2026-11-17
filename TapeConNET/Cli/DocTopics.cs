@@ -39,12 +39,12 @@ internal static class DocTopics
     /// <summary>The Markdown text of <paramref name="topic"/>.</summary>
     public static string Load(DocTopic topic) => Read(DocsPrefix + topic.Name + Extension)!;
 
-    /// <summary>The names of all example resources: command paths such as <c>backup</c>, <c>toc-export</c>.</summary>
+    /// <summary>The names of all example resources: command paths such as <c>backup</c>, <c>scan-media</c>.</summary>
     public static IReadOnlyList<string> ExampleNames => NamesWithPrefix(ExamplesPrefix);
 
     /// <summary>
     /// The Markdown of <paramref name="cmd"/>'s Examples section, or null when it has none. The file name is the
-    ///  command path below the root, joined by <c>-</c>: <c>backup</c>, <c>toc-export</c>.
+    ///  command path below the root, joined by <c>-</c>: <c>backup</c>, or <c>group-verb</c> for a nested command.
     /// </summary>
     public static string? Examples(Command cmd)
     {

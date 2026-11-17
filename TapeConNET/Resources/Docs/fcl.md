@@ -15,12 +15,18 @@ Each positional argument is classified in this order:
 
 `--filter EXPRESSION` and `--filter-file FILE` give FCL explicitly, with no guessing.
 
-**For `backup`**, paths and patterns are the **sources**, and FCL is the **filter** applied to them: of the files the
-sources name, only those the filter accepts are backed up.
+## How they combine
 
-**For the other verbs**, every argument selects: patterns and FCL expressions alike. Several of them are combined with
-**or**: a file is selected when any of them accepts it. On `restore`, `validate` and `verify`, the set index comes
-first, then the selection.
+Paths and patterns are the **basic** selection; FCL **narrows** it:
+
+- Several paths or patterns: a file is selected when **any** of them matches.
+- Every FCL expression, inline or from a file or option, must **also** hold.
+
+So `tapecon restore 0 *.docx *.xlsx "Size > 1MB"` restores the Word and Excel files larger than 1 MB. TapeWinNET combines
+its basic filter and its FCL the same way.
+
+**For `backup`**, the paths and patterns are the **sources**: what to back up. FCL decides which of their files go into
+the set. On `restore`, `validate`, `verify` and `list`, the set index comes first, then the selection.
 
 ## FCL in brief
 

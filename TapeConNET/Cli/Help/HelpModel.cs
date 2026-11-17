@@ -49,7 +49,8 @@ public sealed record HelpModel(
     public const string RootName = "tapecon";
 
     /// <summary>The footer under the root's help.</summary>
-    public const string RootFooter = "Docs: `tapecon docs concepts` · exit codes: `tapecon docs faq`";
+    public const string RootFooter =
+        "Start: `tapecon docs getting-started` · All topics: `tapecon docs` · Exit codes: `tapecon docs concepts`";
 
     /// <summary>Builds the help of <paramref name="cmd"/>: its arguments, its options in groups (§4), its subcommands.</summary>
     public static HelpModel Build(Command cmd)

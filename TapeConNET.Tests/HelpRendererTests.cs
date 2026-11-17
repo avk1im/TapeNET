@@ -127,7 +127,7 @@ public class HelpRendererTests
         var layout = HelpRenderer.Layout(ModelOf(""), 80);
 
         Assert.Equal(ConsoleTheme.OptionName, RunStarting(layout, "backup").Style);
-        Assert.Equal(ConsoleTheme.Dimmed, RunStarting(layout, "Docs:").Style);
+        Assert.Equal(ConsoleTheme.Dimmed, RunStarting(layout, "Start:").Style);
     }
 
     [Fact]
@@ -221,7 +221,7 @@ public class HelpRendererTests
 
         // The root's footer
         var root = HelpRenderer.Layout(ModelOf(""), 80).SelectMany(l => l);
-        Assert.Contains(root, r => r.Text == "tapecon docs concepts" && r.Style.Equals(ConsoleTheme.Mention));
+        Assert.Contains(root, r => r.Text == "tapecon docs getting-started" && r.Style.Equals(ConsoleTheme.Mention));
     }
 
     [Fact]

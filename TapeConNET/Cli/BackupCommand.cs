@@ -65,7 +65,8 @@ internal static class BackupCommand
         };
         var incrementalOption = new Option<bool>("--incremental", "-i")
         {
-            Description = "Create an incremental backup set (only files changed since the last full set).",
+            Description = "Back up only the files new or changed since the last set of this incremental chain " +
+                          "(by modification time). See `tapecon docs incremental-backup`.",
         };
         var blockSizeOption = SizeOptions.BlockSize("--block-size",
             "Block size (default: drive's preferred size; clamped to drive limits).", "-b");

@@ -15,14 +15,14 @@ internal static class FilterOptions
 {
     public static readonly Option<string?> Filter = new("--filter")
     {
-        Description = "FCL expression used as the selection filter, " +
-                      "e.g. `'name matches \"*.doc*\" && size > 1MB'`.",
+        Description = "FCL condition the selected files must meet, e.g. " +
+                      "`\"Name matches *.doc* and Size greaterThan 1MB\"`. See `tapecon docs fcl`.",
         HelpName = "FCL",
     };
 
     public static readonly Option<string?> FilterFile = new("--filter-file")
     {
-        Description = "File holding the FCL selection filter.",
+        Description = "File holding an FCL condition the selected files must meet.",
         HelpName = "PATH",
     };
 

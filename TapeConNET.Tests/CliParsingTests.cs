@@ -131,12 +131,12 @@ public class CliParsingTests
     public async Task Help_Root_ListsCommands_AndFooter()
     {
         var r = await TapeConHost.RunAsync("--help");
-        var lines = Lines(r);
 
+        var lines = Lines(r);
         Assert.True(TitleLine(lines, "Commands") >= 0, "Commands section missing");
         Assert.Contains(lines, l => l.StartsWith("  backup ", StringComparison.Ordinal));
         Assert.Contains(lines, l => l.StartsWith("  create-virtual, new-virtual", StringComparison.Ordinal));
-        Assert.Contains("Docs: tapecon docs concepts", r.Output, StringComparison.Ordinal);
+        Assert.Contains("Start: tapecon docs getting-started", r.Output, StringComparison.Ordinal);
     }
 
     [Fact]

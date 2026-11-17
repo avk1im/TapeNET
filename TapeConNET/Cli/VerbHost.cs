@@ -189,7 +189,7 @@ internal static class VerbHost
             throw new TapeConException(TapeConExitCode.UsageError,
                 "--drive, --virtual-open (--virtual), --virtual-create and --in-memory are mutually exclusive.");
 
-        // Architecture §4 shortcut: when no drive option is supplied, auto-open
+        // Architecture §3.1: when no drive option is supplied, auto-open
         //  Win32 drive 0 with a single info-level note (suppressed under --quiet).
         if (selected == 0)
         {
