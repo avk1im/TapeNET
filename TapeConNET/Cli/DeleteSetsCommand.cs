@@ -1,22 +1,26 @@
 using System.CommandLine;
-
 using TapeConNET.Infrastructure;
 using TapeConNET.Ux;
 
 namespace TapeConNET.Cli;
 
-
 /// <summary>
 /// <c>tapecon delete-sets SET</c> — deletes backup sets from <c>SET</c> through the last
 ///  set on the volume (physically overwrites the tape past the last retained set).
 /// </summary>
+/// <remarks>
+/// Also the repair verb: it rewrites the damaged tail of a volume and saves the TOC — with <c>--import-toc</c>, the
+///  imported one, which then is the volume's TOC again. A later volume's TOC is read-only here: refused by the service.
+/// </remarks>
 internal static class DeleteSetsCommand
 {
     public static Command Create(IConsoleUx ux)
     {
         var cmd = new Command("delete-sets",
-            "Delete backup sets from a given set through the end of the volume.");
+            "Delete backup sets from a given set through the end of the volume, and save the TOC.");
+
         GlobalOptions.Attach(cmd);
+        TocOptions.Attach(cmd);
 
         var setArg = new Argument<string>("set")
         {
@@ -30,7 +34,10 @@ internal static class DeleteSetsCommand
             ux.WriteBanner();
 
             var setSpec = parseResult.GetValue(setArg)!;
-            using var service = VerbHost.BuildAndOpen(parseResult, ux, VerbHost.LifecycleSteps.Full, ct);
+            var importToc = parseResult.GetValue(TocOptions.ImportToc);
+
+            using var service = VerbHost.BuildAndOpen(parseResult, ux, VerbHost.LifecycleSteps.Full, ct,
+                tocHint: VerbHost.TocRecoveryHint, importToc: importToc);
 
             if (!service.TryParseSetIndex(setSpec, out int setIndex))
                 throw new TapeConException(TapeConExitCode.UsageError,
@@ -39,7 +46,6 @@ internal static class DeleteSetsCommand
                 setIndex = service.TOC.SetIndexToStd(service.TOC.CapSetIndex(setIndex));
 
             var result = await service.DeleteBackupSetsExAsync(setIndex);
-
             return (int)VerbHost.ToExitCode(result.WasAborted, result.HasFailed,
                 setWriteBlocked: result.SetStats.SetWriteBlocked);
         });

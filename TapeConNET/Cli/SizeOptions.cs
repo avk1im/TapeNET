@@ -11,8 +11,8 @@ namespace TapeConNET.Cli;
 /// </summary>
 internal static class SizeOptions
 {
-    /// <summary>Appended to every size option's description.</summary>
-    public const string UnitsHint = "Accepts " + FclSizeLiteral.UnitList + " (binary: 1 KB = 1024 B), e.g. 64KB, 1.5GB.";
+    /// <summary>Appended to every size option's description; the examples are mentions (Design-CliPresentation §5.2).</summary>
+    public const string UnitsHint = "Accepts " + FclSizeLiteral.UnitList + " (binary: 1 KB = 1024 B), e.g. `64KB`, `1.5GB`.";
 
     private const string SizeHelpName = "SIZE";
 
@@ -45,11 +45,13 @@ internal static class SizeOptions
             result.AddError($"{optionName}: invalid size '{text}'. {error}");
             return null;
         }
+
         if (bytes <= 0 || bytes > max)
         {
             result.AddError($"{optionName}: size '{text}' must be between 1 B and {max:N0} B.");
             return null;
         }
+
         return bytes;
     }
 }

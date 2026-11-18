@@ -487,6 +487,11 @@ public sealed record ScanMediaResult : ServiceOperationResult
     /// <summary>Where the map was saved, or null.</summary>
     public string? MapExportPath { get; init; }
 
+    /// <summary>
+    /// The recovered TOCs saved (<see cref="ScanMediaRequest.ExportRecoveredTocs"/>), in fragment order.
+    /// </summary>
+    public IReadOnlyList<string> TocExportPaths { get; init; } = [];
+
     /// <summary>The headline, as reported to the host.</summary>
     public string Summary { get; init; } = string.Empty;
 

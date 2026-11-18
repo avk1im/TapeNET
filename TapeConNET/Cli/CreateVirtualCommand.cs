@@ -1,4 +1,5 @@
 using System.CommandLine;
+using TapeConNET.Cli.Help;
 using TapeConNET.Infrastructure;
 using TapeConNET.Ux;
 using TapeLibNET.Virtual;
@@ -11,7 +12,14 @@ namespace TapeConNET.Cli;
 ///  (<c>TapeServiceBase.CreateVirtualMediaAsync</c>), without running a verb afterwards.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Takes only the options that shape new media — no <c>--drive</c> / <c>--virtual-open</c> / <c>--in-memory</c>.
+/// </para>
+/// <para>
+/// Help (Design-CliPresentation §4.4): promotes <i>New virtual media</i> — the group every other verb shows as a
+///  one-line summary is this verb's content, so it renders in full, first, as its "Options". <c>--initiator</c> shows
+///  there once, with its create-time description.
+/// </para>
 /// </remarks>
 internal static class CreateVirtualCommand
 {
@@ -19,21 +27,19 @@ internal static class CreateVirtualCommand
     {
         var cmd = new Command("create-virtual",
             "Create new file-backed virtual media, formatted with an empty TOC. Existing virtual media files are " +
-            "replaced only after a prompt, or with --overwrite-virtual.");
+            "replaced only after a prompt, or with `--overwrite-virtual`.");
         cmd.Aliases.Add("new-virtual");
 
         var pathArg = new Argument<string>("path")
         {
-            Description = "Content file of the new media, e.g. D:\\vtapes\\weekly — without extension it becomes " +
-                          $"weekly{VirtualMediaPaths.ContentExtension} (metadata goes to PATH.vrt).",
+            Description = "Content file of the new media, e.g. `D:\\vtapes\\weekly` — without extension it becomes " +
+                          $"`weekly{VirtualMediaPaths.ContentExtension}` (metadata goes to `PATH.vrt`).",
         };
-        var nameOption = new Option<string?>("--name", "-n")
-        {
-            Description = "Media name written into the new TOC (default: 'Media created <date time>').",
-        };
+        var mediaDescOption = MediaOptions.Description(
+            "Media description written into the new TOC (default: 'Media created <date time>').");
 
         cmd.Arguments.Add(pathArg);
-        cmd.Options.Add(nameOption);
+        cmd.Options.Add(mediaDescOption);
         cmd.Options.Add(GlobalOptions.Capacity);
         cmd.Options.Add(GlobalOptions.InitCapacity);
         cmd.Options.Add(GlobalOptions.Initiator);
@@ -41,14 +47,17 @@ internal static class CreateVirtualCommand
         cmd.Options.Add(VirtualMediaOptions.OverwriteVirtual);
         cmd.Options.Add(GlobalOptions.LogLevel);
 
+        HelpGroups.Promote(cmd, HelpGroups.VirtualNew);
+
         cmd.SetAction(async (parseResult, ct) =>
         {
             ux.WriteBanner();
+
             var path = parseResult.GetValue(pathArg)!;
-            var name = parseResult.GetValue(nameOption);
+            var mediaDesc = parseResult.GetValue(mediaDescOption);
 
             using var service = VerbHost.Build(parseResult, ux, ct);
-            var caps = await VerbHost.CreateVirtualFromOptionsAsync(service, parseResult, path, name);
+            var caps = await VerbHost.CreateVirtualFromOptionsAsync(service, parseResult, path, mediaDesc);
 
             // The path actually created — it may have gained the default extension.
             ux.Log(WarningLevel.Completed, $"Virtual media created: >{service.LastVMD?.ContentPath}<");

@@ -323,6 +323,12 @@ public sealed record ScanMediaRequest : ServiceOperationRequest
 
     /// <summary>Folder to save the map to as <c>.tapescan</c> JSON; null ⇒ no export.</summary>
     public string? MapExportFolder { get; init; }
+
+    /// <summary>
+    /// Also save every recovered TOC into <see cref="MapExportFolder"/>, one <c>.tapetoc</c> file per copy. For hosts
+    ///  without a session to keep them in (the CLI); off by default. Ignored without <see cref="MapExportFolder"/>.
+    /// </summary>
+    public bool ExportRecoveredTocs { get; init; } = false;
 }
 
 /// <summary>Recovers the table of contents from one TOC-copy fragment of a scan map.</summary>

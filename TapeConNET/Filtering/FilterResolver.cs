@@ -4,7 +4,6 @@ using TapeLibNET.Agents;
 
 namespace TapeConNET.Filtering;
 
-
 /// <summary>
 /// Result of classifying a verb's positional/filter arguments.
 /// <see cref="Sources"/> are paths/wildcard patterns to expand into a file
@@ -19,27 +18,34 @@ internal sealed record ResolvedFilter(
 /// <summary>
 /// Centralized parsing of <c>--filter</c> / <c>--filter-file</c> options and
 /// of bare positional arguments per the auto-detect order documented in
-/// <c>TapeConNET-2.0-Architecture.md §4</c>:
+/// <c>TapeConNET-2.0-Architecture.md §3.2</c>:
 /// <list type="number">
-///   <item>An existing file with the <c>.fcl</c> extension is treated as an
-///         FCL file.</item>
-///   <item>A string starting with an FCL keyword
-///         (<c>name</c>, <c>fullname</c>, <c>path</c>, <c>extension</c>,
-///         <c>size</c>, <c>created</c>, <c>modified</c>, <c>date</c>,
-///         <c>attr</c>/<c>attributes</c>, <c>(</c>) is treated as inline FCL.</item>
-///   <item>An existing directory or file path is treated as a literal
-///         path.</item>
-///   <item>Anything else is treated as a DOS-style wildcard pattern
-///         (e.g. <c>*.doc*</c>).</item>
+///   <item>An existing file with the <c>.fcl</c> extension is treated as an FCL file.</item>
+///   <item>Inline FCL: a string opening with <c>(</c>, <c>!</c> or <c>not</c>, or with an FCL field name
+///         (<c>Name</c>, <c>FullName</c>, <c>Path</c>, <c>Extension</c>, <c>Size</c>, <c>Created</c>,
+///         <c>Modified</c>, <c>Attributes</c>) followed by whitespace or an operator symbol.</item>
+///   <item>An existing directory or file path is treated as a literal path.</item>
+///   <item>Anything else is treated as a DOS-style wildcard pattern (e.g. <c>*.doc*</c>).</item>
 /// </list>
 /// </summary>
+/// <remarks>
+/// <para>
+/// <b>Combining — as TapeWinNET does.</b> Paths and wildcards are the BASIC selection: any of them selects a file (OR).
+///  Every FCL source — inline expressions, <c>.fcl</c> files, <c>--filter</c>, <c>--filter-file</c> — is an ADVANCED
+///  condition that narrows it (AND): <c>restore 0 *.docx *.xlsx "Size &gt; 1MB"</c> selects the large Word and Excel
+///  files. For <c>backup</c>, paths and wildcards are the sources; the FCL conditions filter what they name.
+/// </para>
+/// <para>
+/// Each part is parenthesized on lines of its own, so an <c>.fcl</c> file ending in a <c>//</c> comment cannot swallow the
+///  closing parenthesis, and a part's own <c>and</c>/<c>or</c> keep their precedence.
+/// </para>
+/// </remarks>
 internal static class FilterResolver
 {
-    private static readonly HashSet<string> s_fclKeywords = new(StringComparer.OrdinalIgnoreCase)
+    /// <summary>FCL's field names (FCL-Specification, Fields), matched case-insensitively.</summary>
+    private static readonly HashSet<string> s_fclFields = new(StringComparer.OrdinalIgnoreCase)
     {
-        "name", "fullname", "path", "extension",
-        "size", "created", "modified", "date",
-        "attr", "attributes",
+        "FullName", "Name", "Extension", "Path", "Size", "Created", "Modified", "Attributes",
     };
 
     /// <summary>
@@ -52,12 +58,9 @@ internal static class FilterResolver
         string? filterFcl,
         string? filterFilePath)
     {
-        var (sources, filterParts, hasInline) = Classify(positionalArgs, treatPathsAsSources: false);
-
-        AppendExplicit(filterParts, ref hasInline, filterFcl, filterFilePath);
-
-        var filter = BuildFilter(filterParts);
-        return new ResolvedFilter(sources, filter, hasInline);
+        var parts = Classify(positionalArgs, treatPathsAsSources: false);
+        AppendExplicit(parts, filterFcl, filterFilePath);
+        return new ResolvedFilter(parts.Sources, BuildFilter(parts.Patterns, parts.Conditions), parts.HasInline);
     }
 
     /// <summary>
@@ -70,17 +73,23 @@ internal static class FilterResolver
         string? filterFcl,
         string? filterFilePath)
     {
-        var (sources, filterParts, hasInline) = Classify(positionalArgs, treatPathsAsSources: true);
-
-        AppendExplicit(filterParts, ref hasInline, filterFcl, filterFilePath);
-
-        var filter = BuildFilter(filterParts);
-        return new ResolvedFilter(sources, filter, hasInline);
+        var parts = Classify(positionalArgs, treatPathsAsSources: true);
+        AppendExplicit(parts, filterFcl, filterFilePath);
+        return new ResolvedFilter(parts.Sources, BuildFilter(parts.Patterns, parts.Conditions), parts.HasInline);
     }
 
     // ─── Implementation ─────────────────────────────────────────────────
 
     private enum ArgKind { FclFile, FclInline, Path, WildcardPattern }
+
+    /// <summary>The classified arguments: sources (backup), basic patterns (as FCL), advanced FCL conditions.</summary>
+    private sealed class Parts
+    {
+        public List<string> Sources { get; } = [];
+        public List<string> Patterns { get; } = [];
+        public List<string> Conditions { get; } = [];
+        public bool HasInline { get; set; }
+    }
 
     private static ArgKind Classify(string arg)
     {
@@ -88,7 +97,7 @@ internal static class FilterResolver
         if (LooksLikeFclFile(arg))
             return ArgKind.FclFile;
 
-        // FCL keyword start
+        // FCL field (or not / ! / parenthesis) start
         if (StartsWithFclKeyword(arg))
             return ArgKind.FclInline;
 
@@ -110,83 +119,83 @@ internal static class FilterResolver
         catch { return false; }
     }
 
+    /// <summary>
+    /// True when <paramref name="arg"/> reads as inline FCL: it opens with <c>(</c>, <c>!</c> or the word <c>not</c>, or
+    ///  with a field name followed by whitespace or an operator symbol (<c>Size&gt;1MB</c>).
+    /// </summary>
+    /// <remarks>
+    /// A field name alone is not enough: <c>size-report.xlsx</c>, <c>Path\to\*.doc</c> and <c>names*.txt</c> are a file,
+    ///  a folder pattern and a wildcard. Every condition needs an operator after its field, so requiring the separator
+    ///  costs no valid expression.
+    /// </remarks>
     private static bool StartsWithFclKeyword(string arg)
     {
         if (string.IsNullOrWhiteSpace(arg))
             return false;
+
         var span = arg.AsSpan().TrimStart();
-        if (span.Length == 0)
-            return false;
-        if (span[0] == '(')
+        if (span[0] is '(' or '!')
             return true;
-        // First word
+
+        // First word, letters only: field names and `not` hold nothing else
         int end = 0;
-        while (end < span.Length && (char.IsLetter(span[end]) || span[end] == '_'))
+        while (end < span.Length && char.IsLetter(span[end]))
             end++;
-        if (end == 0)
-            return false;
-        return s_fclKeywords.Contains(span[..end].ToString());
+        if (end == 0 || end == span.Length)
+            return false;                                       // no word, or a lone word: no condition
+
+        var word = span[..end];
+        char next = span[end];
+
+        if (word.Equals("not", StringComparison.OrdinalIgnoreCase))
+            return char.IsWhiteSpace(next) || next == '(';
+
+        return s_fclFields.Contains(word.ToString())
+            && (char.IsWhiteSpace(next) || next is '=' or '!' or '<' or '>');
     }
 
     /// <summary>
-    /// Splits positional args into source paths/patterns (only when
-    /// <paramref name="treatPathsAsSources"/> is true) and a list of FCL
-    /// filter fragments. Wildcard patterns become source patterns for backup
-    /// and selection-only wildcard filters otherwise.
+    /// Sorts positional args into sources (backup: paths and wildcards), basic patterns (other verbs: paths and
+    ///  wildcards, as FCL) and advanced conditions (FCL files and inline FCL).
     /// </summary>
-    private static (List<string> Sources, List<string> FilterParts, bool HasInline)
-        Classify(IReadOnlyList<string> args, bool treatPathsAsSources)
+    private static Parts Classify(IReadOnlyList<string> args, bool treatPathsAsSources)
     {
-        var sources = new List<string>();
-        var filterParts = new List<string>();
-        bool hasInline = false;
-
+        var parts = new Parts();
         foreach (var arg in args)
         {
             switch (Classify(arg))
             {
                 case ArgKind.FclFile:
-                    filterParts.Add(LoadFclFile(arg));
-                    hasInline = true;
+                    parts.Conditions.Add(LoadFclFile(arg));
+                    parts.HasInline = true;
                     break;
-
                 case ArgKind.FclInline:
-                    filterParts.Add(arg);
-                    hasInline = true;
+                    parts.Conditions.Add(arg);
+                    parts.HasInline = true;
                     break;
-
                 case ArgKind.Path:
-                    if (treatPathsAsSources)
-                        sources.Add(arg);
-                    else
-                        filterParts.Add(WildcardToFcl(arg));
-                    break;
-
                 case ArgKind.WildcardPattern:
                     if (treatPathsAsSources)
-                        sources.Add(arg);
+                        parts.Sources.Add(arg);
                     else
-                        filterParts.Add(WildcardToFcl(arg));
+                        parts.Patterns.Add(WildcardToFcl(arg));
                     break;
             }
         }
-
-        return (sources, filterParts, hasInline);
+        return parts;
     }
 
-    private static void AppendExplicit(
-        List<string> filterParts, ref bool hasInline,
-        string? filterFcl, string? filterFilePath)
+    private static void AppendExplicit(Parts parts, string? filterFcl, string? filterFilePath)
     {
         if (!string.IsNullOrWhiteSpace(filterFcl))
         {
-            filterParts.Add(filterFcl);
-            hasInline = true;
+            parts.Conditions.Add(filterFcl);
+            parts.HasInline = true;
         }
         if (!string.IsNullOrWhiteSpace(filterFilePath))
         {
-            filterParts.Add(LoadFclFile(filterFilePath));
-            hasInline = true;
+            parts.Conditions.Add(LoadFclFile(filterFilePath));
+            parts.HasInline = true;
         }
     }
 
@@ -204,21 +213,32 @@ internal static class FilterResolver
     }
 
     /// <summary>
-    /// Builds the combined <see cref="ITapeFileFilter"/> for a list of FCL
-    /// fragments (and bare wildcard FCL phrases). When the user supplied
-    /// multiple fragments they are combined with OR. Returns <c>null</c>
-    /// when no fragments were provided.
+    /// The one FCL expression of a selection: the patterns OR-ed, then AND-ed with every condition (see the remarks).
+    ///  Null when there is neither.
     /// </summary>
-    private static FclTapeFileFilter? BuildFilter(List<string> filterParts)
+    internal static string? Combine(IReadOnlyList<string> patterns, IReadOnlyList<string> conditions)
     {
-        if (filterParts.Count == 0)
-            return null;
+        var parts = new List<string>(conditions.Count + 1);
+        if (patterns.Count > 0)
+            parts.Add(patterns.Count == 1 ? patterns[0] : string.Join(" or ", patterns.Select(Group)));
+        parts.AddRange(conditions);
 
-        // Combine fragments with OR. Each fragment is wrapped in parentheses
-        //  so user-supplied AND/OR precedence is preserved within a fragment.
-        var combined = filterParts.Count == 1
-            ? filterParts[0]
-            : string.Join(" || ", filterParts.Select(p => $"({p})"));
+        return parts.Count switch
+        {
+            0 => null,
+            1 => parts[0],
+            _ => string.Join(" and ", parts.Select(Group)),
+        };
+    }
+
+    /// <summary>Parenthesized on lines of its own: a trailing <c>//</c> comment must not swallow the closing parenthesis.</summary>
+    private static string Group(string fcl) => $"(\n{fcl}\n)";
+
+    /// <summary>Parses <see cref="Combine"/>'s expression into a filter; null when there is nothing to filter by.</summary>
+    private static FclTapeFileFilter? BuildFilter(IReadOnlyList<string> patterns, IReadOnlyList<string> conditions)
+    {
+        if (Combine(patterns, conditions) is not { } combined)
+            return null;
 
         var parseResult = FclPipeline.TryParse(combined);
         if (!parseResult.IsValid || parseResult.Expression is null)
@@ -235,13 +255,13 @@ internal static class FilterResolver
 
     /// <summary>
     /// Wraps a wildcard pattern (e.g. <c>*.doc*</c>) as the FCL phrase
-    /// <c>fullname matches "pattern"</c>. Used when bare positional args are
+    /// <c>FullName matches "pattern"</c>. Used when bare positional args are
     /// being interpreted as selection filters (not as backup sources).
     /// </summary>
     private static string WildcardToFcl(string pattern)
     {
         // Escape embedded quotes by doubling, per FCL string-literal rules.
         var escaped = pattern.Replace("\"", "\"\"");
-        return $"fullname matches \"{escaped}\"";
+        return $"FullName matches \"{escaped}\"";
     }
 }

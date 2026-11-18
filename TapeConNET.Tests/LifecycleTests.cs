@@ -7,7 +7,7 @@ namespace TapeConNET.Tests;
 
 /// <summary>
 /// Drive lifecycle tests against a file-backed virtual drive: format, info,
-/// TOC export/import, eject. Each test creates its own
+/// TOC export, eject. Each test creates its own
 /// <see cref="TempVirtualMedia"/> so test order does not matter.
 /// </summary>
 public class LifecycleTests
@@ -40,7 +40,7 @@ public class LifecycleTests
     }
 
     [Fact]
-    public async Task TocExportImport_RoundTrips()
+    public async Task ExportToc_WritesFile_ThatListReads()
     {
         using var media = new TempVirtualMedia(withInitiator: true);
 
@@ -48,19 +48,14 @@ public class LifecycleTests
             media.Verb("format", "--name", "ExportMe", "--yes"));
         Assert.Equal(TapeConExitCode.Ok, fmt.Exit);
 
-        var tocFile = Path.Combine(media.Root, "exported.toc");
-        var export = await TapeConHost.RunAsync(
-            "toc", "export", "--virtual", media.ContentPath,
-            "--initiator", media.InitiatorPath!,
-            tocFile);
+        var tocFile = Path.Combine(media.Root, "exported.tapetoc");
+        var export = await TapeConHost.RunAsync(media.Verb("export-toc", tocFile));
         Assert.Equal(TapeConExitCode.Ok, export.Exit);
         Assert.True(File.Exists(tocFile), "TOC file should exist after export");
 
-        var import = await TapeConHost.RunAsync(
-            "toc", "import", "--virtual", media.ContentPath,
-            "--initiator", media.InitiatorPath!,
-            tocFile);
-        Assert.Equal(TapeConExitCode.Ok, import.Exit);
+        var list = await TapeConHost.RunAsync(media.Verb("list", "--import-toc", tocFile));
+        Assert.Equal(TapeConExitCode.Ok, list.Exit);
+        Assert.True(list.ContainsMessage("ExportMe"));
     }
 
     [Fact]

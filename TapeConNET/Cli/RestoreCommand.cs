@@ -8,13 +8,16 @@ using TapeLibNET.Toc;
 
 namespace TapeConNET.Cli;
 
-
 /// <summary>
 /// <c>tapecon restore</c> — restore the contents of a backup set (or a range
 /// of sets) to a target directory. Set spec follows the dual convention
 /// (positive=oldest-up, 0/negative=latest-down). The default is the latest
 /// set (index 0).
 /// </summary>
+/// <remarks>
+/// <c>--import-toc</c> (all three verbs): the TOC comes from a file, and the media's own is never read — the way to
+///  recover data from a cartridge whose TOC is damaged (<see cref="TocOptions"/>).
+/// </remarks>
 internal static class RestoreCommand
 {
     public static Command Create(IConsoleUx ux) =>
@@ -29,37 +32,43 @@ internal static class RestoreCommand
     private static Command BuildRestoreLikeCommand(IConsoleUx ux, string name, string desc, RestoreMode mode, bool withTarget)
     {
         var cmd = new Command(name, desc);
+
         GlobalOptions.Attach(cmd);
         FilterOptions.Attach(cmd);
         PasswordOptions.Attach(cmd);
+        TocOptions.Attach(cmd);
 
         var setArg = new Argument<string?>("set")
         {
-            Description = "Set index to process (positive = oldest-up, 0 = latest, -1/-2/... = older). Default: 0 (latest).",
+            Description = "Set index to process (positive = oldest-up, `0` = latest, `-1`/`-2`/… = older). " +
+                          "Default: `0` (latest).",
             Arity = ArgumentArity.ZeroOrOne,
         };
         var filterArgs = new Argument<string[]>("filter-args")
         {
             Description = "Optional filter arguments: DOS wildcard patterns, inline FCL, " +
-                          "or a path to a .fcl file. Combined with --filter / --filter-file.",
+                          "or a path to a `.fcl` file. Combined with `--filter` / `--filter-file`.",
             Arity = ArgumentArity.ZeroOrMore,
         };
         var targetOption = new Option<string?>("--target", "-t")
         {
-            Description = "Target folder for restored files (only for restore).",
+            Description = "Target folder for restored files (default: the current folder).",
+            HelpName = "PATH",
         };
         var subdirsOption = new Option<bool>("--subdirs", "-s")
         {
             Description = "Recreate the original directory structure under the target folder.",
         };
+        // The choices show in the placeholder, the default in [default: …]
         var existingOption = new Option<TapeHowToHandleExisting>("--existing", "-x")
         {
-            Description = "How to handle existing target files: Skip / Overwrite / KeepBoth.",
+            Description = "How to handle existing target files.",
             DefaultValueFactory = _ => TapeHowToHandleExisting.KeepBoth,
         };
         var incrementalOption = new Option<bool?>("--incremental", "-i")
         {
-            Description = "Force-on or force-off the incremental chain expansion (default: follow set's flag).",
+            Description = "Force-on or force-off the incremental chain expansion (default: follow set's flag). " +
+                          "`--incremental false` processes exactly the given set.",
         };
         var skipErrorsOption = new Option<bool>("--skip-errors")
         {
@@ -119,6 +128,7 @@ internal static class RestoreCommand
             var skipSetVerify = parseResult.GetValue(skipSetVerifyOption);
             var filterFcl   = parseResult.GetValue(FilterOptions.Filter);
             var filterFile  = parseResult.GetValue(FilterOptions.FilterFile);
+            var importToc   = parseResult.GetValue(TocOptions.ImportToc);
 
             // Bare positional args after `set` are auto-classified as wildcard
             //  patterns, inline FCL, or .fcl files and combined with the
@@ -127,7 +137,8 @@ internal static class RestoreCommand
 
             char[]? password = PasswordOptions.Resolve(parseResult);
 
-            using var service = VerbHost.BuildAndOpen(parseResult, ux, VerbHost.LifecycleSteps.Full, ct);
+            using var service = VerbHost.BuildAndOpen(parseResult, ux, VerbHost.LifecycleSteps.Full, ct,
+                tocHint: VerbHost.TocRecoveryHint, importToc: importToc);
 
             int setIndex = 0; // default: latest set
             if (!string.IsNullOrWhiteSpace(setSpec))
@@ -136,6 +147,7 @@ internal static class RestoreCommand
                     throw new TapeConException(TapeConExitCode.UsageError,
                         $"Invalid set index >{setSpec}<.");
             }
+
             // Normalize 0/negative (latest-down) to standard 1..MaxSetIndex
             //  form expected by TOC.SelectFilesFromSets.
             if (service.TOC is not null)
@@ -169,7 +181,6 @@ internal static class RestoreCommand
             };
 
             var result = await service.ExecuteRestoreAsync(options);
-
             return (int)VerbHost.ToExitCode(result.WasAborted, result.HasFailed || result.FilesFailed > 0,
                 result.SetStats.SetWriteBlocked, passwordRequired: result.SetsLocked > 0);
         });

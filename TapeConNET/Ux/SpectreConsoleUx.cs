@@ -1,11 +1,8 @@
 using System.Reflection;
-
 using Spectre.Console;
-
 using TapeLibNET.Drive;
 
 namespace TapeConNET.Ux;
-
 
 /// <summary>
 /// Production <see cref="IConsoleUx"/> implementation backed by Spectre.Console.
@@ -48,19 +45,49 @@ public sealed class SpectreConsoleUx(IAnsiConsole? ansi = null) : IConsoleUx
     {
         var ownVer = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "<unknown>";
         var libVer = typeof(TapeDrive).Assembly.GetName().Version?.ToString() ?? "<unknown>";
-
         _ansi.MarkupLine(
             $"[bold cyan]tapecon[/] [grey]Media Backup Utility v.[/] [white]{ownVer}[/] " +
             $"[grey]·[/] [grey]TapeLibNET v.[/] [white]{libVer}[/]");
     }
 
+    // ─── Documents ───────────────────────────────────────────────────────────
+
+    /// <inheritdoc/>
+    public void Write(ConsoleDocument document)
+    {
+        // "Redirected" = the output is no terminal (a file, a pipe). Asked of the Spectre profile, not of
+        //  System.Console, so an injected console (tests, a future stderr console) decides for itself.
+        bool redirected = !_ansi.Profile.Out.IsTerminal;
+        int width = ConsoleCapabilities.ClampWidth(_ansi.Profile.Width, redirected);
+
+        if (ConsoleCapabilities.UsePlain(NoColor, QuietMode, redirected))
+        {
+            // Straight to the underlying writer: the plain form is final text, already wrapped at `width`.
+            //  Going through Spectre would re-wrap it at the profile width and could alter the spacing.
+            var writer = _ansi.Profile.Out.Writer;
+            foreach (var line in document.Plain(width))
+                writer.WriteLine(line);
+            writer.Flush();
+            return;
+        }
+
+        // Rows ends every block with exactly one line break — whether the block brings its own (a table) or not
+        //  (a text) — so producers never think about trailing line breaks.
+        _ansi.Write(new Rows(document.Rich(width)));
+    }
+
     // ─── Prompts ─────────────────────────────────────────────────────────────
+    //  Every prompt suspends the live progress display first (SuspendProgress): Spectre's live displays and prompts
+    //   must never share the console. A display left running redraws over the prompt on every refresh, so the
+    //   prompt's first line repeats until the user answers. Suspended only when a prompt is actually SHOWN, so an
+    //   unattended run never stops its progress bar.
 
     public bool Confirm(string question, bool defaultAnswer = false)
     {
         if (QuietMode || NonInteractive)
             return defaultAnswer;
 
+        using var _ = SuspendProgress();
         var prompt = new ConfirmationPrompt(Markup.Escape(question)) { DefaultValue = defaultAnswer };
         return _ansi.Prompt(prompt);
     }
@@ -73,6 +100,7 @@ public sealed class SpectreConsoleUx(IAnsiConsole? ansi = null) : IConsoleUx
         if (QuietMode || NonInteractive)
             return defaultChoice ?? choices[0];
 
+        using var _ = SuspendProgress();
         var prompt = new SelectionPrompt<string>()
             .Title(Markup.Escape(question))
             .AddChoices(choices);
@@ -84,6 +112,7 @@ public sealed class SpectreConsoleUx(IAnsiConsole? ansi = null) : IConsoleUx
         if (QuietMode || NonInteractive)
             return defaultValue ?? string.Empty;
 
+        using var _ = SuspendProgress();
         var prompt = new TextPrompt<string>(Markup.Escape(question));
         if (defaultValue is not null)
             prompt.DefaultValue(defaultValue);
@@ -96,6 +125,8 @@ public sealed class SpectreConsoleUx(IAnsiConsole? ansi = null) : IConsoleUx
     {
         if (QuietMode || NonInteractive)
             return null;
+
+        using var _ = SuspendProgress();
         var prompt = new TextPrompt<string>(Markup.Escape(question)).Secret().AllowEmpty();
         string answer = _ansi.Prompt(prompt);
         return answer.Length == 0 ? null : answer;
@@ -103,7 +134,29 @@ public sealed class SpectreConsoleUx(IAnsiConsole? ansi = null) : IConsoleUx
 
     // ─── Progress ────────────────────────────────────────────────────────────
 
-    public IProgressScope BeginProgress(string title)
-        => new SpectreProgressScope(_ansi, title, QuietMode);
-}
+    private readonly object _progressGate = new();
+    private SpectreProgressScope? _progress;    // the live progress display, if one runs
 
+    public IProgressScope BeginProgress(string title)
+    {
+        var scope = new SpectreProgressScope(_ansi, title, QuietMode, onDisposed: s =>
+        {
+            lock (_progressGate)
+                if (ReferenceEquals(_progress, s))
+                    _progress = null;
+        });
+        lock (_progressGate)
+            _progress = scope;
+        return scope;
+    }
+
+    /// <summary>Suspends the live progress display, if any, until the returned token is disposed.</summary>
+    private IDisposable? SuspendProgress()
+    {
+        SpectreProgressScope? progress;
+        lock (_progressGate)
+            progress = _progress;
+        return progress?.Suspend();
+    }
+
+}

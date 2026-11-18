@@ -15,7 +15,13 @@ try
     System.Console.OutputEncoding = System.Text.Encoding.UTF8;
 
     using var cancellation = new CancellationHooks();
+
     var ux = new SpectreConsoleUx();
+
+    // NO_COLOR (no-color.org) acts as --no-color: plain output, no colour, no box drawing. Spectre honours the variable
+    //  on its own, but only by dropping colours — our plain path does more, so it must know too.
+    if (ConsoleCapabilities.NoColorRequested(Environment.GetEnvironmentVariable(ConsoleCapabilities.NoColorVariable)))
+        ux.NoColor = true;
 
     // Pre-scan args for --quiet / --no-color so the banner and any startup
     //  diagnostics already honor them. System.CommandLine will also bind these
@@ -25,6 +31,10 @@ try
         if (a is "--quiet" or "-q") ux.QuietMode = true;
         else if (a is "--no-color") ux.NoColor = true;
     }
+
+    // TAPECON_COLORS: a bad entry was skipped and its default kept — say so, but never stop
+    foreach (var warning in ConsoleTheme.ColorWarnings)
+        ux.Log(WarningLevel.Warning, warning);
 
     var root = RootCommandFactory.Create(ux);
 

@@ -1,10 +1,8 @@
 using System.CommandLine;
-
 using TapeConNET.Infrastructure;
 using TapeConNET.Ux;
 
 namespace TapeConNET.Cli;
-
 
 /// <summary>
 /// <c>tapecon format</c> — formats the loaded media (optionally creating an
@@ -16,12 +14,11 @@ internal static class FormatCommand
     {
         var cmd = new Command("format",
             "Format the loaded media and write an empty initial TOC. WARNING: erases all data.");
+
         GlobalOptions.Attach(cmd);
 
-        var nameOption = new Option<string?>("--name", "-n")
-        {
-            Description = "Friendly media name written into the new TOC.",
-        };
+        var mediaDescOption = MediaOptions.Description(
+            "Media description written into the new TOC (default: 'Media created <date time>').");
         var singleOption = new Option<bool>("--single-partition", "--single")
         {
             Description = "Force single-partition format (TOC stored in the first set instead of an initiator partition).",
@@ -30,7 +27,8 @@ internal static class FormatCommand
         {
             Description = "Skip the confirmation prompt.",
         };
-        cmd.Options.Add(nameOption);
+
+        cmd.Options.Add(mediaDescOption);
         cmd.Options.Add(singleOption);
         cmd.Options.Add(yesOption);
 
@@ -38,9 +36,9 @@ internal static class FormatCommand
         {
             ux.WriteBanner();
 
-            var name   = parseResult.GetValue(nameOption);
-            var single = parseResult.GetValue(singleOption);
-            var yes    = parseResult.GetValue(yesOption);
+            var mediaDesc = parseResult.GetValue(mediaDescOption);
+            var single    = parseResult.GetValue(singleOption);
+            var yes       = parseResult.GetValue(yesOption);
 
             if (!yes && !ux.Confirm("WARNING: Formatting media will erase ALL data. Proceed?", defaultAnswer: false))
                 return (int)TapeConExitCode.Cancelled;
@@ -48,8 +46,7 @@ internal static class FormatCommand
             using var service = VerbHost.BuildAndOpen(parseResult, ux, VerbHost.LifecycleSteps.Media, ct);
 
             long initiatorSize = single ? -1 : service.DefaultTOCCapacity;
-            var ok = await service.FormatMediaAsync(initiatorSize, name);
-
+            var ok = await service.FormatMediaAsync(initiatorSize, mediaDesc);
             return ok ? (int)TapeConExitCode.Ok : (int)TapeConExitCode.OperationFailed;
         });
 

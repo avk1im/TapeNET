@@ -60,17 +60,33 @@ internal static class VerbHost
     /// <see cref="TapeConException"/> when any step fails so the verb can
     /// just <c>using</c>-it and call its operation.
     /// </summary>
+    /// <param name="tocHint">
+    /// Appended to the error when the TOC cannot be restored: what the verb's user can do about it — e.g. backup's
+    ///  "format it first, or overwrite it".
+    /// </param>
+    /// <param name="mediaName">The media description of new virtual media (<c>--virtual-create</c>); null: the default.</param>
+    /// <param name="importToc">
+    /// <c>--import-toc</c>: the TOC file that replaces the media's TOC. If provided, it takes the place of
+    ///  <see cref="LifecycleSteps.RestoreTOC"/> and <see cref="LifecycleSteps.IdentifyMedia"/> — the media's own TOC is
+    ///  never read, which is the point when it is damaged. A later volume's TOC is accepted read-only.
+    /// </param>
     public static TapeService BuildAndOpen(
         ParseResult parseResult,
         IConsoleUx ux,
         LifecycleSteps steps,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? tocHint = null,
+        string? mediaName = null,
+        string? importToc = null)
     {
+        if (importToc is not null)
+            steps &= ~(LifecycleSteps.RestoreTOC | LifecycleSteps.IdentifyMedia);
+
         var service = Build(parseResult, ux, ct);
         try
         {
             if ((steps & LifecycleSteps.OpenDrive) != 0)
-                OpenDriveFromOptions(service, parseResult, ux);
+                OpenDriveFromOptions(service, parseResult, ux, mediaName);
 
             if ((steps & LifecycleSteps.LoadMedia) != 0)
             {
@@ -79,11 +95,18 @@ internal static class VerbHost
                         $"Couldn't load media: {service.LastError}");
             }
 
+            if (importToc is not null)
+            {
+                if (!service.ImportTOCFromFileAsync(importToc, acceptSeriesToc: true).GetAwaiter().GetResult())
+                    throw new TapeConException(TapeConExitCode.OperationFailed,
+                        $"Couldn't import the TOC from >{importToc}<: {service.LastError}");
+            }
+
             if ((steps & LifecycleSteps.RestoreTOC) != 0)
             {
                 if (!service.RestoreTOCAsync().GetAwaiter().GetResult())
                     throw new TapeConException(TapeConExitCode.OperationFailed,
-                        $"Couldn't restore TOC: {service.LastError}");
+                        $"Couldn't restore TOC: {service.LastError}" + (tocHint is null ? string.Empty : $". {tocHint}."));
             }
 
             if ((steps & LifecycleSteps.IdentifyMedia) != 0)
@@ -106,6 +129,12 @@ internal static class VerbHost
             throw;
         }
     }
+
+    /// <summary>
+    /// The hint for a TOC that cannot be read — where to find another. Shared by the verbs that read one.
+    /// </summary>
+    public const string TocRecoveryHint =
+        "Recover it with 'tapecon scan-media', or use a saved one with --import-toc (tapecon docs media-recovery)";
 
     /// <summary>True when the command line asks for NEW virtual media (<c>--virtual-create</c>).</summary>
     public static bool IsCreatingVirtualMedia(ParseResult parseResult)
@@ -143,7 +172,8 @@ internal static class VerbHost
     /// <c>--drive</c>, <c>--virtual-open</c>, <c>--virtual-create</c>, <c>--in-memory</c> may be specified;
     /// multiples yield <see cref="TapeConExitCode.UsageError"/>, none opens Win32 drive 0.
     /// </summary>
-    private static void OpenDriveFromOptions(TapeService service, ParseResult parseResult, IConsoleUx ux)
+    private static void OpenDriveFromOptions(TapeService service, ParseResult parseResult, IConsoleUx ux,
+        string? mediaName)
     {
         var driveNumber = parseResult.GetValue(GlobalOptions.Drive);
         var openPath    = parseResult.GetValue(GlobalOptions.Virtual);
@@ -159,7 +189,7 @@ internal static class VerbHost
             throw new TapeConException(TapeConExitCode.UsageError,
                 "--drive, --virtual-open (--virtual), --virtual-create and --in-memory are mutually exclusive.");
 
-        // Architecture §4 shortcut: when no drive option is supplied, auto-open
+        // Architecture §3.1: when no drive option is supplied, auto-open
         //  Win32 drive 0 with a single info-level note (suppressed under --quiet).
         if (selected == 0)
         {
@@ -183,7 +213,7 @@ internal static class VerbHost
 
         if (!string.IsNullOrEmpty(createPath))
         {
-            CreateVirtualFromOptionsAsync(service, parseResult, createPath, mediaName: null).GetAwaiter().GetResult();
+            CreateVirtualFromOptionsAsync(service, parseResult, createPath, mediaName).GetAwaiter().GetResult();
             return;
         }
 

@@ -4,7 +4,6 @@ using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
-using TapeLibNET.Agents;
 using TapeLibNET.Drive;
 using TapeLibNET.Services;
 using TapeLibNET.Toc;
@@ -1341,7 +1340,7 @@ public partial class MainViewModel : ViewModelBase
         var dialog = new Microsoft.Win32.SaveFileDialog
         {
             Title = "Export TOC to File",
-            Filter = $"Media TOC files (*{TapeAgentBase.TOCFileExtension})|*{TapeAgentBase.TOCFileExtension}|All files (*.*)|*.*",
+            Filter = $"Media TOC files (*{TapeServiceBase.TOCFileExtension})|*{TapeServiceBase.TOCFileExtension}|All files (*.*)|*.*",
             FileName = suggestedName,
             InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             OverwritePrompt = true,
@@ -1403,7 +1402,7 @@ public partial class MainViewModel : ViewModelBase
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
             Title = "Import TOC from File",
-            Filter = $"Media TOC files (*{TapeAgentBase.TOCFileExtension})|*{TapeAgentBase.TOCFileExtension}|All files (*.*)|*.*",
+            Filter = $"Media TOC files (*{TapeServiceBase.TOCFileExtension})|*{TapeServiceBase.TOCFileExtension}|All files (*.*)|*.*",
             InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
         };
 
@@ -1443,7 +1442,7 @@ public partial class MainViewModel : ViewModelBase
         if (sanitized.Length > 60)
             sanitized = sanitized[..60];
 
-        return $"{sanitized}_vol{toc.Volume}{TapeAgentBase.TOCFileExtension}";
+        return $"{sanitized}_vol{toc.Volume}{TapeServiceBase.TOCFileExtension}";
     }
 
     #endregion

@@ -1,7 +1,7 @@
 using System.CommandLine;
+using TapeConNET.Cli.Help;
 
 namespace TapeConNET.Cli;
-
 
 /// <summary>
 /// Selection-filter options shared by <c>backup</c>, <c>restore</c>,
@@ -10,18 +10,26 @@ namespace TapeConNET.Cli;
 /// same verbs are auto-classified by
 /// <see cref="TapeConNET.Filtering.FilterResolver"/>.
 /// </summary>
+/// <remarks>Help group: <i>File selection</i> (Design-CliPresentation §4.3).</remarks>
 internal static class FilterOptions
 {
     public static readonly Option<string?> Filter = new("--filter")
     {
-        Description = "FCL expression used as the selection filter " +
-                      "(e.g. 'name matches \"*.doc*\" && size > 1MB').",
+        Description = "FCL condition the selected files must meet, e.g. " +
+                      "`\"Name matches *.doc* and Size greaterThan 1MB\"`. See `tapecon docs fcl`.",
+        HelpName = "FCL",
     };
 
     public static readonly Option<string?> FilterFile = new("--filter-file")
     {
-        Description = "Path to a file containing the FCL selection filter.",
+        Description = "File holding an FCL condition the selected files must meet.",
+        HelpName = "PATH",
     };
+
+    static FilterOptions()
+    {
+        HelpGroups.Assign(HelpGroups.Filter, Filter, FilterFile);
+    }
 
     /// <summary>Attaches both filter options to <paramref name="cmd"/>.</summary>
     public static void Attach(Command cmd)

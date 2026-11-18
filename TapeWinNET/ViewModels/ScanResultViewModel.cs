@@ -2,7 +2,6 @@ using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Input;
 
-using TapeLibNET.Agents;
 using TapeLibNET.Drive;
 using TapeLibNET.Scan;
 using TapeLibNET.Services;
@@ -213,8 +212,8 @@ public sealed class ScanResultViewModel : ViewModelBase
         var dialog = new Microsoft.Win32.SaveFileDialog
         {
             Title = "Save recovered TOC",
-            Filter = $"Media TOC files (*{TapeAgentBase.TOCFileExtension})|*{TapeAgentBase.TOCFileExtension}",
-            DefaultExt = TapeAgentBase.TOCFileExtension,
+            Filter = $"Media TOC files (*{TapeServiceBase.TOCFileExtension})|*{TapeServiceBase.TOCFileExtension}",
+            DefaultExt = TapeServiceBase.TOCFileExtension,
             InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
         };
         if (dialog.ShowDialog() != true)

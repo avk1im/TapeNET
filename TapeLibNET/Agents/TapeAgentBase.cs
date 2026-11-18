@@ -791,7 +791,7 @@ public partial class TapeAgentBase : TapeDriveHolder<TapeAgentBase>, IDisposable
     #region *** TOC File I/O ***
 
     /// <summary>
-    /// File extension for emergency TOC files.
+    /// File extension for emergency TOC files and scan-recovered TOCs, among others.
     /// </summary>
     public const string TOCFileExtension = ".tapetoc";
 

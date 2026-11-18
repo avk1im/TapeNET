@@ -1,104 +1,88 @@
 using System.CommandLine;
-
+using TapeConNET.Cli.Help;
 using TapeConNET.Infrastructure;
 using TapeConNET.Ux;
+using TapeConNET.Ux.Markdown;
 
 namespace TapeConNET.Cli;
 
-
 /// <summary>
-/// <c>tapecon docs [topic]</c> — renders one of the embedded markdown topics
-/// (<c>concepts</c>, <c>migration</c>, <c>faq</c>) to the console. The
-/// markdown source lives under <c>Resources/Docs/*.md</c> and is embedded into
-/// the assembly at build time so a single-file deployment still ships the
-/// docs.
+/// <c>tapecon docs [topic]</c>: renders one of the embedded Markdown topics (<see cref="DocTopics"/>), or lists them
+///  all. The topics live under <c>Resources/Docs/*.md</c> and are embedded in the assembly, so a single-file
+///  deployment still ships the docs.
 /// </summary>
+/// <remarks>
+/// <para>
+/// No default topic (Design-CliPresentation §10.2): the list is the landing page. It is a <see cref="HelpModel"/> whose
+///  rows are the topics, so it shares the help's two-column layout, wrapping and styles.
+/// </para>
+/// <para>
+/// Written with <see cref="IConsoleUx.Write"/>: themed on a console, plain under <c>--no-color</c>, <c>--quiet</c>, or
+///  redirection, and never suppressed by <c>--quiet</c>, since the user asked for the text (Design-CliPresentation §3).
+/// </para>
+/// </remarks>
 internal static class DocsCommand
 {
-    /// <summary>Mapping from CLI topic name to embedded resource leaf name.</summary>
-    private static readonly Dictionary<string, string> s_topics = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["concepts"]  = "concepts.md",
-        ["migration"] = "migration-from-1.0.md",
-        ["faq"]       = "faq.md",
-    };
+    private const string Footer = "Show one: `tapecon docs <topic>`. Every option of a verb: `tapecon <verb> --help`.";
+
+    /// <summary>The topic names, for tests that render every topic.</summary>
+    internal static IReadOnlyCollection<string> TopicNames => [.. DocTopics.All.Select(t => t.Name)];
 
     public static Command Create(IConsoleUx ux)
     {
         var cmd = new Command("docs",
-            "Show conceptual documentation topics: concepts | migration | faq.");
+            "Show the built-in documentation. Without a topic: the list of topics.");
 
         var topicArg = new Argument<string?>("topic")
         {
-            Description = "Topic to display: concepts (default) | migration | faq.",
+            Description = "Topic to show, e.g. `getting-started`.",
             Arity       = ArgumentArity.ZeroOrOne,
         };
         cmd.Arguments.Add(topicArg);
 
         var listOption = new Option<bool>("--list")
         {
-            Description = "List the available topics instead of rendering one.",
+            Description = "List the topics (the same as no topic).",
         };
         cmd.Options.Add(listOption);
 
         cmd.SetAction(parseResult =>
         {
-            if (parseResult.GetValue(listOption))
+            string? name = parseResult.GetValue(topicArg);
+            if (parseResult.GetValue(listOption) || name is null)
             {
-                ux.Log(WarningLevel.Info, "Available 'tapecon docs' topics:");
-                foreach (var key in s_topics.Keys.OrderBy(k => k, StringComparer.Ordinal))
-                    ux.Log(WarningLevel.None, $"  {key}");
+                ux.Write(TopicList(cmd));
                 return (int)TapeConExitCode.Ok;
             }
 
-            var topic = parseResult.GetValue(topicArg) ?? "concepts";
-
-            if (!s_topics.TryGetValue(topic, out var leaf))
+            if (DocTopics.Find(name) is not { } topic)
             {
-                ux.Log(WarningLevel.Error,
-                    $"Unknown docs topic '{topic}'. Use --list to see available topics.");
+                ux.Log(WarningLevel.Error, $"Unknown docs topic '{name}'.");
+                ux.Write(TopicList(cmd));
                 return (int)TapeConExitCode.UsageError;
             }
 
-            var markdown = LoadEmbeddedTopic(leaf);
-            if (markdown is null)
-            {
-                ux.Log(WarningLevel.Error,
-                    $"Embedded docs resource not found for topic '{topic}'.");
-                return (int)TapeConExitCode.OperationFailed;
-            }
-
-            // Render line-by-line so the UX layer can still apply quiet-mode
-            //  rules. The content is plain markdown; Spectre console renders
-            //  it in a readable monospace form via WarningLevel.None.
-            foreach (var line in markdown.Split('\n'))
-                ux.Log(WarningLevel.None, line.TrimEnd('\r'));
-
+            // Parsed once; the console renders the rich or the plain form at its width
+            ux.Write(MarkdownRenderer.ToDocument(MarkdownDocument.Parse(DocTopics.Load(topic))));
             return (int)TapeConExitCode.Ok;
         });
 
         return cmd;
     }
 
-    /// <summary>
-    /// Returns the textual content of the embedded markdown resource whose
-    /// file name matches <paramref name="leaf"/> (e.g. <c>concepts.md</c>),
-    /// or <c>null</c> when no such resource exists.
-    /// </summary>
-    private static string? LoadEmbeddedTopic(string leaf)
-    {
-        var asm = typeof(DocsCommand).Assembly;
-        // Resources are embedded with a name like
-        //  "TapeConNET.Resources.Docs.concepts.md"
-        var name = asm.GetManifestResourceNames()
-            .FirstOrDefault(n => n.EndsWith("." + leaf, StringComparison.OrdinalIgnoreCase));
-        if (name is null)
-            return null;
+    /// <summary>The Markdown of <paramref name="name"/> (case-insensitive), or <c>null</c> for an unknown topic.</summary>
+    internal static string? LoadTopic(string name)
+        => DocTopics.Find(name) is { } topic ? DocTopics.Load(topic) : null;
 
-        using var stream = asm.GetManifestResourceStream(name);
-        if (stream is null)
-            return null;
-        using var reader = new StreamReader(stream);
-        return reader.ReadToEnd();
-    }
+    /// <summary>The topic list: the help layout, with the topics as its rows.</summary>
+    private static ConsoleDocument TopicList(Command cmd)
+        => HelpRenderer.ToDocument(new HelpModel(
+            Title: "tapecon docs",
+            Description: cmd.Description,
+            Usage: "Usage: tapecon docs [<topic>] [options]",
+            Arguments: [],
+            Sections: [],
+            Commands: [.. DocTopics.All.Select(t => new HelpCommandRow(t.Name, t.Title))],
+            Footer: Footer,
+            CommandsTitle: "Topics"));
 }

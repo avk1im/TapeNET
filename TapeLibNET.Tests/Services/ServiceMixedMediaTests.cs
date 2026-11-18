@@ -35,7 +35,7 @@ public class ServiceMixedMediaTests : ServiceTestBase
     /// <summary>Writes the service's current TOC as a LEGACY <c>.tapetoc</c> and imports it.</summary>
     private static async Task ImportAsLegacyAsync(TestTapeService svc, TempVirtualMedia media)
     {
-        string path = Path.Combine(media.Root, $"legacy_{Guid.NewGuid():N}{TapeAgentBase.TOCFileExtension}");
+        string path = Path.Combine(media.Root, $"legacy_{Guid.NewGuid():N}{TapeServiceBase.TOCFileExtension}");
         File.WriteAllBytes(path, LegacyTocWriter.TocBytes(svc.TOC!));
 
         Assert.True(await svc.ImportTOCFromFileAsync(path), $"legacy import failed: {svc.LastError}");

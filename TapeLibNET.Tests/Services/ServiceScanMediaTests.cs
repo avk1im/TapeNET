@@ -1,4 +1,3 @@
-using TapeLibNET.Agents;
 using TapeLibNET.Calibration;
 using TapeLibNET.Drive;
 using TapeLibNET.Headers;
@@ -577,7 +576,7 @@ public class ServiceScanMediaTests : ServiceTestBase
             using (svc)
             {
                 MediaScanMap map = (await svc.ScanMediaAsync(new ScanMediaRequest())).Map!;
-                string path = Path.Combine(media.Root, "recovered" + TapeAgentBase.TOCFileExtension);
+                string path = Path.Combine(media.Root, "recovered" + TapeServiceBase.TOCFileExtension);
 
                 var result = await svc.RecoverTocAsync(new RecoverTocRequest(map, FirstTocOrdinal(map)) { SaveToFilePath = path });
 

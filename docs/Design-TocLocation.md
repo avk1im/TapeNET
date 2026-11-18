@@ -76,6 +76,7 @@ All three now restore: T1 by the filemark tail check (§12.0) or S2; T3 by resum
 | TL-9 | **One classifier, one walker.** Every block identification ends in `TapeHeaderBlock.IdentifyBlock`; every multi-block walk is `TapeScanner`. |
 | TL-10 | **Per-volume facts are looked up by the identified volume**, never by `TOC.Volume` assumed (§8.1 explains the append guard's case). |
 | TL-11 | **Partition-explicit positions.** Every absolute move names its partition: `TapeDrive.MoveToBlock(partition, block)`. |
+| TL-12 | **An empty set leaves no trace.** A set that took no file is erased from the tape; one that cannot be erased stays recorded (§8.3). |
 
 ## 3. One block classifier
 
@@ -331,8 +332,9 @@ A full TOC partition that ends a volume early is no TOC anomaly: it is a volume 
   places it copies `LastSetClosedByEom`. `EndWriteContent` rethrows on end-of-media and write faults after closing the
   set, so code behind it in the agent would miss exactly those paths.
 - **Per volume:** `TapeTOC.FirstBlockAfterContentOnVolume(volume, beginOfContent = −1)` — the volume's last set's value;
-  a trailing vacant set without one is looked past; a set holding files without one makes the answer −1 (never guessed
-  from an earlier set); a volume without sets answers `beginOfContent`.
+  a trailing vacant set that never reached the tape (`IsOnTape` false) is looked past; a set on tape without a recorded
+  end, or one holding files without it, makes the answer −1 (never guessed from an earlier set); a volume without sets
+  answers `beginOfContent`. `AddNewSetTOC` likewise reuses only a trailing vacant set that never reached the tape.
 - **The stub is authoritative** for encrypted sets: the sealed content carries field 15 too, unchecked, because a locked
   set may be restamped (trailing delete) while its sealed bytes are re-emitted verbatim.
 - Part of the set's persisted state: a change restamps `LastSaveTime` and re-seals an unlocked encrypted set. Not carried
@@ -415,6 +417,60 @@ is `AdviseTocText(EndOfContentDisputed)`.
   the reserve follows the TOC, so the warning is a backstop.
 - **R2** — the navigators' "no marks" fallback settles at begin-of-content only on positive evidence (§12.0).
 
+#### 8.3 An empty set leaves no trace (TL-12)
+
+A set that took no file is **erased** from the tape: the mark before it is rewritten, so end-of-data — and with it the end of
+content — returns to where it stood before the set began. No stray set header, no empty set, no end of content the TOC does
+not record (§8.1).
+
+**Triggers** — the set holds no file once everything is drained (`TOC.CurrentSetTOC.Count == 0`), whatever the reason:
+- every file failed (source not found, unreadable) or was skipped;
+- the user aborted before the first file committed;
+- **end-of-media before the first file committed** — the set's part on this volume holds nothing a reader could use; a
+  continuation starts afresh on the next volume (`prevVolumeHasFiles == false`), exactly as the TOC then records;
+- the set header landed, but the content session did not begin (`BeginSetEncryption`, `BeginWriteContent`) — no closing
+  mark was written, yet the header stands where the TOC stood.
+
+**Never** after a media write fault (no writes on a faulting drive), and never on a fresh continuation volume that took no
+file — TR-7 ends the series there (§12.6).
+
+##### 8.3.1 Why erase afterwards, not withhold the closing mark
+- **The verdict comes too late.** The tail commits land in the final flush inside `EndWriteContent`, just before the mark.
+  Withholding it would make the manager count commits and decide backup semantics — the agent's business.
+- **`EndWriteContent` keeps one contract:** close the set, then rethrow an end-of-media or a write fault.
+- **One mechanism covers every trigger**, including the begin-failure path, where no mark is written at all.
+- **Cost:** one rewritten mark, a few blocks of movement.
+
+##### 8.3.2 How
+`TapeFileBackupAgent.BackupFilesToCurrentSet` → `EraseEmptySet` → `TapeNavigator.EraseContentFrom(setStartBlock,
+setStartsContent)`. The set's first block is captured when the set begins: the set header's block, else where the packer
+anchors (header-less media carry no set headers).
+- Move to the set's first block; space back over the mark before it — the previous set's closing mark, or, for the first set
+  on the volume, the media header's filemark; **write that mark again**. End-of-data now follows it; the head stands at the
+  end of content (navigator at −1, TOC unlocated, TOC mark invalidated).
+- **Guard:** the rewritten mark must end exactly at the set's first block. Otherwise the erase fails, and the set stays on
+  tape as recorded; the service keeps it in the TOC and advises Backup | Delete Backup Sets.
+- **Never the media header itself.** A header-less (legacy) volume's first set has no mark before it: with the TOC in set,
+  the TOC save overwrites the remains; with the TOC in partition nothing would, so the erase is refused (`ERROR_NOT_SUPPORTED`)
+  and the set kept.
+- **Housekeeping, not diagnosis:** the agent's error is restored after the erase — on the end-of-media path it is the
+  caller's signal to change volumes. Each step is traced (why, where, which mark, the result).
+
+##### 8.3.3 The TOC and the save
+- An erased set's record shows no end: `FirstBlockAfterSet = −1`, `ClosedByEom = false`, hence `IsOnTape == false`
+  (§6) — the service drops it (`RemoveLastEmptySet`).
+- **TOC in set:** the save writes at the erased set's first block — exactly where the old TOC stood.
+- **TOC in partition:** the save is skipped when the TOC on tape is demonstrably current — a straight append whose set was
+  erased, no media header stamped, no volume change. Otherwise (overwrite, append after a set, a stamped header, a
+  continuation flag to update) it runs as usual.
+- A set that could not be erased, but whose closing mark is on tape, is **kept** in the TOC: the save lands behind it, and
+  the record matches the tape.
+
+##### 8.3.4 Capacity after the erase
+The move back to the set's start leaves the early-warning zone: `TapeDrive.ReevaluateEarlyWarningAfterReposition` drops the
+logical latch; the rewritten mark refreshes the media parameters (`OnWritten`). Remaining and writable capacity reflect the
+recovered space at once.
+
 ## 9. Code map
 
 | Concern | Where |
@@ -436,6 +492,7 @@ is `AdviseTocText(EndOfContentDisputed)`.
 | Resume identification | `Agents/TapeFileRestoreAgent.cs` (`CheckVolumeToResumeFrom`, `IdentifySetOnVolume`) |
 | Short writes | `Media/TapeStream.cs` |
 | Service: advice, S4 prompt, TOC handler | `Services/TapeServiceBase.Toc.cs`, `Services/MediaPrompt.cs` (`FullWalkForTOC`) |
+| Empty-set erase | `Agents/TapeFileBackupAgent.cs` (`EraseEmptySet`, `SetHeaderStamped`, `EmptySetErased`), `Media/TapeNavigator.cs` (`EraseContentFrom`), `Toc/TapeTOC.cs` (`IsOnTape`), `Services/TapeServiceBase.Backup.cs` (the no-files branch) |
 
 ## 10. Tests
 
@@ -459,10 +516,11 @@ truncate, remove a mark, corrupt a block at rest, describe the layout) and per-v
 | `Scenarios.MultiVolumeBackupRestoreTests` (all header modes), `Encryption.MultiVolumeEncryptionTests` | series across layouts; the parity guard: both TOC copies on every volume |
 | `Scan.TapeScannerTests`, `TapeScannerPartitionTests`, `TapeScannerHarvestTests` | the walker Scan Media and the ladder share |
 | `Legacy.LegacyEmitterTests`, `Services.ServiceLegacyMediaTests` | legacy copies identified and read; mixed legacy/2.1 series |
+| `Services.ServiceEmptySetTests` | §8.3: empty set autodelete, also in a multi-volume scenario |
 
 ## 11. Plan *(placeholder — completed)*
 
-Phases 0–6 are implemented; §12 records each phase's deviations from the v4 plan.
+Phases 0–6 are implemented; §12 records each phase's deviations from the v4 plan, plus later updates.
 
 ## 12. History
 
@@ -574,3 +632,10 @@ Phases 0–6 are implemented; §12 records each phase's deviations from the v4 p
   stay as convenience views, routed through `TryGetToc`.
 - **Dropped:** session landmarks (§4.3), the pre-flight TOC-size check (§0.4). **Deferred:** the backward probe of
   §12.5.2; a Help topic "TOC space", to which the advice points.
+
+#### 12.8 Empty sets
+- **Originating defect:** a backup whose only file vanished wrote a set header and closing mark over the TOC, then dropped
+  the set from the TOC saved behind them; the next append was refused (RecordedEndDisputed).
+- **Interim:** the empty set kept; a trailing vacant set reused only if it never reached the tape (§6).
+- **Final:** the erase (§8.3). First built without end-of-media as a trigger; a file too large for the remaining space then
+  left an 8 MB set fragment unrecorded — end-of-media became a trigger, which also settled the multi-volume case.

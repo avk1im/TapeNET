@@ -43,10 +43,12 @@
     <None Remove="~WRL0003.tmp" />
   </ItemGroup>
 
-  <!-- TapeConNET 2.0: embed the 'tapecon docs' markdown topics -->
-  <ItemGroup>
-    <EmbeddedResource Include="Resources\Docs\*.md" />
-  </ItemGroup>
+	<!-- TapeConNET 2.0: embed the 'tapecon docs' topics and the Examples sections of verb help.
+       LogicalName fixes the resource names (Design-CliPresentation §10.1): docs/<topic>.md, examples/<verb>.md. -->
+	<ItemGroup>
+		<EmbeddedResource Include="Resources\Docs\*.md" LogicalName="docs/%(Filename)%(Extension)" />
+		<EmbeddedResource Include="Resources\Examples\*.md" LogicalName="examples/%(Filename)%(Extension)" />
+	</ItemGroup>
 
   <ItemGroup>
     <None Include="..\README.md">
