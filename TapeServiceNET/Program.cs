@@ -1,12 +1,22 @@
+using Microsoft.Extensions.Hosting.WindowsServices;
 using TapeServiceNET;
 
-var builder = WebApplication.CreateBuilder(args);
+// As a Windows Service, the process starts in %windir%\system32. Pin the content root to the
+//  executable's folder so appsettings*.json (Kestrel endpoints, session settings) load from the
+//  install folder. As a console app, keep the default (current directory) for 'dotnet run'.
+var webOptions = new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = WindowsServiceHelpers.IsWindowsService() ? AppContext.BaseDirectory : default,
+};
+var builder = WebApplication.CreateBuilder(webOptions);
 
 // Enable running as a Windows Service (no-op when launched as console).
-// Install with: sc.exe create TapeService binPath="<path>\tapesvc.exe"
-builder.Host.UseWindowsService(options =>
+// The installer registers it as "TapeService"; manual install:
+//   sc.exe create TapeService binPath= "\"<path>\tapesvc.exe\"" start= auto
+builder.Host.UseWindowsService(serviceOptions =>
 {
-    options.ServiceName = "TapeNET Media Service";
+    serviceOptions.ServiceName = "TapeNET Media Service";
 });
 
 // Session lifecycle settings (IdleTimeout, ReaperInterval) — override in appsettings.json.

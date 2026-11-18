@@ -9,6 +9,8 @@
     <StartupObject>TapeWinNET.App</StartupObject>
     <PlatformTarget>x64</PlatformTarget>
 	<AssemblyName>TapeWin</AssemblyName>
+	<!-- TapeNET 2.0: override the shared 1.2.x version baseline from Versioning.targets (matches tapecon) -->
+	<VersionBase>2.0.0</VersionBase>
 	<!-- Enable IDE0005 reports during build and dotnet format -->
 	<GenerateDocumentationFile>true</GenerateDocumentationFile>
 	<EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
@@ -70,7 +72,9 @@
 		  BeforeTargets="AssignTargetPaths"
 		  Inputs="@(EmbeddedResource->WithMetadataValue('Extension', '.md'));$(HelpEmbeddingModelDir)\model.onnx;$(HelpEmbeddingModelDir)\vocab.txt;$(MSBuildProjectFullPath)"
 		  Outputs="$(HelpEmbeddingsOutDir)embeddings.bin">
-	<MSBuild Projects="$(HelpIndexBuilderProject)" Targets="Build" Properties="Configuration=Release" RemoveProperties="Platform;RuntimeIdentifier;LocSourceDir">
+	<!-- The builder is a build-time tool: strip the RID-specific publish properties. Passing
+		 SelfContained=true without a RuntimeIdentifier fails the nested build (NETSDK1031). -->
+	<MSBuild Projects="$(HelpIndexBuilderProject)" Targets="Build" Properties="Configuration=Release" RemoveProperties="Platform;RuntimeIdentifier;SelfContained;LocSourceDir">
 	  <Output TaskParameter="TargetOutputs" PropertyName="HelpIndexBuilderPath" />
 	</MSBuild>
 	<Exec Command="dotnet &quot;$(HelpIndexBuilderPath)&quot; --content &quot;$(MSBuildProjectDirectory)\Resources\Help&quot; --model &quot;$(HelpEmbeddingModelDir)\model.onnx&quot; --vocab &quot;$(HelpEmbeddingModelDir)\vocab.txt&quot; --model-id $(HelpEmbeddingModelId) --dim $(HelpEmbeddingDimension) --max-tokens $(HelpEmbeddingMaxTokens) --output &quot;$(HelpEmbeddingsOutDir.TrimEnd('\'))&quot;" />
