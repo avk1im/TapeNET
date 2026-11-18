@@ -413,8 +413,7 @@ progress display (§6.2).
 | 1 | Root `--help`: commands grouped (lifecycle / write / read / TOC edits / recovery / docs)? | A command → group table in `HelpGroups`, same model as options. |
 | 2 | A `--help-all` expanding Summary groups everywhere? | Not now: the pointer to `create-virtual --help` covers it. |
 | 3 | A generated `docs/cli-reference.md` + drift test | `HelpRenderer.ToMarkdown(model)` — the same model, a third output. |
-| 4 | `list --import-toc` without any drive | Needs the service to import and list without a drive; then the drive section is skipped. |
-| 5 | ASCII underlines in the plain form | Would keep piped output readable under any code page; the FAQ documents the PowerShell setting meanwhile. |
+| 4 | ASCII underlines in the plain form | Would keep piped output readable under any code page; the FAQ documents the PowerShell setting meanwhile. |
 
 ## 10. Docs: a flat list of topics
 

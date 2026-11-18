@@ -150,7 +150,7 @@ A TOC travels between verbs as a `.tapetoc` file (`TapeServiceBase.TOCFileExtens
   earlier volume's TOC is still questioned.
 - **Repair** writes an imported TOC back: `rename-media --import-toc` without a new name re-saves it under its current
   name; `delete-sets --import-toc` trims the volume's tail, then saves it.
-- **Not yet:** `list --import-toc` without any drive. Both the import and the listing need an open drive today.
+- **Needs a drive:** `list --import-toc` too — every agent builds its navigator on the drive. Open the drive the scan or export came from.
 
 User-level walkthrough: `tapecon docs media-recovery`.
 

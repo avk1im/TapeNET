@@ -24,7 +24,7 @@ namespace TapeConNET.Cli;
 /// </para>
 /// <para>
 /// <c>--import-toc</c>: lists a TOC file instead of the media's TOC — e.g. to see what a recovered TOC holds before
-///  restoring from it. Needs the drive for now; listing a TOC file with no drive at all is planned.
+///  restoring from it. Needs the drive, like every agent: its navigator works on one.
 /// </para>
 /// </remarks>
 internal static class ListCommand
