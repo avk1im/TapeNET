@@ -91,6 +91,23 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
     public bool SetHeaderStamped { get; private set; }
 
     /// <summary>
+    /// Whether this agent erased an empty set during the current operation — a set that took no file, removed from the tape
+    ///  so that content ends where it ended before (<see cref="TapeNavigator.EraseContentFrom"/>).
+    /// </summary>
+    /// <remarks>
+    /// The set's record then shows no end (<see cref="TapeSetTOC.IsOnTape"/> false): the service drops it. With the TOC in its
+    ///  own partition the tape is back where it was, and the TOC on it is still current.
+    /// </remarks>
+    public bool EmptySetErased { get; private set; }
+
+    // Where the current set starts on tape — the block its header, or else its first file, was written to; −1 while nothing of
+    //  it is on tape. Set by BeginWriteContentForCurrentSet, consumed by EraseEmptySet.
+    private long m_setStartBlock = -1;
+
+    // Whether the current set is the first on its volume: only the media header's filemark — or nothing — precedes it.
+    private bool m_setStartsContent;
+
+    /// <summary>
     /// Why the volume just completed ended before the file list did (Design-TocReserve §9.6): end-of-media, the TOC
     ///  reserve (TOC in set), or a full TOC partition. <see cref="ContentStopReason.None"/> while the backup runs or
     ///  when it completed on this volume.
@@ -255,6 +272,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         bool headsVolume = TOC.CurrentSetIndex == TOC.FirstSetOnVolume && WritesMediaHeader;
         bool deferMediaHeaderWrite = headsVolume && !newSet;
         m_volumeFullBeforeSetHeader = false;
+        m_setStartBlock = -1;                       // nothing of this set on tape yet
+        m_setStartsContent = TOC.CurrentSetIndexOnVolume == 0;
 
         EnsureTocPartitionCapacityKnown(); // call before WriteMediaHeader(), so the header write and all positioning follow
 
@@ -424,7 +443,15 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             //  the drive ACTUALLY accepted; and AFTER SetEarlyWarning / NotifyNextContentWritePosition,
             //  so its 16 KiB counts against the TOC reserve like any other content byte. TapeHeaderBlock
             //  sets and restores its own block size, so the set's survives untouched.
-            if (!WriteSetHeader())
+            
+            long setStart = Drive.CurrentBlock; // where the set begins — the header's block
+
+            if (WriteSetHeader())
+            {
+                SetHeaderStamped = true;    // for TOC-in-set, the old TOC copy at this position is gone from here on
+                m_setStartBlock = setStart;
+            }
+            else // failed to write the set header
             {
                 if (newSet && Drive.IsEarlyWarning && Drive.WentOK)
                 {
@@ -444,8 +471,6 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
                     SetError(WIN32_ERROR.ERROR_WRITE_FAULT, "The set header could not be written");
                 return false;   // SH-6 reset the position
             }
-
-            SetHeaderStamped = true;    // for TOC-in-set, the old TOC copy at this position is gone from here on
         }
 
         // The set's encryption session (Design-Encryption §9.1, E16): AFTER the set header — a drive key (v2) must
@@ -463,6 +488,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             return false;
         }
 
+        if (m_setStartBlock < 0)
+            m_setStartBlock = Drive.CurrentBlock;   // no set header: the set begins where the packer anchors
         return true;
     } // BeginWriteContentForCurrentSet()
 
@@ -521,6 +548,65 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             { Block = recorded });
         LatchFailure();
         return false;
+    }
+
+    /// <summary>
+    /// Erases the current set from the tape when it took no file: rewrites the mark before it, so content ends where it ended
+    ///  before the set began (<see cref="TapeNavigator.EraseContentFrom"/>). Best effort — a failure leaves the set as written,
+    ///  and its record as it stands.
+    /// </summary>
+    /// <param name="why">Why the set took no file — for the trace.</param>
+    /// <remarks>
+    /// <para>
+    /// Not the operation's diagnosis either way: the erase is housekeeping after the set's own outcome. The agent's error is
+    ///  restored afterwards — on the end-of-media path it is the caller's signal to change volumes.
+    /// </para>
+    /// <para>
+    /// Also after an end-of-media on the set's FIRST file: its part on this volume holds nothing a reader could use. A
+    ///  continuation then starts afresh on the next volume (<c>prevVolumeHasFiles == false</c>) — exactly what the TOC records.
+    /// </para>
+    /// </remarks>
+    private void EraseEmptySet(string why)
+    {
+        if (m_setStartBlock < 0)
+        {
+            m_logger.LogTrace("Set #{Set} holds no file ({Why}) — nothing of it on tape, nothing to erase",
+                TOC.CurrentSetIndex, why);
+            return;
+        }
+        
+        long block = m_setStartBlock;
+        m_setStartBlock = -1;                   // once only
+        // Preserve the original error — e.g. END_OF_MEDIA for the continuation
+        uint savedError = LastError;
+        string? savedMessage = LastErrorMessage;
+        
+        m_logger.LogTrace("Erasing set #{Set} ({Why}): starts at block {Block}, {Where}, set header {Header}, " +
+            "recorded end {End}{Eom}", TOC.CurrentSetIndex, why, block,
+            m_setStartsContent ? "first on volume" : "behind another set", SetHeaderStamped ? "written" : "none",
+            TOC.CurrentSetTOC.FirstBlockAfterSet, TOC.CurrentSetTOC.ClosedByEom ? ", closed by end-of-media" : "");
+        if (!Manager.EndReadWrite())            // normally MediaPrepared already
+            m_logger.LogDebug("EndReadWrite failed before erasing set #{Set}", TOC.CurrentSetIndex);
+        
+        bool erased = Navigator.EraseContentFrom(block, m_setStartsContent);
+        string? navigatorError = Navigator.LastErrorMessage;
+        if (savedError == (uint)WIN32_ERROR.NO_ERROR)
+            ResetError();
+        else
+            SetError(savedError, savedMessage);  // the set's own outcome stands — e.g. END_OF_MEDIA for the continuation
+        
+        if (!erased)
+        {
+            m_logger.LogWarning("Set #{Set} holds no file ({Why}), but could not be erased from block {Block} ({Error}) — " +
+                "it stays on the media as written", TOC.CurrentSetIndex, why, block, navigatorError);
+            return;
+        }
+        
+        TOC.CurrentSetTOC.FirstBlockAfterSet = -1;  // nothing of it on tape any more
+        TOC.CurrentSetTOC.ClosedByEom = false;
+        EmptySetErased = true;
+        m_logger.LogInformation("Set #{Set} holds no file ({Why}) — erased; content ends at block {Block} again",
+            TOC.CurrentSetIndex, why, block);
     }
 
     /// <summary>Returns <see langword="true"/> if <paramref name="pattern"/> contains <c>*</c> or <c>?</c> wildcards.</summary>
@@ -1031,6 +1117,10 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             }
 
             LatchFailure();
+
+            if (!bc.isContinuation)
+                EraseEmptySet("the content session could not begin");   // the set header may stand where the TOC stood
+
             m_logger.LogWarning("Failed to begin writing content in {Method}", nameof(BackupFilesToCurrentSet));
             // We MUST clear MultiVolumeContext to NOT indicate multivolume continuation!
             MultiVolumeContext = null;
@@ -1044,7 +1134,8 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
         Manager.FilesCommitted += OnCommitted;
 
-        bool eomHandled = false; // EOM has been handled -- MultiVolumeContext has been set up
+        bool eomHandled = false;   // EOM has been handled -- MultiVolumeContext has been set up
+        bool writeFaulted = false; // a media write fault ended the set: no erase on a faulting drive
 
         // Single handler for EOM raised by the packer at any point: from inside the
         //  per-file write loop OR from the final flush during Manager.EndWriteContent().
@@ -1145,6 +1236,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
         //  `ignoreFailures` does not apply: it governs SOURCE errors, which are per file.
         void HandleWriteFault(TapePackerWriteFaultException wf, TapeFileInfo? openTemplate)
         {
+            writeFaulted = true;
             SetError(wf);
             LatchFailure();             // the first failure wins: the drive's own diagnosis
 
@@ -1359,6 +1451,12 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
             EndSetEncryption();     // E16: on success, EOM, write fault and abort alike — before any TOC write
         }
 
+        // A set that took no file leaves no trace on this volume — whether the files failed, were skipped, the user aborted,
+        //  or end-of-media struck before the first file committed. Never on a faulting drive, nor on a fresh continuation
+        //  volume (TR-7 below decides there).
+        if (!freshContinuation && !writeFaulted && TOC.CurrentSetTOC.Count == 0)
+            EraseEmptySet(eomHandled ? "end-of-media before its first file committed" : "no file was written");
+
         if (eomHandled)
         {
             Debug.Assert(CanResumeToNextVolume);
@@ -1499,6 +1597,7 @@ public class TapeFileBackupAgent(TapeDrive drive, TapeTOC? legacyTOC = null) : T
 
         MediaHeaderStamped = false; // reset for the new series (per-series, cross-volume artifact)
         SetHeaderStamped = false;
+        EmptySetErased = false;
 
         m_carriedFailure = TapeResult.OK;
         m_volumeRejected = false;

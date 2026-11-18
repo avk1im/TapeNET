@@ -1061,6 +1061,89 @@ public abstract class TapeNavigator : TapeDriveHolder<TapeNavigator>
         return WentOK;
     }
 
+    /// <summary>
+    /// Erases a content set from <paramref name="setStartBlock"/> on, and settles at the end of content there: rewrites the
+    ///  mark that precedes the set — the previous set's closing mark, or the media header's filemark — so that end-of-data
+    ///  follows it again. Undoes an empty set without a trace: its header, its closing mark, whatever a failed file left.
+    /// </summary>
+    /// <param name="setStartBlock">The set's first block — where its header (or its first file) was written.</param>
+    /// <param name="setStartsContent">
+    /// The set is the first on its volume: no closing mark precedes it, only the media header's filemark — or nothing at all.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <b>One primitive, every layout.</b> With the TOC in set, the TOC save then writes here, over what is left. With the TOC
+    ///  in its own partition, end-of-data now IS the end of content again — the very place
+    ///  <see cref="MoveToEndOfContent"/> finds by spacing back from it.
+    /// </para>
+    /// <para>
+    /// <b>Mark-agnostic.</b> The head spaces over the mark rather than locating it by block number, which would assume how the
+    ///  drive counts marks. The rewritten mark must end exactly at <paramref name="setStartBlock"/>; otherwise the method fails
+    ///  rather than settle anywhere else.
+    /// </para>
+    /// <para>
+    /// A header-less volume's first set has nothing before it to rewrite: the head settles at begin-of-content, and the next
+    ///  write — the TOC, or the next set — overwrites the remains.
+    /// </para>
+    /// </remarks>
+    internal bool EraseContentFrom(long setStartBlock, bool setStartsContent)
+    {
+        ResetError();
+        string mark = !setStartsContent ? (UseSmks ? "the previous set's closing setmark" : "the previous set's closing filemark")
+            : MediaHeaderPresence == TapeHeaderPresence.Present ? "the media header's filemark"
+            : "nothing (header-less volume, first set)";
+        m_logger.LogTrace("Drive #{Drive}: Erasing content from block {Block}: rewriting {Mark}", DriveNumber, setStartBlock, mark);
+        
+        bool ok = Drive.MoveToBlock(MediaPartition.Content, setStartBlock);
+        if (ok && !setStartsContent)
+        {
+            // Rewrite the previous set's closing mark
+            ok = MoveToNextContentSetmark(-1);
+            if (ok)
+                m_logger.LogTrace("Drive #{Drive}: Before the mark at block {Block}; rewriting it", DriveNumber, Drive.CurrentBlock);
+            ok = ok && WriteContentSetmark();
+        }
+        else if (ok && MediaHeaderPresence == TapeHeaderPresence.Present)
+        {
+            // Rewrite the media header's filemark
+            ok = Drive.MoveToNextFilemark(-1);
+            if (ok)
+            {
+                m_logger.LogTrace("Drive #{Drive}: Before the header's filemark at block {Block}; rewriting it",
+                    DriveNumber, Drive.CurrentBlock);
+                Drive.WriteFilemark();
+                ok = WentOK;
+            }
+        }
+        else if (ok && this is TapeNavigatorTOCInPartition)
+        {
+            // Header-less volume, first set, TOC in partition: no mark precedes the set, and no TOC write lands here to
+            //  overwrite its remains — end-of-data cannot be moved. Keep the set.
+            SetError(WIN32_ERROR.ERROR_NOT_SUPPORTED,
+                "No mark precedes the first set of a header-less volume, and the TOC lives in its own partition");
+            ok = false;
+        }
+
+        if (ok && Drive.CurrentBlock != setStartBlock)
+        {
+            SetError(WIN32_ERROR.ERROR_INVALID_DATA,
+                $"The mark before the set did not end at block {setStartBlock}, but at {Drive.CurrentBlock}");
+            ok = false;
+        }
+        
+        if (!ok)
+        {
+            ResetContentSet();                  // whatever happened, the position is no longer known
+            LogErrorAsDebug($"Failed to erase content from block {setStartBlock}");
+            return false;
+        }
+
+        OnContentWritten();                     // at the end of content — TOC unlocated, TOC mark invalidated
+        m_logger.LogTrace("Drive #{Drive}: Content erased from block {Block}; end of data there, content ends there",
+            DriveNumber, setStartBlock);
+        return true;
+    }
+
     #endregion // Content mark handling
 
 

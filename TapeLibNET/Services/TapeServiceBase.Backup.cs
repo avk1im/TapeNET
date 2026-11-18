@@ -510,13 +510,10 @@ public partial class TapeServiceBase
                     //  and only a TOC save puts one back.
                     bool mediaUntouched = !agent.Manager.ContentWritten && !agent.MediaHeaderStamped
                         && !agent.SetHeaderStamped;
-                    // Whether the empty set stands CLOSED on tape: its closing mark written, or end-of-media closed it.
-                    //  The TOC save then lands BEHIND it, so the TOC must keep the set. Dropping it records an end of
-                    //  content the tape no longer has: the next append is refused (RecordedEndDisputed), and counting
-                    //  sets by marks meets a set the TOC does not know. Without a closing mark the TOC save overwrites
-                    //  the set's remains, and the set must go. Not on a volume change: the continuation policy rules.
-                    bool emptySetOnTape = !mediaUntouched && !agent.CanResumeToNextVolume
-                        && (toc.CurrentSetTOC.FirstBlockAfterSet >= 0 || toc.CurrentSetTOC.ClosedByEom);
+                    // Whether the empty set still stands on tape. Normally the agent ERASES a set that took no file
+                    //  (EmptySetErased): its record then shows no end, and it goes. It stays only when the erase failed —
+                    //  then the TOC saved behind it must keep it — or on a volume change, where the continuation policy rules.
+                    bool emptySetOnTape = !mediaUntouched && !agent.CanResumeToNextVolume && toc.CurrentSetTOC.IsOnTape;
                     if (backupTOC != null)
                     {
                         // The header is stamped BEFORE the content session opens, so ContentWritten alone
@@ -533,27 +530,35 @@ public partial class TapeServiceBase
                         }
                         else
                         {
-                            // Content was physically written (partial file) —
-                            //  cannot revert, old sets' data may be overwritten.
-                            //  Keep the (empty) new set; trim trailing sets if mode 1.
+                            // The write started at the replaced slot (mode 1) or at begin-of-content (mode 3): whatever
+                            //  followed it is gone, set erased or not.
                             if (appendAfterSetUsed)
                                 toc.RemoveSetsAfterCurrent();
-                            if (agent.Manager.ContentWritten)
+                            if (emptySetOnTape)
                             {
                                 LogWarn("No files backed up — empty backup set added to preserve media structure");
                                 LogWarnSub("The empty backup set may be removed (Backup | Delete Backup Sets)");
                             }
-                            else // no content — only the fresh media header (+ the new empty TOC)
+                            else
                             {
-                                LogWarn("No files backed up — the media has been re-initialized");
-                                LogWarnSub("Previous content is no longer accessible");
+                                toc.RemoveLastEmptySet();   // erased: nothing of it on tape
+                                if (appendAfterSetUsed)
+                                {
+                                    LogWarn($"No files backed up — the media now ends after set #{appendAfterSetIndex}");
+                                    LogWarnSub("The sets after it are no longer accessible");
+                                }
+                                else
+                                {
+                                    LogWarn("No files backed up — the media has been re-initialized");
+                                    LogWarnSub("Previous content is no longer accessible");
+                                }
                             }
                         }
                     }
                     else if (emptySetOnTape)
                     {
-                        // Straight append, nothing to revert to: the set's header and closing mark replaced the TOC
-                        //  at the old end of content. Keep the (empty) set, so the TOC saved behind it describes the tape.
+                        // Straight append, the erase failed: the set's header and closing mark replaced the TOC at the old
+                        //  end of content. Keep the (empty) set, so the TOC saved behind it describes the tape.
                         LogWarn("No files backed up — the empty backup set stays on the media");
                         LogWarnSub("The empty backup set may be removed (Backup | Delete Backup Sets)");
                     }
@@ -565,17 +570,17 @@ public partial class TapeServiceBase
                         else
                             LogInfo("No files were backed up");
                     }
-                    // Skip the save when the tape's TOC is DEMONSTRABLY still correct: nothing was
-                    //  written, and both branches above have just restored the in-memory TOC to what
-                    //  the tape holds. If we're continuing to the next volume, we must save the TOC
-                    //  to update its ContinuedOnNextVolume flag.
-                    // Deliberately NOT gated on Navigator.TOCUnlocated: that flag is true on any
-                    //  FRESH navigator — it means "I have not located the TOC mark yet", not "the TOC
-                    //  on tape is stale". Since the service reads the TOC with one agent and backs up
-                    //  with another, it is true at the start of every backup, which would rewrite a
-                    //  perfectly valid TOC after a refused overwrite (and also make "media unchanged"
-                    //  report a lie!)
-                    if (!agent.CanResumeToNextVolume && mediaUntouched)
+                    // Skip the save when the tape's TOC is DEMONSTRABLY still correct:
+                    //  - nothing was written, and the branches above have restored the in-memory TOC to what the tape holds;
+                    //  - or, with the TOC in its own partition, a straight append's empty set was erased: the content
+                    //    partition is back where it was, and the TOC partition was never touched.
+                    //  If we're continuing to the next volume, we must save the TOC to update its ContinuedOnNextVolume flag.
+                    // Deliberately NOT gated on Navigator.TOCUnlocated: that flag is true on any FRESH navigator — it means
+                    //  "I have not located the TOC mark yet", not "the TOC on tape is stale".
+                    bool tocOnTapeCurrent = mediaUntouched
+                        || (agent.EmptySetErased && backupTOC is null && !agent.MediaHeaderStamped
+                            && _drive.HasInitiatorPartition);
+                    if (!agent.CanResumeToNextVolume && tocOnTapeCurrent)
                     {
                         skipTOCSave = true;
                         _toc = toc;
