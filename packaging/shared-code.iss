@@ -1,8 +1,10 @@
-; =====================================================================
-;  Shared [Code] helpers for tapenet.iss and tapesvc.iss.
-;  Included from inside the [Code] section of both scripts:
-;      #include "shared-code.iss"
-; =====================================================================
+// =====================================================================
+//  Shared [Code] helpers for tapenet.iss and tapesvc.iss.
+//  Included from inside the [Code] section of both scripts:
+//      #include "shared-code.iss"
+//  The text lands inside [Code], so Pascal Script rules apply: comments
+//  are // or { }, never the ';' of the setup sections.
+// =====================================================================
 
 // Marks a shortcut (.lnk) as "Run as administrator" -- the same checkbox as
 //  Properties > Shortcut > Advanced. Inno Setup has no [Icons] flag for this, so we

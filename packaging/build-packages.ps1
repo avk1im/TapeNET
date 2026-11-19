@@ -292,7 +292,7 @@ function Export-PackageLicenses([string]$key) {
 			LicenseFiles = ($copied -join ';')
 		}
 	}
-	$rows | Sort-Object Id | Export-Csv -Path (Join-Path $licensesDir '_packages.csv') -NoTypeInformation -Encoding utf8NoBOM
+	$rows | Sort-Object Id | Export-Csv -Path (Join-Path $licensesDir '_packages.csv') -Encoding utf8NoBOM
 
 	$noFile = @($rows | Where-Object { -not $_.LicenseFiles })
 	Write-Host ("    {0} packages inventoried, {1} without a bundled license file (license expression recorded instead)." -f @($rows).Count, $noFile.Count) -ForegroundColor DarkGray

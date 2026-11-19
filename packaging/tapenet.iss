@@ -99,7 +99,7 @@ Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 [Registry]
 ; System PATH lives under HKLM\{#EnvKey} -- NOT HKLM\Environment.
 Root: HKLM; Subkey: "{#EnvKey}"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}\tapecon"; \
-	Tasks: addpath; Components: tapecon; Check: NeedsAddPath(ExpandConstant('{app}\tapecon'))
+	Tasks: addpath; Components: tapecon; Check: NeedsAddPath('{app}\tapecon')
 
 [Run]
 Filename: "{tmp}\{#SvcSetup}"; Parameters: "{code:SvcSetupParams}"; StatusMsg: "Installing the tapesvc remote service..."; \
@@ -139,6 +139,8 @@ begin
   end;
 end;
 
+// Check functions take literal parameters only, so the caller passes '{app}\...'
+//  unexpanded and we expand here.
 function NeedsAddPath(Dir: String): Boolean;
 var
   OrigPath: String;
@@ -146,7 +148,7 @@ begin
   if not RegQueryStringValue(HKLM, '{#EnvKey}', 'Path', OrigPath) then
     Result := True
   else
-    Result := not PathContains(OrigPath, Dir);
+    Result := not PathContains(OrigPath, ExpandConstant(Dir));
 end;
 
 // Rebuilds PATH without Dir; keeps every other entry and its order.
