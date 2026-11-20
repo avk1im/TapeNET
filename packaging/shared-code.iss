@@ -9,24 +9,36 @@
 // Marks a shortcut (.lnk) as "Run as administrator" -- the same checkbox as
 //  Properties > Shortcut > Advanced. Inno Setup has no [Icons] flag for this, so we
 //  set SLDF_RUNAS_USER (0x2000) in the ShellLinkHeader LinkFlags (offset 0x14,
-//  little-endian): bit 0x20 of the byte at offset 0x15, i.e. 1-based index 22.
+//  little-endian): bit 0x20 of the byte at offset 0x15 (21).
+//  Patches that single byte in place via TFileStream. Pascal Script cannot cast an
+//  integer to AnsiChar, so the byte travels through a 1-char string buffer: ReadBuffer
+//  fills its low byte, Chr/Ord stay in the native Char type, WriteBuffer writes it back.
 procedure SetShortcutRunAsAdmin(const LnkPath: String);
 var
-  Data: AnsiString;
+  Buffer: String;
+  Stream: TStream;
 begin
-  if not LoadStringFromFile(LnkPath, Data) then
+  if not FileExists(LnkPath) then
   begin
-    Log('SetShortcutRunAsAdmin: cannot read ' + LnkPath);
+    Log('SetShortcutRunAsAdmin: not found ' + LnkPath);
     exit;
   end;
-  if Length(Data) < 22 then
-  begin
-    Log('SetShortcutRunAsAdmin: unexpected size of ' + LnkPath);
-    exit;
+  try
+    Stream := TFileStream.Create(LnkPath, fmOpenReadWrite);
+    try
+      Stream.Seek(21, soFromBeginning);
+      SetLength(Buffer, 1);
+      Stream.ReadBuffer(Buffer, 1);
+      Buffer[1] := Chr(Ord(Buffer[1]) or $20);
+      Stream.Seek(-1, soFromCurrent);
+      Stream.WriteBuffer(Buffer, 1);
+      Log('SetShortcutRunAsAdmin: set on ' + LnkPath);
+    finally
+      Stream.Free;
+    end;
+  except
+    Log('SetShortcutRunAsAdmin: failed on ' + LnkPath + ': ' + GetExceptionMessage);
   end;
-  Data[22] := AnsiChar(Ord(Data[22]) or $20);
-  if not SaveStringToFile(LnkPath, Data, False) then
-    Log('SetShortcutRunAsAdmin: cannot write ' + LnkPath);
 end;
 
 // Runs a system tool hidden and returns its exit code (-1 when it cannot start).
